@@ -1,0 +1,20 @@
+[package]
+name = "sequoia-async"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — async tasks bridged to the UI thread (futures without tokio)"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-reactive = { workspace = true }
+futures-core = { workspace = true }
+futures-task = { workspace = true }
+log = { workspace = true }
+pin-project-lite = { workspace = true }
+pollster = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "sequoia-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — wgpu renderer"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+sequoia-text = { workspace = true }
+sequoia-view = { workspace = true }
+bytemuck = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
+pollster = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+
+[dev-dependencies]
+sequoia-reactive = { workspace = true }
+
+[lints]
+workspace = true

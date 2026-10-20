@@ -1,0 +1,38 @@
+[package]
+name = "sequoia-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — windowing platform (winit + wgpu)"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+arboard = { workspace = true }
+directories = { workspace = true }
+futures-core = { workspace = true }
+log = { workspace = true }
+pollster = { workspace = true }
+rfd = { workspace = true }
+serde_json = { workspace = true }
+sequoia-assets = { workspace = true }
+sequoia-async = { workspace = true }
+sequoia-core = { workspace = true }
+sequoia-dock = { workspace = true }
+sequoia-elements = { workspace = true }
+sequoia-hotkey = { workspace = true }
+sequoia-input = { workspace = true }
+sequoia-reactive = { workspace = true }
+sequoia-style = { workspace = true }
+sequoia-text = { workspace = true }
+sequoia-render = { workspace = true }
+sequoia-view = { workspace = true }
+winit = { workspace = true }
+
+[dev-dependencies]
+sequoia-elements = { workspace = true }
+bytemuck = { workspace = true }
+wgpu = { workspace = true }
+[lints]
+workspace = true

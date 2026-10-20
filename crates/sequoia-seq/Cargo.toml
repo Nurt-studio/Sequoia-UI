@@ -1,0 +1,24 @@
+[package]
+name = "sequoia-seq"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia declarative language (.seq): parser, checker, lowering to views"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-async = { workspace = true }
+sequoia-core = { workspace = true }
+sequoia-elements = { workspace = true }
+sequoia-input = { workspace = true }
+sequoia-reactive = { workspace = true }
+sequoia-style = { workspace = true }
+sequoia-view = { workspace = true }
+
+[dev-dependencies]
+sequoia-test = { workspace = true }
+
+[lints]
+workspace = true

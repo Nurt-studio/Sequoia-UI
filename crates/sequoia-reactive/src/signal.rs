@@ -1,0 +1,126 @@
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
+
+use crate::effect::{Subscription, effect};
+use crate::runtime::{
+    Dependency, Observer, batch_depth, flush_effects, observers_in, propagate,
+    register_observer_in, track_read, unregister_observer_in,
+};
+
+pub struct Signal<T> {
+    inner: Rc<SignalNode<T>>,
+}
+
+impl<T> Clone for Signal<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+        }
+    }
+}
+
+struct SignalNode<T> {
+    value: RefCell<T>,
+    version: Cell<u64>,
+    observers: RefCell<Vec<Weak<dyn Observer>>>,
+}
+
+impl<T: 'static> Signal<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            inner: Rc::new(SignalNode {
+                value: RefCell::new(value),
+                version: Cell::new(0),
+                observers: RefCell::new(Vec::new()),
+            }),
+        }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.inner.version.get()
+    }
+
+    pub fn id(&self) -> usize {
+        Rc::as_ptr(&self.inner) as usize
+    }
+}
+
+impl<T: Clone + PartialEq + 'static> Signal<T> {
+    pub fn get(&self) -> T {
+        track_read(&self.inner);
+        self.inner.value.borrow().clone()
+    }
+
+    pub fn get_untracked(&self) -> T {
+        self.inner.value.borrow().clone()
+    }
+
+    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        track_read(&self.inner);
+        let borrowed = self.inner.value.borrow();
+        f(&borrowed)
+    }
+
+    pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        let borrowed = self.inner.value.borrow();
+        f(&borrowed)
+    }
+
+    pub fn set(&self, value: T) {
+        {
+            let mut current = self.inner.value.borrow_mut();
+            if *current == value {
+                return;
+            }
+            *current = value;
+        }
+        self.inner.version.set(self.inner.version.get() + 1);
+        propagate(self.inner.as_ref());
+        if batch_depth() == 0 {
+            flush_effects();
+        }
+    }
+
+    pub fn update(&self, f: impl FnOnce(&mut T)) {
+        let next = {
+            let current = self.inner.value.borrow();
+            let mut next = current.clone();
+            f(&mut next);
+            next
+        };
+        self.set(next);
+    }
+
+    #[must_use = "subscription expires on drop — bind the handle to a variable"]
+    pub fn subscribe(&self, listener: impl Fn() + 'static) -> Subscription {
+        let inner = Rc::clone(&self.inner);
+        Subscription::new(effect(move || {
+            track_read(&inner);
+            listener();
+        }))
+    }
+}
+
+impl<T: 'static> Dependency for SignalNode<T> {
+    fn id(&self) -> usize {
+        self as *const _ as usize
+    }
+
+    fn version(&self) -> u64 {
+        self.version.get()
+    }
+
+    fn validate(&self) {}
+
+    fn observers(&self) -> Vec<Weak<dyn Observer>> {
+        observers_in(&self.observers)
+    }
+
+    fn register_observer(&self, observer: Weak<dyn Observer>) {
+        register_observer_in(&self.observers, observer);
+    }
+
+    fn unregister_observer(&self, observer_id: usize) {
+        unregister_observer_in(&self.observers, observer_id);
+    }
+}

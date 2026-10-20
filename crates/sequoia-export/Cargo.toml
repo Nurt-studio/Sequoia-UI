@@ -1,0 +1,23 @@
+[package]
+name = "sequoia-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — headless HiDPI PNG export (website-ready screenshots without a window)"
+
+[dependencies]
+image = { workspace = true }
+log = { workspace = true }
+sequoia-assets = { workspace = true }
+sequoia-core = { workspace = true }
+sequoia-reactive = { workspace = true }
+sequoia-style = { workspace = true }
+sequoia-text = { workspace = true }
+sequoia-view = { workspace = true }
+
+[dev-dependencies]
+log = { workspace = true }
+
+[lints]
+workspace = true

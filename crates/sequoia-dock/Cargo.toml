@@ -1,0 +1,16 @@
+[package]
+name = "sequoia-dock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — headless dock model (IDE splits, tabs, floating)"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+sequoia-layout = { workspace = true }
+
+[lints]
+workspace = true

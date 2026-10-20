@@ -1,0 +1,18 @@
+[package]
+name = "sequoia-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — text layout and shaping"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+sequoia-buffer = { workspace = true }
+cosmic-text = { workspace = true }
+log = { workspace = true }
+
+[lints]
+workspace = true

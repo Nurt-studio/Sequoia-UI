@@ -1,0 +1,14 @@
+[package]
+name = "sequoia-reactive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — reactive signals and stores"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+log = { workspace = true }
+[lints]
+workspace = true

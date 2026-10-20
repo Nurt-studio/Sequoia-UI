@@ -1,0 +1,35 @@
+[package]
+name = "sequoia-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — facade crate, single dependency for the whole framework"
+documentation = "https://docs.rs/sequoia-ui"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[dev-dependencies]
+sequoia-test = { workspace = true }
+
+[dependencies]
+sequoia-animation = { workspace = true }
+sequoia-assets = { workspace = true }
+sequoia-async = { workspace = true }
+sequoia-core = { workspace = true }
+sequoia-draw = { workspace = true }
+sequoia-elements = { workspace = true }
+sequoia-export = { workspace = true }
+sequoia-input = { workspace = true }
+sequoia-layout = { workspace = true }
+sequoia-platform = { workspace = true }
+sequoia-reactive = { workspace = true }
+sequoia-render = { workspace = true }
+sequoia-seq = { workspace = true }
+sequoia-style = { workspace = true }
+sequoia-text = { workspace = true }
+sequoia-view = { workspace = true }
+
+[lints]
+workspace = true

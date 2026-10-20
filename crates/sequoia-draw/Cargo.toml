@@ -1,0 +1,15 @@
+[package]
+name = "sequoia-draw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — vector paths and rasterization"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "sequoia-buffer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — framework-free text buffer engine (piece table, line index, cursors, undo)"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+unicode-segmentation = { workspace = true }
+
+[lints]
+workspace = true

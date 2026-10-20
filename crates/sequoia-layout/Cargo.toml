@@ -1,0 +1,18 @@
+[package]
+name = "sequoia-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — layout engine"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+sequoia-text = { workspace = true }
+[lints]
+workspace = true
+
+[dev-dependencies]
+taffy = "0.15.0"

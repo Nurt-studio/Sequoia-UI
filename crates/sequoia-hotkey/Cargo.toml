@@ -1,0 +1,37 @@
+[package]
+name = "sequoia-hotkey"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — OS-global hotkeys (Windows RegisterHotKey)"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+log = { workspace = true }
+sequoia-input = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
+# Audyt P3: cargo NIE pozwala nadpisać `workspace.lints` w crate przy
+# `lints.workspace = true` — dlatego hotkey powtarza tabelę ręcznie,
+# z `unsafe_code = "allow"` (jedyne dopuszczone `unsafe` w workspace:
+# FFI Win32 RegisterHotKey/UnregisterHotKey — patrz src/lib.rs).
+[lints.rust]
+unsafe_code = "allow"
+# Jak w workspace: bez `missing_docs` (szum ~4300 ostrzeżeń).
+missing_docs = "allow"
+unreachable_pub = "warn"
+
+[lints.clippy]
+# Jak w workspace (patrz komentarz w Cargo.toml roota).
+all = { level = "warn", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+neg_cmp_op_on_partial_ord = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+inherent_to_string = "allow"
+result_unit_err = "allow"
+should_implement_trait = "allow"

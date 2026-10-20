@@ -1,0 +1,24 @@
+[package]
+name = "sequoia-seq-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "LSP server (stdio) dla języka deklaratywnego .seq (Sequoia)"
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "seq-lsp"
+path = "src/main.rs"
+
+[lib]
+name = "sequoia_seq_lsp"
+path = "src/lib.rs"
+
+[dependencies]
+sequoia-seq = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

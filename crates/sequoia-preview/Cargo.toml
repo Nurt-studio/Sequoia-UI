@@ -1,0 +1,20 @@
+[package]
+name = "sequoia-preview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia .seq preview: run a static .seq file, optionally respawning on save"
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "sequoia-preview"
+path = "src/main.rs"
+
+[dependencies]
+sequoia-platform = { workspace = true }
+sequoia-seq = { workspace = true }
+
+[lints]
+workspace = true

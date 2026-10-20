@@ -1,0 +1,15 @@
+[package]
+name = "sequoia-style"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — styles and themes"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+serde_json = { workspace = true }
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "sequoia-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — internal headless test harness"
+publish = false
+
+[dependencies]
+sequoia-core = { workspace = true }
+sequoia-dock = { workspace = true }
+sequoia-reactive = { workspace = true }
+sequoia-text = { workspace = true }
+sequoia-view = { workspace = true }
+sequoia-input = { workspace = true }
+sequoia-elements = { workspace = true }
+
+[dev-dependencies]
+sequoia-style = { workspace = true }
+sequoia-platform = { workspace = true }
+sequoia-async = { workspace = true }
+sequoia-ui = { workspace = true }
+[lints]
+workspace = true
