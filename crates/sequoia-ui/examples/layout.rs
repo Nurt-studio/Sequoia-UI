@@ -90,41 +90,34 @@ fn card(title: &'static str, body: &'static str, accent: Color) -> Container {
         .radius(12.0)
         .clip(true)
         .padding(CARD_PAD)
-        .child(
-            WithSize::new(move |size| {
-                // size.width = the content area inside the container
-                // (CARD_WIDTH - padding). The -2.0 keeps `…` off the edge.
-                let avail = if size.width > 1.0 {
-                    (size.width - 2.0).max(0.0)
-                } else {
-                    // First frame: WithSize has no measurement yet.
-                    CARD_WIDTH - 2.0 * CARD_PAD - 2.0
-                };
-                AnyView::new(
-                    Column::new()
-                        .fill_width()
-                        .gap(12.0)
-                        .overflow(Overflow::Hidden)
-                        .child(
-                            Container::new()
-                                .square(36.0)
-                                .radius(18.0)
-                                .background(accent.with_alpha(0.20)),
-                        )
-                        .child(
-                            Text::new(title)
-                                .size(16.0)
-                                .bold()
-                                .color(TEXT)
-                                .truncate(avail),
-                        )
-                        .child(
-                            Text::new(body)
-                                .size(13.0)
-                                .color(MUTED)
-                                .truncate(avail),
-                        ),
-                )
-            }),
-        )
+        .child(WithSize::new(move |size| {
+            // size.width = the content area inside the container
+            // (CARD_WIDTH - padding). The -2.0 keeps `…` off the edge.
+            let avail = if size.width > 1.0 {
+                (size.width - 2.0).max(0.0)
+            } else {
+                // First frame: WithSize has no measurement yet.
+                CARD_WIDTH - 2.0 * CARD_PAD - 2.0
+            };
+            AnyView::new(
+                Column::new()
+                    .fill_width()
+                    .gap(12.0)
+                    .overflow(Overflow::Hidden)
+                    .child(
+                        Container::new()
+                            .square(36.0)
+                            .radius(18.0)
+                            .background(accent.with_alpha(0.20)),
+                    )
+                    .child(
+                        Text::new(title)
+                            .size(16.0)
+                            .bold()
+                            .color(TEXT)
+                            .truncate(avail),
+                    )
+                    .child(Text::new(body).size(13.0).color(MUTED).truncate(avail)),
+            )
+        }))
 }

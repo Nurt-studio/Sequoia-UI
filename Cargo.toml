@@ -1,6 +1,5 @@
 [workspace]
 resolver = "3"
-exclude = ["editors/zed-seq"]
 members = [
     "crates/sequoia-core",
     "crates/sequoia-animation",

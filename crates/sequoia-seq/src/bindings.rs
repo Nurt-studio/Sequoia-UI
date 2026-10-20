@@ -8,11 +8,8 @@ use sequoia_reactive::{I18n, Memo, Signal};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropType {
     Str,
-
     Bool,
-
     Int,
-
     Float,
 }
 

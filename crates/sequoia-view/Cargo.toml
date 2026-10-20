@@ -23,7 +23,6 @@ sequoia-layout = { workspace = true }
 sequoia-input = { workspace = true }
 
 [dev-dependencies]
-taffy = "0.15.0"
 sequoia-test = { workspace = true }
 sequoia-elements = { workspace = true }
 

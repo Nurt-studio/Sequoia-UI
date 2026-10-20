@@ -554,7 +554,11 @@ impl<'a> Parser<'a> {
                     });
                 }
                 _ => {
-                    return Err(self.err(l, self.col, format!("nieznany element machine '{}'", kw)));
+                    return Err(self.err(
+                        l,
+                        self.col,
+                        format!("nieznany element machine '{}'", kw),
+                    ));
                 }
             }
             self.eat(';');
