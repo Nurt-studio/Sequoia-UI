@@ -31,7 +31,6 @@ sequoia-view = { workspace = true }
 winit = { workspace = true }
 
 [dev-dependencies]
-sequoia-elements = { workspace = true }
 bytemuck = { workspace = true }
 wgpu = { workspace = true }
 [lints]

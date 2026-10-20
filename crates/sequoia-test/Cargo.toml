@@ -11,15 +11,15 @@ publish = false
 sequoia-core = { workspace = true }
 sequoia-dock = { workspace = true }
 sequoia-reactive = { workspace = true }
+sequoia-seq = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-view = { workspace = true }
 sequoia-input = { workspace = true }
 sequoia-elements = { workspace = true }
 
 [dev-dependencies]
-sequoia-style = { workspace = true }
-sequoia-platform = { workspace = true }
 sequoia-async = { workspace = true }
+sequoia-style = { workspace = true }
 sequoia-ui = { workspace = true }
 [lints]
 workspace = true

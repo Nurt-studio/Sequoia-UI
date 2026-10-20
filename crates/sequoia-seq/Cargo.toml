@@ -17,8 +17,5 @@ sequoia-reactive = { workspace = true }
 sequoia-style = { workspace = true }
 sequoia-view = { workspace = true }
 
-[dev-dependencies]
-sequoia-test = { workspace = true }
-
 [lints]
 workspace = true

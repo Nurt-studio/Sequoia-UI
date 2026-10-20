@@ -22,9 +22,5 @@ sequoia-text = { workspace = true }
 sequoia-layout = { workspace = true }
 sequoia-input = { workspace = true }
 
-[dev-dependencies]
-sequoia-test = { workspace = true }
-sequoia-elements = { workspace = true }
-
 [lints]
 workspace = true

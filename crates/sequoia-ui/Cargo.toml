@@ -10,9 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 readme = "README.md"
 
-[dev-dependencies]
-sequoia-test = { workspace = true }
-
 [dependencies]
 sequoia-animation = { workspace = true }
 sequoia-assets = { workspace = true }
