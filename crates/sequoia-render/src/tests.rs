@@ -141,6 +141,33 @@ fn backend_names_are_stable() {
 }
 
 #[test]
+fn auto_backend_candidates_single_native_backend_first() {
+    let candidates = crate::renderer::auto_backend_candidates();
+    assert!(!candidates.is_empty());
+    assert!(!candidates.contains(&GpuBackend::Auto));
+    for (i, a) in candidates.iter().enumerate() {
+        assert!(
+            !candidates[i + 1..].contains(a),
+            "duplicate backend in auto order: {a:?}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    assert_eq!(candidates[0], GpuBackend::Vulkan);
+    #[cfg(target_os = "macos")]
+    assert_eq!(candidates[0], GpuBackend::Metal);
+    #[cfg(target_os = "ios")]
+    assert_eq!(candidates[0], GpuBackend::Metal);
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios",
+        target_arch = "wasm32"
+    )))]
+    assert_eq!(candidates[0], GpuBackend::Vulkan);
+}
+
+#[test]
 fn decode_image_rejects_oversize_and_mismatched_buffers() {
     assert!(
         decode_image(&ImageSource::Rgba {

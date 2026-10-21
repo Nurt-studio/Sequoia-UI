@@ -103,6 +103,46 @@ pub struct GpuRenderer {
     pub(crate) atlas_scratch: Vec<u8>,
 }
 
+fn create_instance(backend: GpuBackend) -> wgpu::Instance {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = backend.wgpu_backends();
+    desc.flags = wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL.with_env();
+    wgpu::Instance::new(desc)
+}
+
+pub(crate) fn auto_backend_candidates() -> &'static [GpuBackend] {
+    #[cfg(target_os = "macos")]
+    {
+        &[GpuBackend::Metal]
+    }
+    #[cfg(target_os = "ios")]
+    {
+        &[GpuBackend::Metal]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        &[GpuBackend::Vulkan, GpuBackend::Dx12, GpuBackend::Gl]
+    }
+    #[cfg(target_os = "android")]
+    {
+        &[GpuBackend::Vulkan, GpuBackend::Gl]
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        &[GpuBackend::WebGpu]
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows",
+        target_os = "android",
+        target_arch = "wasm32"
+    )))]
+    {
+        &[GpuBackend::Vulkan, GpuBackend::Gl]
+    }
+}
+
 impl GpuRenderer {
     pub fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, RenderError> {
         Self::new_with_options(window, width, height, GpuOptions::default())
@@ -114,21 +154,30 @@ impl GpuRenderer {
         height: u32,
         options: GpuOptions,
     ) -> Result<Self, RenderError> {
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        if options.backend != GpuBackend::Auto {
-            desc.backends = options.backend.wgpu_backends();
-        }
-        let instance = wgpu::Instance::new(desc);
-        let surface = instance
-            .create_surface(window)
-            .map_err(RenderError::CreateSurface)?;
+        let candidates: Vec<GpuBackend> = match options.backend {
+            GpuBackend::Auto => auto_backend_candidates().to_vec(),
+            backend => vec![backend],
+        };
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: options.power_preference.wgpu(),
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|_| RenderError::NoAdapter)?;
+        let mut selected = None;
+        for backend in candidates {
+            let instance = create_instance(backend);
+            let Ok(surface) = instance.create_surface(window.clone()) else {
+                continue;
+            };
+            let Ok(adapter) =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: options.power_preference.wgpu(),
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                }))
+            else {
+                continue;
+            };
+            selected = Some((instance, surface, adapter));
+            break;
+        }
+        let (_instance, surface, adapter) = selected.ok_or(RenderError::NoAdapter)?;
         let adapter_info = adapter.get_info();
 
         log::info!(
@@ -146,7 +195,9 @@ impl GpuRenderer {
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
 
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            memory_hints: wgpu::MemoryHints::Manual {
+                suballocated_device_memory_block_size: (4 << 20)..(32 << 20),
+            },
             trace: wgpu::Trace::Off,
         }))
         .map_err(RenderError::Device)?;

@@ -871,7 +871,7 @@ impl PlatformApp {
         }
 
         let size = window.inner_size();
-        let gpu = GpuRenderer::new_with_options(
+        let mut gpu = GpuRenderer::new_with_options(
             window.clone(),
             size.width,
             size.height,
@@ -880,6 +880,7 @@ impl PlatformApp {
                 .power_preference(s.power_preference),
         )
         .map_err(|e| AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name())))?;
+        gpu.set_clear_color(window_clear_color(self.theme, s.transparent));
 
         {
             let info = gpu.adapter_info();
@@ -901,6 +902,7 @@ impl PlatformApp {
 
         let rt = Runtime::new();
         rt.set_window_id(id);
+        rt.set_root_fill(true);
         if let Some(root) = spec.root.clone() {
             rt.mount_any(root);
         }
@@ -925,7 +927,7 @@ impl PlatformApp {
             scale,
             last_cursor: None,
             settings: s.clone(),
-            next_frame: None,
+            next_frame: initial_next_frame(continuous_paced, s.fps_limit),
             fps_base: spec.title.clone(),
             fps_frames: std::collections::VecDeque::new(),
             fps_last_push: None,
@@ -1295,13 +1297,8 @@ impl ApplicationHandler<JobWake> for PlatformApp {
 
                 WindowEvent::RedrawRequested => {
                     ws.draw_frame(wid);
-                    if redraw_mode == RedrawMode::Continuous {
-                        match ws.settings.fps_limit {
-                            Some(fps) => {
-                                ws.next_frame = Some(frame_deadline(fps));
-                            }
-                            None => ws.window.request_redraw(),
-                        }
+                    if redraw_mode == RedrawMode::Continuous && !ws.continuous_paced {
+                        ws.window.request_redraw();
                     }
                 }
 
@@ -1437,6 +1434,22 @@ impl ApplicationHandler<JobWake> for PlatformApp {
 
 fn frame_deadline(fps: u32) -> Instant {
     Instant::now() + Duration::from_secs_f64(1.0 / f64::from(fps.max(1)))
+}
+
+fn initial_next_frame(continuous_paced: bool, fps_limit: Option<u32>) -> Option<Instant> {
+    if continuous_paced {
+        fps_limit.map(frame_deadline)
+    } else {
+        None
+    }
+}
+
+fn window_clear_color(theme: Theme, transparent: bool) -> Color {
+    let mut color = theme.background;
+    if transparent {
+        color.a = 0.0;
+    }
+    color
 }
 
 fn pacing_control_flow(deadline: Option<Instant>) -> ControlFlow {
@@ -1608,5 +1621,21 @@ mod tests {
         ));
         assert!(matches!(pacing_control_flow(None), ControlFlow::Wait));
         assert!(frame_deadline(60) > Instant::now());
+    }
+
+    #[test]
+    fn paced_windows_seed_first_frame_deadline() {
+        let start = Instant::now();
+        let deadline = initial_next_frame(true, Some(60)).expect("paced window has a deadline");
+        assert!(deadline > start);
+        assert!(initial_next_frame(false, Some(60)).is_none());
+        assert!(initial_next_frame(true, None).is_none());
+    }
+
+    #[test]
+    fn window_clear_color_follows_theme() {
+        let theme = Theme::dark();
+        assert_eq!(window_clear_color(theme, false), theme.background);
+        assert_eq!(window_clear_color(theme, true).a, 0.0);
     }
 }

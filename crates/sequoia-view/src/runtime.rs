@@ -25,7 +25,7 @@ use sequoia_layout::{
     sanitize_gap, track_offsets, wrap_lines,
 };
 use sequoia_reactive::{Environment, ReadSet, Signal, Watcher, capture_reads, flush_effects};
-use sequoia_style::VisualState;
+use sequoia_style::{Theme, VisualState};
 use sequoia_text::TextSystem;
 
 use crate::any::{AnyView, ErasedView};
@@ -194,6 +194,8 @@ struct Inner {
 
     viewport: Cell<Rect>,
 
+    root_fill: Cell<bool>,
+
     window_size: Signal<Size>,
 
     scale: Cell<f32>,
@@ -286,6 +288,7 @@ impl Runtime {
                 active_drag: RefCell::new(None),
                 next_drag_id: Cell::new(0),
                 viewport: Cell::new(Rect::ZERO),
+                root_fill: Cell::new(false),
                 window_size: Signal::new(Size::ZERO),
                 scale: Cell::new(1.0),
                 safe_insets: Cell::new(Edges::ZERO),
@@ -326,6 +329,10 @@ impl Runtime {
 
     pub fn viewport_rect(&self) -> Rect {
         self.inner.viewport.get()
+    }
+
+    pub fn set_root_fill(&self, enabled: bool) {
+        self.inner.root_fill.set(enabled);
     }
 
     pub fn scale(&self) -> f32 {
@@ -935,11 +942,23 @@ impl Runtime {
         self.inner.viewport.set(bounds);
 
         self.inner.window_size.set(bounds.size);
-        let mut ctx = LayoutCtx::new(text);
+        let default_font_size = self
+            .inner
+            .environment
+            .borrow()
+            .get::<Theme>()
+            .unwrap_or_else(Theme::dark)
+            .font_size;
+        let mut ctx = LayoutCtx::new(text, default_font_size);
         let c = Constraints::loose(Size::new(bounds.size.width, bounds.size.height));
         let measured = self.measure(root, c, &mut ctx);
-        self.warn_if_root_not_fill(root, bounds, measured);
-        let root_rect = Rect::new(bounds.origin, measured);
+        let root_size = if self.inner.root_fill.get() {
+            filled_root_size(self.child_layout_style(root), bounds.size, measured)
+        } else {
+            measured
+        };
+        self.warn_if_root_not_fill(root, bounds, root_size);
+        let root_rect = Rect::new(bounds.origin, root_size);
         self.arrange(root, root_rect, &mut ctx);
 
         self.layout_overlays(bounds, &mut ctx);
@@ -959,7 +978,14 @@ impl Runtime {
 
         {
             let viewport = self.inner.viewport.get();
-            let mut ctx = LayoutCtx::new(&mut *text);
+            let default_font_size = self
+                .inner
+                .environment
+                .borrow()
+                .get::<Theme>()
+                .unwrap_or_else(Theme::dark)
+                .font_size;
+            let mut ctx = LayoutCtx::new(&mut *text, default_font_size);
             self.layout_overlays(viewport, &mut ctx);
         }
 
@@ -5015,6 +5041,21 @@ fn shrink_dock_axis(remaining: f32, used: f32) -> f32 {
     }
 }
 
+fn filled_root_size(style: LayoutStyle, bounds: Size, measured: Size) -> Size {
+    Size::new(
+        if style.width.is_fit() {
+            style.clamp_width(bounds.width)
+        } else {
+            measured.width
+        },
+        if style.height.is_fit() {
+            style.clamp_height(bounds.height)
+        } else {
+            measured.height
+        },
+    )
+}
+
 fn unwrap_any(mut v: Rc<dyn ErasedView>) -> Rc<dyn ErasedView> {
     for _ in 0..64 {
         let any: Rc<dyn Any> = v.clone().as_any_rc();
@@ -5041,6 +5082,44 @@ mod tests {
             index,
             generation: 0,
         }
+    }
+
+    #[test]
+    fn filled_root_size_stretches_only_fit_axes() {
+        let bounds = Size::new(800.0, 600.0);
+        let measured = Size::new(120.0, 40.0);
+        assert_eq!(
+            filled_root_size(LayoutStyle::default(), bounds, measured),
+            bounds
+        );
+
+        let style = LayoutStyle {
+            width: Length::px(120.0),
+            height: Length::percent(50.0),
+            ..LayoutStyle::default()
+        };
+        assert_eq!(filled_root_size(style, bounds, measured), measured);
+
+        let capped = LayoutStyle {
+            max_width: 400.0,
+            max_height: 300.0,
+            ..LayoutStyle::default()
+        };
+        assert_eq!(
+            filled_root_size(capped, bounds, measured),
+            Size::new(400.0, 300.0)
+        );
+    }
+
+    #[test]
+    fn root_fill_stretches_root_to_viewport() {
+        let rt = Runtime::new();
+        rt.set_root_fill(true);
+        rt.mount(crate::Unit);
+        let mut text = TextSystem::new();
+        let bounds = Rect::from_xywh(0.0, 0.0, 800.0, 600.0);
+        rt.layout(bounds, &mut text);
+        assert_eq!(rt.rect_of(rt.root().unwrap()).unwrap().size, bounds.size);
     }
 
     #[test]

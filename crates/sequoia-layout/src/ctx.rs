@@ -5,11 +5,19 @@ use sequoia_text::{
 
 pub struct LayoutCtx<'a> {
     text: &'a mut TextSystem,
+    default_font_size: f32,
 }
 
 impl<'a> LayoutCtx<'a> {
-    pub fn new(text: &'a mut TextSystem) -> Self {
-        Self { text }
+    pub fn new(text: &'a mut TextSystem, default_font_size: f32) -> Self {
+        Self {
+            text,
+            default_font_size,
+        }
+    }
+
+    pub fn default_font_size(&self) -> f32 {
+        self.default_font_size
     }
 
     pub fn text_width(&mut self, text: &str, size: f32) -> f32 {

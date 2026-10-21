@@ -705,7 +705,7 @@ impl View for Text {
         self.style
     }
     fn intrinsic_size(&self, ctx: &mut LayoutCtx) -> Option<Size> {
-        let size = self.font_size.unwrap_or(14.0);
+        let size = self.font_size.unwrap_or_else(|| ctx.default_font_size());
         let weight = self.weight.unwrap_or_default();
         let family = self.family.as_deref();
         let fstyle = self.font_style;
