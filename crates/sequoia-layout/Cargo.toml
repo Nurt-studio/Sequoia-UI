@@ -11,8 +11,7 @@ categories.workspace = true
 [dependencies]
 sequoia-core = { workspace = true }
 sequoia-text = { workspace = true }
+
 [lints]
 workspace = true
 
-[dev-dependencies]
-taffy = "0.15.0"

@@ -1,3 +1,8 @@
+//! Buffer, texture, atlas, and image-cache management.
+//!
+//! Resources are created lazily and reused across frames; instance buffers grow
+//! geometrically up to the device's maximum buffer size.
+
 #[allow(unused_imports)]
 use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -10,6 +15,10 @@ use crate::utils::*;
 use sequoia_core::ImageSource;
 
 impl crate::renderer::GpuRenderer {
+    /// Returns a bind group for `source`, uploading or refreshing it as needed.
+    ///
+    /// Dynamic images are re-uploaded when their version changes. Decoding
+    /// failures are cached to avoid retrying broken sources every frame.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn image_bind_group(
         device: &wgpu::Device,
@@ -87,7 +96,6 @@ impl crate::renderer::GpuRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
@@ -150,6 +158,7 @@ impl crate::renderer::GpuRenderer {
         Some(bg)
     }
 
+    /// Recreates the backdrop ping-pong textures when the size changes.
     pub(crate) fn ensure_backdrop_buffers(&mut self, size: (u32, u32)) {
         let size = (size.0.max(1), size.1.max(1));
         if self.backdrop_tex.as_ref().is_some_and(|b| b.size == size) {
@@ -208,6 +217,7 @@ impl crate::renderer::GpuRenderer {
         });
     }
 
+    /// Grows `buf` to hold at least `len` instances of `item_bytes`.
     pub(crate) fn ensure_capacity(
         device: &wgpu::Device,
         buf: &mut wgpu::Buffer,
@@ -378,7 +388,6 @@ impl crate::renderer::GpuRenderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],

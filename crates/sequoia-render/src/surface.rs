@@ -1,3 +1,8 @@
+//! Embeddable GPU surfaces and per-frame rendering state.
+//!
+//! [`WgpuSurface`] lets a user renderer participate in the layout as a regular
+//! view, either drawn directly into the scene or cached offscreen.
+
 #[allow(unused_imports)]
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -8,51 +13,46 @@ use crate::utils::*;
 use sequoia_core::{Color, Edges, Length, Rect};
 use sequoia_view::{KeyEvent, LayoutStyle, PointerEvent, SurfaceInputBinding, Unit, View};
 
+/// State handed to a [`WgpuRenderer`] for one draw call.
 pub struct WgpuFrame<'a> {
     pub device: &'a wgpu::Device,
-
     pub queue: &'a wgpu::Queue,
-
     pub encoder: &'a mut wgpu::CommandEncoder,
-
     pub target: &'a wgpu::TextureView,
-
     pub depth: Option<&'a wgpu::TextureView>,
-
     pub format: wgpu::TextureFormat,
-
     pub size: (u32, u32),
-
     pub scale: f32,
-
     pub region: Region,
-
     pub adapter: wgpu::AdapterInfo,
-
     pub backend: GpuBackend,
-
     pub index: u64,
-
     pub delta: std::time::Duration,
     pub(crate) redraw: &'a Cell<bool>,
 }
 
 impl WgpuFrame<'_> {
+    /// Requests another frame from the host renderer.
     pub fn request_frame(&self) {
         self.redraw.set(true);
     }
 }
 
+/// User drawing callback invoked for each [`WgpuSurface`].
 pub trait WgpuRenderer {
+    /// Records draw commands for one frame.
     fn render(&mut self, frame: &mut WgpuFrame);
 
+    /// Returns `true` when cached content needs to be redrawn.
     fn is_dirty(&self) -> bool {
         true
     }
 
+    /// Marks cached content as up to date.
     fn mark_clean(&mut self) {}
 }
 
+/// A counter for frames that should be requested proactively.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PendingFrames {
     pub(crate) pending: u32,
@@ -73,6 +73,7 @@ impl PendingFrames {
         }
     }
 
+    /// Consumes one pending frame and invokes `request` if one was available.
     pub fn tick(&mut self, request: impl FnOnce()) -> u32 {
         if self.pending > 0 {
             self.pending -= 1;
@@ -86,6 +87,7 @@ impl PendingFrames {
     }
 }
 
+/// Tracks whether a hash has changed since the previous call.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Revision {
     pub(crate) last: u64,
@@ -100,6 +102,7 @@ impl Revision {
         }
     }
 
+    /// Updates the stored hash and reports whether it differs from the last one.
     pub fn changed(&mut self, hash: u64) -> bool {
         let changed = !self.seen || self.last != hash;
         self.last = hash;
@@ -108,28 +111,25 @@ impl Revision {
     }
 }
 
+/// Callback used to draw a surface into an arbitrary [`WgpuFrame`].
 #[allow(clippy::type_complexity)]
 pub(crate) type SurfaceDrawFn = dyn for<'a> Fn(&mut WgpuFrame<'a>);
 
+/// Visual decoration drawn around a surface.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SurfaceFrame {
     pub(crate) background: Option<[f32; 4]>,
-
     pub(crate) border: Option<([f32; 4], f32)>,
-
     pub(crate) radius: f32,
-
     pub(crate) inset: [f32; 4],
 }
 
+/// Shared, type-erased binding between a surface view and the renderer.
 pub(crate) struct SurfaceBinding {
     pub(crate) draw: Box<SurfaceDrawFn>,
     pub(crate) frame: SurfaceFrame,
-
     pub(crate) key: usize,
-
     pub(crate) cached: bool,
-
     pub(crate) samples: u32,
     pub(crate) check_dirty: Box<dyn Fn() -> bool>,
     pub(crate) mark_clean: RefCell<Box<dyn FnMut()>>,
@@ -143,16 +143,18 @@ pub(crate) fn sanitize_samples(samples: u32) -> u32 {
     }
 }
 
+/// A cached surface that must be redrawn or blitted during the frame.
 pub(crate) struct CachedJob {
     pub(crate) binding: Rc<SurfaceBinding>,
-
     pub(crate) size: (u32, u32),
-
     pub(crate) full: Rect,
-
     pub(crate) screen: Rect,
 }
 
+/// A view that embeds a [`WgpuRenderer`] in the Sequoia layout.
+///
+/// The surface fills its parent by default. Cloning a surface shares the
+/// underlying renderer.
 pub struct WgpuSurface<R> {
     pub(crate) renderer: Rc<RefCell<R>>,
     pub(crate) style: LayoutStyle,
@@ -190,6 +192,7 @@ impl<R> Clone for WgpuSurface<R> {
 }
 
 impl<R: WgpuRenderer + 'static> WgpuSurface<R> {
+    /// Creates a surface that fills its parent and shares ownership of `renderer`.
     pub fn new(renderer: R) -> Self {
         Self {
             renderer: Rc::new(RefCell::new(renderer)),

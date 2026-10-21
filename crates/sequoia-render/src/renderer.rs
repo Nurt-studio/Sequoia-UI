@@ -1,3 +1,9 @@
+//! Frame orchestration for the main window surface.
+//!
+//! [`GpuRenderer`] owns the wgpu device, window surface, pipelines, caches, and
+//! reusable instance buffers. Each call to [`GpuRenderer::render`] prepares the
+//! glyph atlas and cached surfaces, groups the scene, and records the passes.
+
 #[allow(unused_imports)]
 use std::any::Any;
 use std::cell::Cell;
@@ -20,6 +26,7 @@ use crate::utils::*;
 use sequoia_core::{Color, Rect, RenderList};
 use sequoia_view::SurfaceDraw;
 
+/// Owns the wgpu device and window surface and renders frames into it.
 pub struct GpuRenderer {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
@@ -28,7 +35,6 @@ pub struct GpuRenderer {
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) quad_pipeline: wgpu::RenderPipeline,
-
     pub(crate) quad_pipeline_opaque: wgpu::RenderPipeline,
     pub(crate) glyph_pipeline: wgpu::RenderPipeline,
     pub(crate) atlas_bgl: wgpu::BindGroupLayout,
@@ -42,7 +48,6 @@ pub struct GpuRenderer {
     pub(crate) blit_cap: usize,
     pub(crate) blit_pipeline: wgpu::RenderPipeline,
     pub(crate) blit_sampler: wgpu::Sampler,
-
     pub(crate) present_buf: wgpu::Buffer,
     pub(crate) present_cap: usize,
     pub(crate) backdrop_buf: wgpu::Buffer,
@@ -55,22 +60,15 @@ pub struct GpuRenderer {
     pub(crate) backdrop_tex: Option<BackdropBuffers>,
     pub(crate) capacity: usize,
     pub(crate) glyph_capacity: usize,
-
     pub(crate) quad_ceiling: usize,
-
     pub(crate) glyph_ceiling: usize,
-
     pub(crate) image_ceiling: usize,
-
     pub(crate) gradient_ceiling: usize,
     pub(crate) atlas_tex: Option<(wgpu::Texture, wgpu::BindGroup)>,
     pub(crate) atlas_synced: Option<(u64, u32, u32)>,
     pub(crate) surface_tex: HashMap<usize, CachedSurface>,
-
     pub(crate) depth_tex: Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>,
-
     pub(crate) clear_color: Color,
-
     pub(crate) images: HashMap<u64, GpuImage>,
     pub(crate) image_order: VecDeque<u64>,
     pub(crate) image_failures: HashSet<u64>,
@@ -79,13 +77,9 @@ pub struct GpuRenderer {
     pub(crate) last_frame: Option<Instant>,
     pub(crate) frame_index: u64,
     pub(crate) redraw: Cell<bool>,
-
     pub(crate) skipped: Cell<Option<FrameSkip>>,
-
     pub(crate) stats: RenderStats,
-
     pub(crate) warned_filter_combo: bool,
-
     pub(crate) scratch_quads: Vec<GpuQuad>,
     pub(crate) scratch_glyphs: Vec<GpuGlyph>,
     pub(crate) scratch_runs: Vec<GuiRun>,
@@ -95,7 +89,6 @@ pub struct GpuRenderer {
     pub(crate) scratch_images: Vec<BlitQuad>,
     pub(crate) scratch_image_keys: Vec<u64>,
     pub(crate) scratch_gradients: Vec<GpuGradient>,
-
     pub(crate) scratch_image_draws: Vec<(u32, wgpu::BindGroup)>,
     pub(crate) scratch_seen: Vec<usize>,
     pub(crate) scratch_cached: Vec<CachedJob>,
@@ -110,6 +103,7 @@ fn create_instance(backend: GpuBackend) -> wgpu::Instance {
     wgpu::Instance::new(desc)
 }
 
+/// Returns backend candidates in preference order for the current platform.
 pub(crate) fn auto_backend_candidates() -> &'static [GpuBackend] {
     #[cfg(target_os = "macos")]
     {
@@ -144,10 +138,15 @@ pub(crate) fn auto_backend_candidates() -> &'static [GpuBackend] {
 }
 
 impl GpuRenderer {
+    /// Creates a renderer for `window` using default options.
     pub fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, RenderError> {
         Self::new_with_options(window, width, height, GpuOptions::default())
     }
 
+    /// Creates a renderer using `options`.
+    ///
+    /// When the backend is [`GpuBackend::Auto`], platform candidates are tried
+    /// in order until an adapter and surface can be created.
     pub fn new_with_options(
         window: Arc<Window>,
         width: u32,
@@ -194,7 +193,6 @@ impl GpuRenderer {
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
-
             memory_hints: wgpu::MemoryHints::Manual {
                 suballocated_device_memory_block_size: (4 << 20)..(32 << 20),
             },
@@ -232,7 +230,6 @@ impl GpuRenderer {
             label: Some("sequoia-screen-bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -431,38 +428,47 @@ impl GpuRenderer {
         })
     }
 
+    /// Returns information about the selected adapter.
     pub fn adapter_info(&self) -> wgpu::AdapterInfo {
         self.adapter.clone()
     }
 
+    /// Returns the backend selected at creation time.
     pub fn backend(&self) -> GpuBackend {
         self.backend
     }
 
+    /// Consumes a pending redraw request made through [`WgpuFrame::request_frame`].
     pub fn take_redraw_request(&self) -> bool {
         self.redraw.take()
     }
 
+    /// Consumes the reason for the last skipped frame, if any.
     pub fn take_frame_skip(&self) -> Option<FrameSkip> {
         self.skipped.take()
     }
 
+    /// Returns the accumulated render statistics without resetting them.
     pub fn stats(&self) -> RenderStats {
         self.stats
     }
 
+    /// Returns the accumulated render statistics and resets the counters.
     pub fn take_stats(&mut self) -> RenderStats {
         std::mem::take(&mut self.stats)
     }
 
+    /// Sets the color used to clear the window and cached surfaces.
     pub fn set_clear_color(&mut self, color: Color) {
         self.clear_color = color;
     }
 
+    /// Returns the current clear color.
     pub fn clear_color(&self) -> Color {
         self.clear_color
     }
 
+    /// Destroys all cached image textures.
     pub fn clear_image_cache(&mut self) {
         for (_, img) in self.images.drain() {
             img.texture.destroy();
@@ -471,6 +477,7 @@ impl GpuRenderer {
         self.image_failures.clear();
     }
 
+    /// Destroys the cached texture for one image key.
     pub fn remove_image(&mut self, key: u64) {
         if let Some(img) = self.images.remove(&key) {
             img.texture.destroy();
@@ -479,12 +486,18 @@ impl GpuRenderer {
         self.image_failures.remove(&key);
     }
 
+    /// Resizes the window surface; zero dimensions are clamped to one.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Renders `list` into the window surface.
+    ///
+    /// `scale` converts logical coordinates to physical pixels and must be
+    /// positive; invalid values fall back to `1.0`. `surfaces` contains the
+    /// embedded surface callbacks produced by the view system.
     pub fn render(
         &mut self,
         list: &RenderList,
@@ -548,6 +561,7 @@ impl GpuRenderer {
 
         let fb = (self.config.width, self.config.height);
 
+        // Backdrops and filters render into an intermediate target first.
         let has_backdrops = list.has_backdrops();
 
         let has_filters = list.has_filters();
@@ -783,6 +797,8 @@ impl GpuRenderer {
                 .write_buffer(&self.blit_buf, 0, bytemuck::cast_slice(blit_quads));
         }
 
+        // Convert paint items into instanced runs, splitting the scene around
+        // backdrop markers and filter ranges.
         let viewport = Rect::from_xywh(0.0, 0.0, fb.0 as f32 / s, fb.1 as f32 / s);
         let quads = &mut self.scratch_quads;
         let glyphs = &mut self.scratch_glyphs;
@@ -1166,6 +1182,7 @@ impl GpuRenderer {
             }
         }
 
+        // Record the concrete passes.
         let fb_drawn = !regions.is_empty()
             || !frame_quads.is_empty()
             || !blit_quads.is_empty()
@@ -1690,6 +1707,7 @@ impl GpuRenderer {
                 }
             }
         }
+        // Publish statistics and present the finished frame.
         self.stats.quad_instances = quads.len() as u64;
         self.stats.glyph_instances = glyphs.len() as u64;
         self.stats.image_instances = images.len() as u64;

@@ -4,6 +4,7 @@ use std::any::Any;
 use crate::types::*;
 
 impl crate::renderer::GpuRenderer {
+    /// Renders filter content into an offscreen buffer, then composites it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_filter_at(
         filter_pipeline: &wgpu::RenderPipeline,

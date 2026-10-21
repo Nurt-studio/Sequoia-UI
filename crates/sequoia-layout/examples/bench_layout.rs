@@ -20,28 +20,6 @@ fn main() {
     let _ = resolve_tracks(&tracks, &content, 1_000_000.0, 0.0);
     println!("sequoia resolve_tracks {}: {:?}", tracks.len(), t.elapsed());
 
-    use taffy::prelude::*;
-    let mut taffy = TaffyTree::<()>::new();
-    let children: Vec<NodeId> = (0..n)
-        .map(|_| taffy.new_leaf(Style::default()).unwrap())
-        .collect();
-    let root = taffy
-        .new_with_children(
-            Style {
-                display: Display::Flex,
-                size: Size {
-                    width: Dimension::from_length(1_000_000.0),
-                    height: Dimension::from_length(100.0),
-                },
-                ..Default::default()
-            },
-            &children,
-        )
-        .unwrap();
-    let t = Instant::now();
-    taffy.compute_layout(root, Size::MAX_CONTENT).unwrap();
-    println!("taffy flex {n}: {:?}", t.elapsed());
-
     let _ = ContainerStyle::default();
     let _ = Axis::Horizontal;
 }

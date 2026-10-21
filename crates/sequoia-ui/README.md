@@ -10,7 +10,7 @@ prelude.
 
 ```toml
 [dependencies]
-sequoia-ui = "0.1.0"
+sequoia-ui = "0.1"
 ```
 
 Requires Rust 1.88 or newer.

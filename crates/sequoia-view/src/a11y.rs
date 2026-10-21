@@ -20,6 +20,8 @@ pub enum AccessibleRole {
     Progress,
     Image,
     Group,
+    Radio,
+    RadioGroup,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

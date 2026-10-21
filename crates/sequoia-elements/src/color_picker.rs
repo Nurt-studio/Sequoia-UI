@@ -1,6 +1,6 @@
 use sequoia_core::{BrushStop, Color, Fill, Length, Point, Rect};
 use sequoia_input::{CursorIcon, Event, PointerButton, PointerEvent};
-use sequoia_layout::{Align, LayoutStyle};
+use sequoia_layout::{Align, Inset, LayoutStyle, Position};
 use sequoia_reactive::{EffectScope, Environment, Signal, batch, effect};
 use sequoia_style::VisualState;
 use sequoia_view::{
@@ -125,20 +125,98 @@ fn rgb_to_hex(r: u8, g: u8, b: u8) -> String {
 }
 
 fn parse_hex(s: &str) -> Option<String> {
-    let mut clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if clean.len() == 3 {
-        clean = clean.chars().flat_map(|c| [c, c]).collect::<String>();
+    let mut clean = s.trim();
+    if let Some(rest) = clean.strip_prefix('#') {
+        clean = rest;
+    } else if let Some(rest) = clean
+        .strip_prefix("0x")
+        .or_else(|| clean.strip_prefix("0X"))
+    {
+        clean = rest;
     }
-    if clean.len() == 6 {
-        Some(clean.to_uppercase())
-    } else {
-        None
+    if clean.is_empty() || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
     }
+    let rgb = match clean.len() {
+        3 => clean.chars().flat_map(|c| [c, c]).collect::<String>(),
+        4 => clean[..3].chars().flat_map(|c| [c, c]).collect::<String>(),
+        6 => clean.to_string(),
+        8 => clean[..6].to_string(),
+        _ => return None,
+    };
+    Some(rgb.to_uppercase())
 }
 
 fn hex_to_rgb(hx: &str) -> (u8, u8, u8) {
     let n = |i: usize| u8::from_str_radix(&hx[i..i + 2], 16).unwrap_or(0);
     (n(0), n(2), n(4))
+}
+
+fn color_components(s: &str) -> Vec<(f32, bool)> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let negative = bytes[i] == b'-';
+        let start_digit = if negative { i + 1 } else { i };
+        if start_digit >= bytes.len() || !bytes[start_digit].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i = start_digit;
+        let mut dot = false;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'0'..=b'9' => i += 1,
+                b'.' if !dot => {
+                    dot = true;
+                    i += 1;
+                }
+                _ => break,
+            }
+        }
+        let Ok(value) = s[start..i].parse::<f32>() else {
+            continue;
+        };
+        let mut j = i;
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        let percent = j < bytes.len() && bytes[j] == b'%';
+        out.push((value, percent));
+    }
+    out
+}
+
+fn channel_byte(value: f32, percent: bool) -> u8 {
+    let v = if percent { value * 2.55 } else { value };
+    clampf(v, 0.0, 255.0).round() as u8
+}
+
+fn parse_color_text(s: &str) -> Option<(u8, u8, u8)> {
+    if let Some(hx) = parse_hex(s) {
+        return Some(hex_to_rgb(&hx));
+    }
+    let low = s.trim().to_ascii_lowercase();
+    let nums = color_components(&low);
+    if nums.len() < 3 {
+        return None;
+    }
+    if low.starts_with("rgb") {
+        return Some((
+            channel_byte(nums[0].0, nums[0].1),
+            channel_byte(nums[1].0, nums[1].1),
+            channel_byte(nums[2].0, nums[2].1),
+        ));
+    }
+    if low.starts_with("hsl") {
+        let h = nums[0].0;
+        let sat = clampf(nums[1].0, 0.0, 100.0) / 100.0;
+        let light = clampf(nums[2].0, 0.0, 100.0) / 100.0;
+        return Some(hsl_to_rgb(h, sat, light));
+    }
+    None
 }
 
 #[allow(dead_code)]
@@ -187,6 +265,7 @@ pub struct ColorPicker {
 
     pos: Signal<(f32, f32)>,
     drag: Rc<Cell<Option<PickerDrag>>>,
+    effects: Rc<RefCell<Option<EffectScope>>>,
 }
 
 pub type Picker = ColorPicker;
@@ -225,6 +304,7 @@ impl ColorPicker {
             on_close: Rc::new(RefCell::new(None)),
             pos: Signal::new((90.0, 70.0)),
             drag: Rc::new(Cell::new(None)),
+            effects: Rc::new(RefCell::new(None)),
         };
         p.sync_channels();
         p
@@ -251,11 +331,18 @@ impl ColorPicker {
     }
 
     fn close(&self) {
+        self.closed.set(true);
         if let Some(f) = self.on_close.borrow().clone() {
             f();
-        } else {
-            self.closed.set(true);
         }
+    }
+
+    pub fn open(&self) {
+        self.closed.set(false);
+    }
+
+    pub fn is_open(&self) -> bool {
+        !self.closed.get_untracked()
     }
 
     pub fn cur_rgb(&self) -> (u8, u8, u8) {
@@ -506,24 +593,10 @@ impl ColorPicker {
             return;
         };
         let txt = txt.trim().to_string();
-        if let Some(hx) = parse_hex(&txt) {
-            self.apply_hex(&hx);
-            self.toast(format!("Pasted #{hx}"));
+        if let Some((r, g, b)) = parse_color_text(&txt) {
+            self.set_rgb(r, g, b);
+            self.toast(format!("Pasted #{}", self.cur_hex()));
             return;
-        }
-        let low = txt.to_lowercase();
-        if low.contains("rgb") {
-            let nums: Vec<u8> = low
-                .split(|c: char| !c.is_ascii_digit())
-                .filter(|s| !s.is_empty())
-                .filter_map(|s| s.parse::<u16>().ok())
-                .map(|n| n.min(255) as u8)
-                .collect();
-            if nums.len() >= 3 {
-                self.set_rgb(nums[0], nums[1], nums[2]);
-                self.toast(format!("Pasted #{}", self.cur_hex()));
-                return;
-            }
         }
         self.toast("No color found in clipboard");
     }
@@ -556,17 +629,26 @@ impl ColorPicker {
         self.swatches.set(sw);
     }
 
+    fn effect_handle(&self) -> Self {
+        let mut handle = self.clone();
+        handle.effects = Rc::new(RefCell::new(None));
+        handle
+    }
+
     pub fn install_effects(&self) {
+        if self.effects.borrow().is_some() {
+            return;
+        }
         self.rec.borrow_mut().last_hex = self.cur_hex();
 
-        let p = self.clone();
+        let p = self.effect_handle();
         let s1 = effect(move || {
             let _ = (p.hue.get(), p.sat.get(), p.val.get(), p.model.get());
             p.note_change(p.cur_hex());
             p.sync_channels();
         });
 
-        let p = self.clone();
+        let p = self.effect_handle();
         let s2 = effect(move || {
             let cur = [p.ch[0].get(), p.ch[1].get(), p.ch[2].get()];
             let want = [p.channel_value(0), p.channel_value(1), p.channel_value(2)];
@@ -588,7 +670,7 @@ impl ColorPicker {
             }
         });
 
-        let p = self.clone();
+        let p = self.effect_handle();
         let s3 = effect(move || {
             let t = p.hex_text.get();
             if t.len() == 6
@@ -599,10 +681,14 @@ impl ColorPicker {
             }
         });
 
-        {
-            let mut scope = EffectScope::new();
-            scope.extend([s1, s2, s3]);
-            scope.leak();
+        let mut scope = EffectScope::new();
+        scope.extend([s1, s2, s3]);
+        *self.effects.borrow_mut() = Some(scope);
+    }
+
+    pub fn uninstall_effects(&self) {
+        if let Some(mut scope) = self.effects.borrow_mut().take() {
+            scope.dispose_all();
         }
     }
 }
@@ -915,6 +1001,7 @@ impl View for SwatchesView {
 
 impl ColorPicker {
     pub fn panel(&self) -> impl View + 'static {
+        self.install_effects();
         let p = self.clone();
         let title = Text::with(move || {
             let dirty = p.cur_hex() != p.ref_hex.get();
@@ -1167,22 +1254,49 @@ pub struct PickerFloat {
     picker: ColorPicker,
 }
 
+impl PickerFloat {
+    fn picker_style(&self) -> LayoutStyle {
+        let (x, y) = self.picker.pos.get_untracked();
+        LayoutStyle {
+            width: Length::Fit,
+            height: Length::Fit,
+            position: Position::Absolute(Inset::xy(x, y)),
+            ..LayoutStyle::default()
+        }
+    }
+}
+
 impl View for PickerFloat {
     fn body(&self) -> impl View + 'static {
         let _ = self.picker.pos.get();
+        let _ = self.picker.closed.get();
         Unit
     }
 
     fn children_override(&self) -> Option<Vec<AnyView>> {
+        if self.picker.closed.get() {
+            return Some(Vec::new());
+        }
         Some(vec![AnyView::new(self.picker.panel())])
     }
 
     fn layout_style(&self) -> LayoutStyle {
-        LayoutStyle {
-            width: Length::Fit,
-            height: Length::Fit,
-            ..LayoutStyle::default()
-        }
+        self.picker_style()
+    }
+
+    fn layout_style_ctx(
+        &self,
+        _rt: &sequoia_view::Runtime,
+        _el: sequoia_view::ElementId,
+    ) -> LayoutStyle {
+        self.picker_style()
+    }
+
+    fn accessibility(&self) -> Option<sequoia_view::Accessible> {
+        Some(sequoia_view::Accessible::new(
+            sequoia_view::AccessibleRole::Group,
+            "Color picker",
+        ))
     }
 
     fn has_visual_state(&self) -> bool {
@@ -1198,6 +1312,9 @@ impl View for PickerFloat {
     }
 
     fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
+        if !self.picker.is_open() {
+            return;
+        }
         match event {
             Event::Pointer(PointerEvent::Down {
                 button: PointerButton::Left,
@@ -1247,6 +1364,73 @@ impl View for PickerFloat {
                 self.picker.drag.set(None);
             }
             _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_parser_is_strict_and_accepts_short_forms() {
+        assert_eq!(parse_hex("#abc"), Some("AABBCC".to_string()));
+        assert_eq!(parse_hex("A1b2C3"), Some("A1B2C3".to_string()));
+        assert_eq!(parse_hex("0x112233"), Some("112233".to_string()));
+        assert_eq!(parse_hex("11223344"), Some("112233".to_string()));
+        assert_eq!(parse_hex("abcd"), Some("AABBCC".to_string()));
+        assert_eq!(parse_hex("rgb(255, 0, 0)"), None);
+        assert_eq!(parse_hex("GGGGGG"), None);
+        assert_eq!(parse_hex("#12345"), None);
+        assert_eq!(parse_hex(""), None);
+    }
+
+    #[test]
+    fn color_text_parser_handles_css_rgb_and_hsl() {
+        assert_eq!(parse_color_text("#f00"), Some((255, 0, 0)));
+        assert_eq!(parse_color_text("rgb(255, 0, 0)"), Some((255, 0, 0)));
+        assert_eq!(parse_color_text("rgb(100%, 0%, 50%)"), Some((255, 0, 128)));
+        assert_eq!(
+            parse_color_text("rgba(10, 20, 30, 0.5)"),
+            Some((10, 20, 30))
+        );
+        assert_eq!(parse_color_text("hsl(120, 100%, 50%)"), Some((0, 255, 0)));
+        assert_eq!(parse_color_text("nope"), None);
+    }
+
+    #[test]
+    fn set_hex_updates_picker_and_channel_text() {
+        let picker = ColorPicker::new();
+        picker.install_effects();
+        picker.install_effects();
+        picker.set_hex("#FF0000");
+        assert_eq!(picker.cur_hex(), "FF0000");
+        assert_eq!(picker.hex_text.get_untracked(), "FF0000");
+        picker.set_hex("#00ff00");
+        assert_eq!(picker.cur_hex(), "00FF00");
+    }
+
+    #[test]
+    fn close_and_open_toggle_floating_state() {
+        let picker = ColorPicker::new();
+        assert!(picker.is_open());
+        picker.close();
+        assert!(!picker.is_open());
+        picker.open();
+        assert!(picker.is_open());
+    }
+
+    #[test]
+    fn floating_uses_the_position_signal() {
+        let picker = ColorPicker::new();
+        picker.pos_signal().set((123.0, 45.0));
+        let style = picker.floating().picker_style();
+        match style.position {
+            Position::Absolute(inset) => {
+                assert_eq!(inset.left, Some(123.0));
+                assert_eq!(inset.top, Some(45.0));
+            }
+            _ => panic!("expected absolute position"),
         }
     }
 }

@@ -1,3 +1,5 @@
+//! Shared helpers for image decoding, colors, rectangles, and buffer limits.
+
 #[allow(unused_imports)]
 use std::any::Any;
 
@@ -11,6 +13,7 @@ pub(crate) fn find_image_source(items: &[RenderItem], key: u64) -> Option<ImageS
     })
 }
 
+/// Decodes an image into RGBA8, rejecting sources outside the upload limits.
 pub(crate) fn decode_image(source: &ImageSource) -> Option<(u32, u32, Vec<u8>)> {
     match source {
         ImageSource::File(path) => {
@@ -72,7 +75,6 @@ pub(crate) fn decode_image(source: &ImageSource) -> Option<(u32, u32, Vec<u8>)> 
             }
             Some((width, height, data.to_vec()))
         }
-
         _ => None,
     }
 }
@@ -119,6 +121,7 @@ pub(crate) fn clear_color_linear(color: Color) -> wgpu::Color {
     clear_color_authored(color.to_linear())
 }
 
+/// Converts a logical rectangle to physical pixels, clipped to the framebuffer.
 pub(crate) fn phys_rect(rect: Rect, scale: f32, fb_w: u32, fb_h: u32) -> Option<Rect> {
     let x0 = (rect.left() * scale).max(0.0);
     let y0 = (rect.top() * scale).max(0.0);

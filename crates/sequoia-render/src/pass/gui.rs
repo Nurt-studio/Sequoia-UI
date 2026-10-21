@@ -5,6 +5,7 @@ use crate::scene::grouping::quad_range_is_opaque;
 use crate::types::*;
 
 impl crate::renderer::GpuRenderer {
+    /// Records all instanced runs in order, selecting a pipeline for each.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_gui_runs(
         pass: &mut wgpu::RenderPass<'_>,

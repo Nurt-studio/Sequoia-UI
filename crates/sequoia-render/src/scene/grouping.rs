@@ -5,6 +5,10 @@ use crate::types::*;
 use crate::utils::*;
 use sequoia_core::{Rect, RenderItem};
 
+/// Converts paint items into GPU instances and contiguous draw runs.
+///
+/// Items outside the viewport are culled. Items that exceed the per-buffer
+/// ceilings are dropped and counted in the returned tuple.
 pub(crate) fn group_runs(
     items: &[RenderItem],
     clips: &[Option<sequoia_core::RoundedClip>],
@@ -330,6 +334,7 @@ pub(crate) fn group_runs(
     )
 }
 
+/// Offsets run ranges by the instance counts already present in the buffers.
 pub(crate) fn shift_gui_runs(
     runs: &[GuiRun],
     quad_base: u32,

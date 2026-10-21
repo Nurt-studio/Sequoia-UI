@@ -935,6 +935,37 @@ impl Runtime {
     }
 
     pub fn layout(&self, bounds: Rect, text: &mut TextSystem) {
+        const MAX_SETTLE_PASSES: u8 = 4;
+        for pass in 0..MAX_SETTLE_PASSES {
+            self.layout_once(bounds, text);
+            if !self.has_pending_layout() {
+                return;
+            }
+            if pass + 1 < MAX_SETTLE_PASSES {
+                self.tick();
+            }
+        }
+        log::warn!(
+            "sequoia-view: layout still dirty after {MAX_SETTLE_PASSES} passes; \
+             a view is scheduling layout while being laid out"
+        );
+    }
+
+    fn has_pending_layout(&self) -> bool {
+        let queue = self.inner.queue.borrow();
+        if queue.is_empty() {
+            return false;
+        }
+        let arena = self.inner.arena.borrow();
+        queue.iter().any(|id| {
+            arena
+                .get(*id)
+                .map(|e| e.dirty.needs_layout())
+                .unwrap_or(false)
+        })
+    }
+
+    fn layout_once(&self, bounds: Rect, text: &mut TextSystem) {
         let Some(root) = self.inner.root.get() else {
             return;
         };

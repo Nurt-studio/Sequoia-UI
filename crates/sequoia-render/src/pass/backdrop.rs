@@ -6,6 +6,7 @@ use crate::utils::*;
 use sequoia_core::Color;
 
 impl crate::renderer::GpuRenderer {
+    /// Returns how far the blur kernel extends beyond the effect rectangle.
     pub(crate) fn backdrop_kernel_reach(blur_px: f32) -> f32 {
         if blur_px < 0.5 {
             1.0
@@ -39,6 +40,7 @@ impl crate::renderer::GpuRenderer {
         ))
     }
 
+    /// Copies the affected region and draws one backdrop marker over it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_backdrop_marker_at(
         backdrop_pipeline: &wgpu::RenderPipeline,

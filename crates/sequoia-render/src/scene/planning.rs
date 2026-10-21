@@ -4,6 +4,10 @@ use std::any::Any;
 use crate::types::*;
 use sequoia_core::{BackdropSpan, FilterSpan};
 
+/// Merges backdrop markers and filter ranges into ordered compositing steps.
+///
+/// A filter consumes the items in its range; markers or nested filters that
+/// fall inside an already consumed range are skipped.
 pub(crate) fn plan_composite_ops(
     backdrops: &[BackdropSpan],
     filters: &[FilterSpan],

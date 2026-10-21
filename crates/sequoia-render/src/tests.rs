@@ -1,3 +1,8 @@
+//! Unit tests for scene grouping, planning, options, and the embedded shader.
+//!
+//! Rendering itself requires a GPU adapter, so most tests exercise the pure
+//! conversion and planning paths.
+
 use crate::gpu::shaders::SHADER;
 use crate::renderer::GpuRenderer;
 use crate::scene::grouping::*;
@@ -1344,7 +1349,6 @@ fn pointer_tag(ev: &PointerEvent) -> &'static str {
         PointerEvent::Up { .. } => "up",
         PointerEvent::Cancel => "cancel",
         PointerEvent::Wheel { .. } => "wheel",
-
         _ => "unknown",
     }
 }

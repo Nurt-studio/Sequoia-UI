@@ -1,4 +1,11 @@
+//! Embedded WGSL shader shared by all render pipelines.
+//!
+//! Each pipeline selects a vertex/fragment entry point from this module, so the
+//! geometry helpers and effect code stay identical across draw paths.
+
+/// WGSL source implementing quads, glyphs, blits, backdrops, and gradients.
 pub(crate) const SHADER: &str = r#"
+// Screen size in physical pixels.
 struct Screen {
     size: vec4<f32>,
 };
@@ -74,6 +81,7 @@ fn vs_quad(
     return out;
 }
 
+// Signed-distance helpers for rounded rectangles and clipping.
 fn sd_rounded_box(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
     let rr = clamp(r, 0.0, min(half_size.x, half_size.y));
     let b = half_size - vec2<f32>(rr, rr);
@@ -145,6 +153,7 @@ fn fs_quad(frag: VsQuad) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb * a_out, a_out);
 }
 
+// Glyph atlas sampling.
 @group(1) @binding(0) var atlas_tex: texture_2d<f32>;
 @group(1) @binding(1) var atlas_samp: sampler;
 
@@ -206,6 +215,7 @@ fn fs_glyph(frag: VsGlyph) -> @location(0) vec4<f32> {
     return vec4<f32>(frag.color.rgb * a, a);
 }
 
+// Blit sampling for images and cached sub-surfaces.
 @group(1) @binding(0) var blit_tex: texture_2d<f32>;
 @group(1) @binding(1) var blit_samp: sampler;
 
@@ -247,6 +257,7 @@ fn vs_blit(
     return out;
 }
 
+// Cached surfaces and images are authored in sRGB.
 fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         return c / 12.92;
@@ -270,6 +281,7 @@ fn fs_blit(frag: VsBlit) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb * a, a);
 }
 
+// Backdrop blur, dimming, noise, and masking.
 struct VsBackdrop {
     @builtin(position) pos: vec4<f32>,
     @location(0) rect: vec4<f32>,
@@ -383,6 +395,7 @@ fn fs_present(frag: VsBlit) -> @location(0) vec4<f32> {
     return vec4<f32>(t.rgb, t.a);
 }
 
+// Gradient stops, positions, and linear/radial evaluation.
 struct VsGradient {
     @builtin(position) pos: vec4<f32>,
     @location(0) world: vec2<f32>,

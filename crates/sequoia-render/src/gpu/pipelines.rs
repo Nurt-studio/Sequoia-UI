@@ -1,3 +1,8 @@
+//! Render pipeline construction and vertex layouts for every draw path.
+//!
+//! Each pipeline uses instanced triangle strips; the attribute offsets mirror
+//! the `#[repr(C)]` instance structs in [`crate::types`].
+
 use crate::gpu::shaders::SHADER;
 use crate::types::*;
 

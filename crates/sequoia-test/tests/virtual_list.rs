@@ -52,14 +52,14 @@ fn key_map(h: &Harness, vl: sequoia_view::ElementId) -> HashMap<u64, sequoia_vie
 }
 
 #[test]
-fn fallback_window_before_first_paint() {
+fn first_layout_already_uses_the_real_window() {
     let h = harness(1000);
     h.layout(W, H);
     let vl = vl_of(&h);
     assert_eq!(
         h.children(vl).len(),
-        64,
-        "FALLBACK_WINDOW before first paint"
+        25,
+        "layout settles the viewport before paint, no fallback frame"
     );
 }
 

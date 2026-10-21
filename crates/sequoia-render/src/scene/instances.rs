@@ -6,6 +6,7 @@ use crate::types::*;
 use crate::utils::*;
 use sequoia_core::{BackdropSpan, FilterSpan, Rect};
 
+/// Builds a blit instance that maps a visible screen area to a cached surface.
 pub(crate) fn blit_instance(screen: Rect, full: Rect) -> BlitQuad {
     let u0 = (screen.left() - full.left()) / full.size.width;
     let v0 = (screen.top() - full.top()) / full.size.height;
@@ -50,6 +51,7 @@ pub(crate) fn quad_instance(
     }
 }
 
+/// Emits decoration quads for a surface and returns its content rectangle.
 pub(crate) fn surface_frame(
     outer: Rect,
     frame: &SurfaceFrame,
@@ -128,7 +130,6 @@ impl crate::renderer::GpuRenderer {
             dim: linear_rgba(span.draw.dim),
             params: [blur, span.draw.noise, span.draw.radius * s, clip_radius],
             clip_rect,
-
             mask: span.draw.mask.mask_vec(),
         })
     }
