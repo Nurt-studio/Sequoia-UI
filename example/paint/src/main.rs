@@ -85,7 +85,7 @@ fn main() {
     app = accelerator(app, &state, Key::from_char('x'), ctrl, Action::Cut);
     app = accelerator(app, &state, Key::from_char('v'), ctrl, Action::Paste);
     app = accelerator(app, &state, Key::DELETE, Modifiers::NONE, Action::Cut);
-    app = accelerator(app, &state, Key::from_char('+'), ctrl, Action::ZoomIn);
+    app = accelerator(app, &state, Key::from_char('+'), ctrl_shift, Action::ZoomIn);
     app = accelerator(app, &state, Key::from_char('-'), ctrl, Action::ZoomOut);
 
     if let Err(e) = app.run() {
