@@ -58,9 +58,6 @@ pub const LINE_WIDTHS: [f32; 4] = [1.0, 3.0, 5.0, 8.0];
 pub const DEFAULT_DOC_W: u32 = 1152;
 pub const DEFAULT_DOC_H: u32 = 600;
 pub const MAX_UNDO: usize = 30;
-pub const DOC_IMAGE_ID: u64 = 0x5041_494E_0001;
-pub const SEL_IMAGE_ID: u64 = 0x5041_494E_0002;
-
 pub const COL_BG: Color = Color::hex(0xF3F3F3);
 pub const COL_RIBBON: Color = Color::hex(0xFCFCFC);
 pub const COL_BORDER: Color = Color::hex(0xD6D6D6);
@@ -364,7 +361,6 @@ pub struct Control {
     pub icon: Icon,
     pub label: Option<&'static str>,
     pub action: Action,
-    pub big: bool,
     pub selected: bool,
     pub check: Option<bool>,
     pub swatch: Option<Color>,
@@ -379,13 +375,42 @@ impl Control {
             icon,
             label: None,
             action,
-            big: false,
             selected: false,
             check: None,
             swatch: None,
             style: CtlStyle::Plain,
             arrow: false,
         }
+    }
+
+    pub fn with_label(mut self, label: &'static str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    pub fn with_style(mut self, style: CtlStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn with_arrow(mut self) -> Self {
+        self.arrow = true;
+        self
+    }
+
+    pub fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub fn with_check(mut self, checked: bool) -> Self {
+        self.check = Some(checked);
+        self
+    }
+
+    pub fn with_swatch(mut self, color: Color) -> Self {
+        self.swatch = Some(color);
+        self
     }
 }
 
@@ -587,7 +612,6 @@ pub struct State {
     pub mouse_down: bool,
     pub drag: Drag,
     pub pointer: Point,
-    pub doc_version: u64,
     pub rev: Signal<u64>,
 }
 
@@ -624,7 +648,6 @@ impl State {
             mouse_down: false,
             drag: Drag::None,
             pointer: Point::ZERO,
-            doc_version: 1,
             rev: Signal::new(0),
         }
     }
@@ -634,7 +657,6 @@ impl State {
     }
 
     pub fn touch_doc(&mut self) {
-        self.doc_version = self.doc_version.wrapping_add(1);
         self.dirty = true;
         self.bump();
     }
@@ -654,7 +676,6 @@ impl State {
             if self.redo.len() > MAX_UNDO {
                 self.redo.remove(0);
             }
-            self.doc_version = self.doc_version.wrapping_add(1);
             self.dirty = true;
             self.selection = None;
             self.text = None;
@@ -669,7 +690,6 @@ impl State {
             if self.undo.len() > MAX_UNDO {
                 self.undo.remove(0);
             }
-            self.doc_version = self.doc_version.wrapping_add(1);
             self.dirty = true;
             self.selection = None;
             self.text = None;

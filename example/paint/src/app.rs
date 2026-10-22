@@ -6,7 +6,7 @@ use sequoia_ui::prelude::*;
 use sequoia_ui::view::Painter;
 
 use crate::files;
-use crate::layout::{self, DialogLayout, Layout};
+use crate::layout::{self, DialogLayout, Hit, Layout};
 use crate::model::Dialog;
 use crate::model::*;
 use crate::raster;
@@ -39,7 +39,7 @@ impl Default for PaintApp {
 
 impl View for PaintApp {
     fn body(&self) -> impl View + 'static {
-        let _ = self.state.borrow().rev.get();
+        self.state.borrow().rev.track();
         Unit
     }
 
@@ -80,7 +80,7 @@ impl View for PaintApp {
         if ctx.phase != EventPhase::Target {
             return;
         }
-        let local = Point::new(ctx.pos.x - ctx.rect.left(), ctx.pos.y - ctx.rect.top());
+        let local = ctx.local_pos();
         match event {
             Event::Pointer(ev) => self.pointer(ev, local, ctx),
             Event::Key(key) => {
@@ -174,7 +174,7 @@ impl PaintApp {
             if let Some(dl) = dl {
                 let hit = {
                     let s = self.state.borrow();
-                    dialog_hit(&s, &dl, local)
+                    dl.hit_at(&s, local)
                 };
                 if let Some(hit) = hit {
                     self.dialog_click(hit, &dl, local);
@@ -183,116 +183,80 @@ impl PaintApp {
             return;
         }
         let windows = ctx.environment.get::<Windows>();
-        if l.caption_close.contains(local) {
-            if let Some(windows) = windows {
-                windows.close(ctx.window);
-            }
-            return;
-        }
-        if l.caption_min.contains(local) {
-            if let Some(windows) = windows {
-                windows.minimize(ctx.window);
-            }
-            return;
-        }
-        if l.caption_max.contains(local) {
-            if let Some(windows) = windows {
-                windows.toggle_maximize(ctx.window);
-            }
-            return;
-        }
-        let on_qat = l
-            .controls
-            .iter()
-            .any(|c| c.style == CtlStyle::Qat && c.rect.contains(local));
-        if l.qat.contains(local) && !on_qat {
-            if let Some(windows) = windows {
-                windows.begin_drag(ctx.window);
-            }
-            return;
-        }
-        if self.state.borrow().backstage {
+        let hit = {
             let s = self.state.borrow();
-            if l.back_close.contains(local) {
-                drop(s);
+            l.hit_at(&s, local)
+        };
+        match hit {
+            Hit::CaptionClose => {
+                if let Some(windows) = windows {
+                    windows.close(ctx.window);
+                }
+            }
+            Hit::CaptionMinimize => {
+                if let Some(windows) = windows {
+                    windows.minimize(ctx.window);
+                }
+            }
+            Hit::CaptionMaximize => {
+                if let Some(windows) = windows {
+                    windows.toggle_maximize(ctx.window);
+                }
+            }
+            Hit::Qat => {
+                if let Some(windows) = windows {
+                    windows.begin_drag(ctx.window);
+                }
+            }
+            Hit::BackstageClose => {
                 let mut s = self.state.borrow_mut();
                 s.backstage = false;
                 s.bump();
-                return;
             }
-            let item = l
-                .back_items
-                .iter()
-                .find(|i| i.rect.contains(local))
-                .copied();
-            drop(s);
-            if let Some(item) = item {
+            Hit::BackstageItem(action) => {
                 let mut s = self.state.borrow_mut();
                 s.backstage = false;
                 drop(s);
-                perform(&self.state, item.action, size);
+                perform(&self.state, action, size);
             }
-            return;
-        }
-        if l.tab_file.contains(local) {
-            let mut s = self.state.borrow_mut();
-            s.backstage = !s.backstage;
-            s.bump();
-            return;
-        }
-        if l.tab_home.contains(local) || l.tab_view.contains(local) {
-            let mut s = self.state.borrow_mut();
-            s.backstage = false;
-            s.tab = if l.tab_home.contains(local) {
-                Tab::Home
-            } else {
-                Tab::View
-            };
-            s.bump();
-            return;
-        }
-        if let Some(control) = l.controls.iter().find(|c| c.rect.contains(local)).copied() {
-            perform(&self.state, control.action, size);
-            return;
-        }
-        if !self.state.borrow().view.fullscreen && self.state.borrow().view.status {
-            if l.zoom_minus.contains(local) {
-                perform(&self.state, Action::ZoomOut, size);
-                return;
+            Hit::FileTab => {
+                let mut s = self.state.borrow_mut();
+                s.backstage = true;
+                s.bump();
             }
-            if l.zoom_plus.contains(local) {
-                perform(&self.state, Action::ZoomIn, size);
-                return;
+            Hit::Tab(tab) => {
+                let mut s = self.state.borrow_mut();
+                s.backstage = false;
+                s.tab = tab;
+                s.bump();
             }
-            if l.zoom_slider.contains(local) {
+            Hit::Control(action) => perform(&self.state, action, size),
+            Hit::ZoomOut => perform(&self.state, Action::ZoomOut, size),
+            Hit::ZoomIn => perform(&self.state, Action::ZoomIn, size),
+            Hit::ZoomSlider => {
                 let idx = layout::zoom_from_x(l, local.x);
                 let mut s = self.state.borrow_mut();
                 s.zoom_idx = idx;
                 s.drag = Drag::ZoomSlider;
                 s.bump();
-                return;
             }
-        }
-        if let Some(v) = l.vscroll {
-            if v.contains(local) {
-                let mut s = self.state.borrow_mut();
-                let grab = scroll_grab(&s, l, v, true, local);
-                s.drag = Drag::ScrollV { grab };
-                apply_scroll_drag(&mut s, l, true, local, grab);
-                return;
+            Hit::Scroll(axis) => {
+                let bar = match axis {
+                    layout::ScrollAxis::Vertical => l.vscroll,
+                    layout::ScrollAxis::Horizontal => l.hscroll,
+                };
+                if let Some(bar) = bar {
+                    let mut s = self.state.borrow_mut();
+                    let grab = scroll_grab(&s, l, bar, axis, local);
+                    s.drag = match axis {
+                        layout::ScrollAxis::Vertical => Drag::ScrollV { grab },
+                        layout::ScrollAxis::Horizontal => Drag::ScrollH { grab },
+                    };
+                    apply_scroll_drag(&mut s, l, axis, local, grab);
+                }
             }
-        }
-        if let Some(h) = l.hscroll {
-            if h.contains(local) {
-                let mut s = self.state.borrow_mut();
-                let grab = scroll_grab(&s, l, h, false, local);
-                s.drag = Drag::ScrollH { grab };
-                apply_scroll_drag(&mut s, l, false, local, grab);
-                return;
-            }
-        }
-        if l.canvas.contains(local) || l.viewport.contains(local) {
-            self.canvas_down(local, button, l);
+            Hit::Canvas => self.canvas_down(local, button, l),
+            Hit::None => {}
         }
     }
 
@@ -303,13 +267,11 @@ impl PaintApp {
             let hit = {
                 let s = self.state.borrow();
                 s.text.as_ref().and_then(|t| {
-                    let zoom = s.zoom();
+                    let transform = layout::CanvasTransform::new(l, &s);
+                    let zoom = transform.zoom;
                     let size = (t.size * zoom).clamp(1.0, 1600.0);
                     let m = text::metrics(&t.text, size);
-                    let p = Point::new(
-                        l.canvas.left() + t.pos.x * zoom,
-                        l.canvas.top() + t.pos.y * zoom,
-                    );
+                    let p = transform.to_screen(t.pos);
                     let center = text::box_rect(p, &m).center();
                     let handle = text::handle_point(center, m.box_h, t.angle_deg);
                     (local.distance(handle) <= text::HANDLE_HIT).then_some((center, t.angle_deg))
@@ -432,11 +394,7 @@ impl PaintApp {
     fn pointer_move(&self, local: Point, l: &Layout, _ctx: &mut EventCtx) {
         let mut s = self.state.borrow_mut();
         s.mouse = local;
-        let zoom = s.zoom();
-        let doc = Point::new(
-            (local.x - l.canvas.left()) / zoom,
-            (local.y - l.canvas.top()) / zoom,
-        );
+        let doc = layout::CanvasTransform::new(l, &s).to_doc(local);
         if l.viewport.contains(local) {
             s.pointer = doc;
         }
@@ -553,11 +511,11 @@ impl PaintApp {
                 s.drag = Drag::Pan { start, scroll };
             }
             Drag::ScrollH { grab } => {
-                apply_scroll_drag(&mut s, l, false, local, grab);
+                apply_scroll_drag(&mut s, l, layout::ScrollAxis::Horizontal, local, grab);
                 s.drag = Drag::ScrollH { grab };
             }
             Drag::ScrollV { grab } => {
-                apply_scroll_drag(&mut s, l, true, local, grab);
+                apply_scroll_drag(&mut s, l, layout::ScrollAxis::Vertical, local, grab);
                 s.drag = Drag::ScrollV { grab };
             }
             Drag::ZoomSlider => {
@@ -736,7 +694,7 @@ impl PaintApp {
                 Key::ENTER => {
                     let dl = layout::dialog_layout(&s, size);
                     let Some(dl) = dl else { return true };
-                    let hit = dialog_hit(&s, &dl, dl.ok.center()).unwrap_or(DialogHit::Ok);
+                    let hit = dl.hit_at(&s, dl.ok.center()).unwrap_or(DialogHit::Ok);
                     drop(s);
                     self.dialog_click(hit, &dl, dl.ok.center());
                 }
@@ -860,7 +818,6 @@ impl PaintApp {
                             {
                                 s.push_undo();
                                 s.doc = raster::resize_canvas(&s.doc, w, h);
-                                s.doc_version = s.doc_version.wrapping_add(1);
                                 s.dirty = true;
                                 s.selection = None;
                                 s.text = None;
@@ -960,74 +917,6 @@ impl PaintApp {
     }
 }
 
-fn dialog_hit(state: &State, dl: &DialogLayout, p: Point) -> Option<DialogHit> {
-    if dl.close.contains(p) {
-        return Some(DialogHit::Cancel);
-    }
-    let dialog = state.dialog.as_ref()?;
-    match dialog {
-        Dialog::ConfirmNew => {
-            if dl.save.contains(p) {
-                Some(DialogHit::ConfirmSave)
-            } else if dl.dont_save.contains(p) {
-                Some(DialogHit::ConfirmDontSave)
-            } else if dl.cancel.contains(p) {
-                Some(DialogHit::Cancel)
-            } else {
-                None
-            }
-        }
-        Dialog::Resize(r) => {
-            for (i, f) in dl.fields.iter().enumerate() {
-                if f.contains(p) {
-                    let _ = r;
-                    return Some(DialogHit::Field(i));
-                }
-            }
-            if dl.ok.contains(p) {
-                Some(DialogHit::Ok)
-            } else if dl.cancel.contains(p) {
-                Some(DialogHit::Cancel)
-            } else {
-                None
-            }
-        }
-        Dialog::EditColors(_) => {
-            for (ch, track) in &dl.sliders {
-                if track.contains(p) {
-                    return Some(DialogHit::Slider(*ch));
-                }
-            }
-            for (i, r) in dl.palette.iter().enumerate() {
-                if r.contains(p) {
-                    return Some(DialogHit::Palette(i));
-                }
-            }
-            for (i, r) in dl.presets.iter().enumerate() {
-                if r.contains(p) {
-                    return Some(DialogHit::Preset(i));
-                }
-            }
-            if dl.ok.contains(p) {
-                Some(DialogHit::Ok)
-            } else if dl.cancel.contains(p) {
-                Some(DialogHit::Cancel)
-            } else {
-                None
-            }
-        }
-        _ => {
-            if dl.ok.contains(p) {
-                Some(DialogHit::Ok)
-            } else if dl.cancel.contains(p) {
-                Some(DialogHit::Cancel)
-            } else {
-                None
-            }
-        }
-    }
-}
-
 fn set_editor_channel(s: &mut State, ch: SliderChannel, v: f32) {
     if let Some(Dialog::EditColors(e)) = s.dialog.as_mut() {
         match ch {
@@ -1041,97 +930,40 @@ fn set_editor_channel(s: &mut State, ch: SliderChannel, v: f32) {
 }
 
 fn screen_to_doc(l: &Layout, s: &State, p: Point) -> Point {
-    let zoom = s.zoom();
-    Point::new(
-        (p.x - l.canvas.left()) / zoom,
-        (p.y - l.canvas.top()) / zoom,
-    )
+    layout::CanvasTransform::new(l, s).to_doc(p)
 }
 
-fn scroll_grab(s: &State, l: &Layout, bar: Rect, vertical: bool, local: Point) -> f32 {
-    let thumb = thumb_of(s, l, bar, vertical);
+fn scroll_grab(s: &State, l: &Layout, bar: Rect, axis: layout::ScrollAxis, local: Point) -> f32 {
+    let thumb = thumb_of(s, l, bar, axis);
+    let vertical = axis == layout::ScrollAxis::Vertical;
     if thumb.contains(local) {
         if vertical {
             local.y - thumb.top()
         } else {
             local.x - thumb.left()
         }
+    } else if vertical {
+        thumb.size.height * 0.5
     } else {
-        if vertical {
-            thumb.size.height * 0.5
-        } else {
-            thumb.size.width * 0.5
-        }
+        thumb.size.width * 0.5
     }
 }
 
-fn thumb_of(s: &State, l: &Layout, bar: Rect, vertical: bool) -> Rect {
-    let (content, view, offset, len, pos) = if vertical {
-        (
-            s.doc.height() as f32 * s.zoom() + layout::PAD * 2.0,
-            l.viewport.size.height,
-            l.scroll.y,
-            bar.size.height,
-            bar.top(),
-        )
-    } else {
-        (
-            s.doc.width() as f32 * s.zoom() + layout::PAD * 2.0,
-            l.viewport.size.width,
-            l.scroll.x,
-            bar.size.width,
-            bar.left(),
-        )
-    };
-    if content <= 0.0 {
-        return bar;
-    }
-    let frac = (view / content).clamp(0.08, 1.0);
-    let tlen = (len * frac).max(18.0).min(len);
-    let max_off = (content - view).max(0.0);
-    let t = if max_off > 0.0 {
-        (offset / max_off).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    if vertical {
-        Rect::from_xywh(
-            bar.left() + 2.0,
-            pos + (len - tlen) * t,
-            bar.size.width - 4.0,
-            tlen,
-        )
-    } else {
-        Rect::from_xywh(
-            pos + (len - tlen) * t,
-            bar.top() + 2.0,
-            tlen,
-            bar.size.height - 4.0,
-        )
-    }
+fn thumb_of(s: &State, l: &Layout, bar: Rect, axis: layout::ScrollAxis) -> Rect {
+    layout::scroll_thumb(bar, axis, layout::scroll_metrics(s, l, axis))
 }
 
-fn apply_scroll_drag(s: &mut State, l: &Layout, vertical: bool, local: Point, grab: f32) {
+fn apply_scroll_drag(s: &mut State, l: &Layout, axis: layout::ScrollAxis, local: Point, grab: f32) {
+    let vertical = axis == layout::ScrollAxis::Vertical;
     let bar = if vertical { l.vscroll } else { l.hscroll };
     let Some(bar) = bar else { return };
-    let (content, view) = if vertical {
-        (
-            s.doc.height() as f32 * s.zoom() + layout::PAD * 2.0,
-            l.viewport.size.height,
-        )
-    } else {
-        (
-            s.doc.width() as f32 * s.zoom() + layout::PAD * 2.0,
-            l.viewport.size.width,
-        )
-    };
-    let frac = (view / content).clamp(0.08, 1.0);
+    let metrics = layout::scroll_metrics(s, l, axis);
     let len = if vertical {
         bar.size.height
     } else {
         bar.size.width
     };
-    let tlen = (len * frac).max(18.0).min(len);
+    let tlen = metrics.thumb_len(len);
     let range = (len - tlen).max(1.0);
     let pos = if vertical {
         local.y - grab - bar.top()
@@ -1139,18 +971,17 @@ fn apply_scroll_drag(s: &mut State, l: &Layout, vertical: bool, local: Point, gr
         local.x - grab - bar.left()
     };
     let t = (pos / range).clamp(0.0, 1.0);
-    let max_off = (content - view).max(0.0);
+    let offset = t * metrics.max_offset();
     if vertical {
-        s.scroll.y = t * max_off;
+        s.scroll.y = offset;
     } else {
-        s.scroll.x = t * max_off;
+        s.scroll.x = offset;
     }
     s.bump();
 }
 
 fn new_document(s: &mut State) {
     s.doc = Pixels::filled(DEFAULT_DOC_W, DEFAULT_DOC_H, Color::WHITE);
-    s.doc_version = s.doc_version.wrapping_add(1);
     s.path = None;
     s.dirty = false;
     s.undo.clear();
@@ -1273,7 +1104,6 @@ pub fn perform(state: &Rc<RefCell<State>>, action: Action, size: Size) {
                 if rect.w > 0 && rect.h > 0 {
                     s.push_undo();
                     s.doc = s.doc.crop(rect.as_rect());
-                    s.doc_version = s.doc_version.wrapping_add(1);
                     s.dirty = true;
                     s.set_status("Image cropped");
                 }
@@ -1450,7 +1280,6 @@ fn rotate(s: &mut State, cw: bool) {
     s.text = None;
     s.push_undo();
     s.doc = raster::rotate_90(&s.doc, cw);
-    s.doc_version = s.doc_version.wrapping_add(1);
     s.selection = None;
     s.scroll = Vec2::ZERO;
     s.touch_doc();
@@ -1462,7 +1291,6 @@ fn flip(s: &mut State, horizontal: bool) {
     s.text = None;
     s.push_undo();
     s.doc = raster::flip(&s.doc, horizontal);
-    s.doc_version = s.doc_version.wrapping_add(1);
     s.selection = None;
     s.touch_doc();
     s.set_status(if horizontal {

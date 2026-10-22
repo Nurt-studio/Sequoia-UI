@@ -4,17 +4,14 @@ use sequoia_ui::view::Painter;
 
 use crate::assets;
 use crate::icons::draw_icon;
-use crate::layout::{self, DialogLayout, Layout, PAD};
+use crate::layout::{self, CanvasTransform, DialogLayout, Layout};
 use crate::model::*;
 use crate::model::{Dialog, Icon};
 use crate::raster;
 use crate::text;
 
-const THUMB_IMAGE_ID: u64 = 0x5041_494E_0010;
-
 fn text_centered(g: &mut Painter, text: &str, center_x: f32, top: f32, size: f32, color: Color) {
-    let w = g.text_width(text, size);
-    g.text_tl(text, Point::new(center_x - w * 0.5, top), size, color);
+    g.text_center_x(text, center_x, top, size, color);
 }
 
 fn border(g: &mut Painter, r: Rect, color: Color) {
@@ -507,16 +504,6 @@ fn draw_label_with_arrow(
     }
 }
 
-fn with_mix(a: Color, b: Color, t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    Color::rgba(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
-        a.a + (b.a - a.a) * t,
-    )
-}
-
 fn inset(r: Rect, k: f32) -> Rect {
     Rect::from_xywh(
         r.left() + k,
@@ -625,21 +612,14 @@ fn paint_grid(g: &mut Painter, state: &State, l: &Layout) {
 }
 
 fn doc_to_screen(l: &Layout, state: &State, p: Point) -> Point {
-    Point::new(
-        l.canvas.left() + p.x * state.zoom(),
-        l.canvas.top() + p.y * state.zoom(),
-    )
+    CanvasTransform::new(l, state).to_screen(p)
 }
 
 fn paint_selection_and_preview(g: &mut Painter, state: &State, l: &Layout) {
-    let zoom = state.zoom();
+    let transform = CanvasTransform::new(l, state);
+    let zoom = transform.zoom;
     if let Some(sel) = &state.selection {
-        let r = Rect::from_xywh(
-            l.canvas.left() + sel.rect.x as f32 * zoom,
-            l.canvas.top() + sel.rect.y as f32 * zoom,
-            sel.rect.w as f32 * zoom,
-            sel.rect.h as f32 * zoom,
-        );
+        let r = transform.rect_to_screen(sel.rect.as_rect());
         if let Some(pix) = &sel.floating {
             g.pixels(r, pix);
         }
@@ -671,12 +651,10 @@ fn paint_selection_and_preview(g: &mut Painter, state: &State, l: &Layout) {
 }
 
 fn screen_rect_between(l: &Layout, state: &State, a: Point, b: Point) -> Rect {
-    let zoom = state.zoom();
-    let x0 = a.x.min(b.x) * zoom + l.canvas.left();
-    let y0 = a.y.min(b.y) * zoom + l.canvas.top();
-    let x1 = a.x.max(b.x) * zoom + l.canvas.left();
-    let y1 = a.y.max(b.y) * zoom + l.canvas.top();
-    Rect::from_xywh(x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0))
+    let transform = CanvasTransform::new(l, state);
+    let p0 = transform.to_screen(Point::new(a.x.min(b.x), a.y.min(b.y)));
+    let p1 = transform.to_screen(Point::new(a.x.max(b.x), a.y.max(b.y)));
+    Rect::from_xywh(p0.x, p0.y, (p1.x - p0.x).max(1.0), (p1.y - p0.y).max(1.0))
 }
 
 fn ants(g: &mut Painter, r: Rect) {
@@ -736,12 +714,10 @@ fn dashed(g: &mut Painter, a: Point, b: Point, step: f32, first: Color) {
 
 fn paint_text_preview(g: &mut Painter, state: &State, l: &Layout) {
     let Some(t) = &state.text else { return };
-    let zoom = state.zoom();
+    let transform = CanvasTransform::new(l, state);
+    let zoom = transform.zoom;
     let size = (t.size * zoom).clamp(1.0, 1600.0);
-    let p = Point::new(
-        l.canvas.left() + t.pos.x * zoom,
-        l.canvas.top() + t.pos.y * zoom,
-    );
+    let p = transform.to_screen(t.pos);
     let lines: Vec<&str> = t.text.split('\n').collect();
     let line_h = text::line_height(size);
     let w = lines
@@ -816,7 +792,8 @@ fn paint_rulers(g: &mut Painter, state: &State, l: &Layout) {
         BrushStroke::new(1.0),
         COL_BORDER,
     );
-    let zoom = state.zoom();
+    let transform = CanvasTransform::new(l, state);
+    let zoom = transform.zoom;
     let mut step = 10.0;
     for s in [10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0] {
         step = s;
@@ -828,7 +805,7 @@ fn paint_rulers(g: &mut Painter, state: &State, l: &Layout) {
     let doc_h = state.doc.height() as f32;
     let mut d = 0.0;
     while d <= doc_w {
-        let x = l.canvas.left() + d * zoom;
+        let x = transform.to_screen(Point::new(d, 0.0)).x;
         if x >= l.top_ruler.left() && x <= l.top_ruler.right() {
             g.line(
                 Point::new(x, l.top_ruler.bottom() - 6.0),
@@ -847,7 +824,7 @@ fn paint_rulers(g: &mut Painter, state: &State, l: &Layout) {
     }
     let mut d = 0.0;
     while d <= doc_h {
-        let y = l.canvas.top() + d * zoom;
+        let y = transform.to_screen(Point::new(0.0, d)).y;
         if y >= l.left_ruler.top() && y <= l.left_ruler.bottom() {
             g.line(
                 Point::new(l.left_ruler.right() - 6.0, y),
@@ -878,45 +855,12 @@ fn paint_scrollbar(
     pointer: Point,
 ) {
     g.fill(bar, Fill::solid(COL_BG));
-    let (content, view, offset) = if vertical {
-        (
-            state.doc.height() as f32 * state.zoom() + PAD * 2.0,
-            l.viewport.size.height,
-            l.scroll.y,
-        )
+    let axis = if vertical {
+        layout::ScrollAxis::Vertical
     } else {
-        (
-            state.doc.width() as f32 * state.zoom() + PAD * 2.0,
-            l.viewport.size.width,
-            l.scroll.x,
-        )
+        layout::ScrollAxis::Horizontal
     };
-    let mut thumb = if vertical {
-        layout::scroll_thumb(l, bar, content, view, offset)
-    } else {
-        let frac = (view / content).clamp(0.08, 1.0);
-        let len = (bar.size.width * frac).max(18.0).min(bar.size.width);
-        let max_off = (content - view).max(0.0);
-        let t = if max_off > 0.0 {
-            (offset / max_off).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        Rect::from_xywh(
-            bar.left() + (bar.size.width - len) * t,
-            bar.top() + 2.0,
-            len,
-            bar.size.height - 4.0,
-        )
-    };
-    if !vertical {
-        thumb = Rect::from_xywh(
-            thumb.left(),
-            bar.top() + 2.0,
-            thumb.size.width,
-            bar.size.height - 4.0,
-        );
-    }
+    let thumb = layout::scroll_thumb(bar, axis, layout::scroll_metrics(state, l, axis));
     let hover = bar.contains(pointer);
     g.rounded(
         thumb,
@@ -1023,16 +967,6 @@ fn paint_status(g: &mut Painter, state: &State, l: &Layout, pointer: Point) {
     );
 }
 
-trait DragExt {
-    fn drag_is_zoom(&self) -> bool;
-}
-
-impl DragExt for State {
-    fn drag_is_zoom(&self) -> bool {
-        matches!(self.drag, Drag::ZoomSlider)
-    }
-}
-
 fn paint_backstage(g: &mut Painter, state: &State, l: &Layout, bs: Rect, pointer: Point) {
     g.fill(bs, Fill::solid(Color::WHITE));
     let left = Rect::from_xywh(bs.left(), bs.top(), 262.0, bs.size.height);
@@ -1043,7 +977,7 @@ fn paint_backstage(g: &mut Painter, state: &State, l: &Layout, bs: Rect, pointer
         BrushStroke::new(1.0),
         COL_BORDER,
     );
-    if PointerButton::Left == PointerButton::Left && l.back_close.contains(pointer) {
+    if l.back_close.contains(pointer) {
         g.rounded(l.back_close, 4.0, Fill::solid(COL_HOVER));
     }
     draw_icon(g, Icon::Close, inset(l.back_close, 7.0), COL_TEXT);
@@ -1448,8 +1382,4 @@ fn paint_edit_colors(
     }
     draw_button(g, dl.ok, "OK", true, dl.ok.contains(pointer));
     draw_button(g, dl.cancel, "Cancel", false, dl.cancel.contains(pointer));
-}
-
-pub fn hsv_color(r: f32, g: f32, b: f32) -> Color {
-    Color::rgb(r, g, b)
 }
