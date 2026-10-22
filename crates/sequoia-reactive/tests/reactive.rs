@@ -58,6 +58,22 @@ fn get_untracked_does_not_track() {
 }
 
 #[test]
+fn track_subscribes_without_cloning_the_value() {
+    let a = Signal::new(1);
+    let runs = Rc::new(Cell::new(0u32));
+    let _e = effect({
+        let (a, runs) = (a.clone(), runs.clone());
+        move || {
+            a.track();
+            runs.set(runs.get() + 1);
+        }
+    });
+    assert_eq!(runs.get(), 1);
+    a.set(2);
+    assert_eq!(runs.get(), 2);
+}
+
+#[test]
 fn memo_is_lazy_and_cached() {
     let a = Signal::new(2);
     let runs = Rc::new(Cell::new(0u32));

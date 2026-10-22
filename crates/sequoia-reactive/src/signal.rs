@@ -43,6 +43,10 @@ impl<T: 'static> Signal<T> {
     pub fn id(&self) -> usize {
         Rc::as_ptr(&self.inner) as usize
     }
+
+    pub fn track(&self) {
+        track_read(&self.inner);
+    }
 }
 
 impl<T: Clone + PartialEq + 'static> Signal<T> {
