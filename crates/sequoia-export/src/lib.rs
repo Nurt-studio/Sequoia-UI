@@ -1023,7 +1023,10 @@ mod tests {
                     max_y = max_y.max(y);
                 }
             }
-            assert!(min_x <= max_x && min_y <= max_y, "expected visible text ink");
+            assert!(
+                min_x <= max_x && min_y <= max_y,
+                "expected visible text ink"
+            );
             (max_x - min_x + 1, max_y - min_y + 1)
         };
         let plain = render_to_image(
