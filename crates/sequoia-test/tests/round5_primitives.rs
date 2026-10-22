@@ -24,14 +24,20 @@ fn all_texts(h: &Harness) -> Vec<String> {
 fn accelerator_fires_only_when_allowed() {
     let fired = Rc::new(std::cell::Cell::new(0));
     let f2 = fired.clone();
-    let acc = Accelerator::new(Key::from_char('s'), Modifiers::CONTROL, move || {
+    let acc = Accelerator::simple(Key::from_char('s'), Modifiers::CONTROL, move || {
         f2.set(f2.get() + 1);
     });
+    let ctx = AcceleratorCtx {
+        window: WindowId::PRIMARY,
+        size: Size::new(800.0, 600.0),
+        scale: 1.0,
+        environment: Environment::new(),
+    };
     assert!(acc.should_fire());
-    acc.fire();
+    acc.fire(&ctx);
     assert_eq!(fired.get(), 1);
 
-    let blocked = Accelerator::new(Key::from_char('s'), Modifiers::CONTROL, || {})
+    let blocked = Accelerator::simple(Key::from_char('s'), Modifiers::CONTROL, || {})
         .with_when(Rc::new(|| false));
     assert!(!blocked.should_fire());
 }

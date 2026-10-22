@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use sequoia_assets::AssetRegistry;
-use sequoia_core::{Color, Point, Rect, RenderList};
+use sequoia_core::{Color, Point, Rect, RenderList, Size};
 use sequoia_elements::{SharedClipboard, SharedDataClipboard};
 use sequoia_input::{CursorIcon, ImeEvent, Key, Modifiers, PointerButton};
 use sequoia_reactive::Environment;
@@ -89,18 +89,33 @@ pub struct Accelerator {
     pub key: Key,
 
     pub modifiers: Modifiers,
-    action: Rc<dyn Fn()>,
+    action: Rc<dyn Fn(&AcceleratorCtx)>,
     when: Option<Rc<dyn Fn() -> bool>>,
 }
 
+#[derive(Clone)]
+pub struct AcceleratorCtx {
+    pub window: WindowId,
+
+    pub size: Size,
+
+    pub scale: f32,
+
+    pub environment: Environment,
+}
+
 impl Accelerator {
-    pub fn new(key: Key, modifiers: Modifiers, action: impl Fn() + 'static) -> Self {
+    pub fn new(key: Key, modifiers: Modifiers, action: impl Fn(&AcceleratorCtx) + 'static) -> Self {
         Self {
             key,
             modifiers,
             action: Rc::new(action),
             when: None,
         }
+    }
+
+    pub fn simple(key: Key, modifiers: Modifiers, action: impl Fn() + 'static) -> Self {
+        Self::new(key, modifiers, move |_| action())
     }
 
     pub fn with_when(mut self, when: Rc<dyn Fn() -> bool>) -> Self {
@@ -112,8 +127,8 @@ impl Accelerator {
         self.when.as_ref().is_none_or(|w| w())
     }
 
-    pub fn fire(&self) {
-        (self.action)();
+    pub fn fire(&self, ctx: &AcceleratorCtx) {
+        (self.action)(ctx);
     }
 }
 
@@ -242,6 +257,17 @@ impl App {
         action: impl Fn() + 'static,
     ) -> Self {
         self.accelerators
+            .push(Accelerator::simple(key, modifiers, action));
+        self
+    }
+
+    pub fn accelerator_ctx(
+        mut self,
+        key: Key,
+        modifiers: Modifiers,
+        action: impl Fn(&AcceleratorCtx) + 'static,
+    ) -> Self {
+        self.accelerators
             .push(Accelerator::new(key, modifiers, action));
         self
     }
@@ -252,6 +278,18 @@ impl App {
         modifiers: Modifiers,
         when: Rc<dyn Fn() -> bool>,
         action: impl Fn() + 'static,
+    ) -> Self {
+        self.accelerators
+            .push(Accelerator::simple(key, modifiers, action).with_when(when));
+        self
+    }
+
+    pub fn accelerator_ctx_when(
+        mut self,
+        key: Key,
+        modifiers: Modifiers,
+        when: Rc<dyn Fn() -> bool>,
+        action: impl Fn(&AcceleratorCtx) + 'static,
     ) -> Self {
         self.accelerators
             .push(Accelerator::new(key, modifiers, action).with_when(when));
@@ -1294,9 +1332,19 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                         && (!kev.repeat || k.allows_repeat())
                     {
                         let mut hit = false;
+                        let physical = ws.window.inner_size();
+                        let ctx = AcceleratorCtx {
+                            window: ws.id,
+                            size: Size::new(
+                                physical.width as f32 / ws.scale,
+                                physical.height as f32 / ws.scale,
+                            ),
+                            scale: ws.scale,
+                            environment: self.env.clone(),
+                        };
                         for acc in &self.accelerators {
                             if acc.key == k && acc.modifiers == ws.mods && acc.should_fire() {
-                                acc.fire();
+                                acc.fire(&ctx);
                                 hit = true;
                                 break;
                             }

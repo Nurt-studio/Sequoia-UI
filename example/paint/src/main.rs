@@ -29,8 +29,8 @@ fn accelerator(
         s.text.is_none() && s.dialog.is_none()
     });
     let action_state = state.clone();
-    app.accelerator_when(key, modifiers, when, move || {
-        perform(&action_state, action, Size::new(1360.0, 860.0));
+    app.accelerator_ctx_when(key, modifiers, when, move |ctx| {
+        perform(&action_state, action, ctx.size);
     })
 }
 
