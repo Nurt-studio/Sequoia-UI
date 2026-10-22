@@ -33,6 +33,10 @@ pub(crate) fn builtin() -> &'static [(&'static str, &'static str)] {
             r#"<svg viewBox="0 0 24 24"><path d="M5 11 H19 V13 H5 Z"/></svg>"#,
         ),
         (
+            "minimize",
+            r#"<svg viewBox="0 0 24 24"><path d="M5 11 H19 V13 H5 Z"/></svg>"#,
+        ),
+        (
             "search",
             r#"<svg viewBox="0 0 24 24"><path d="M4 11 a7 7 0 1 0 14 0 a7 7 0 1 0 -14 0 Z M15.95 15.95 L20.45 20.45 L21.86 19.04 L17.36 14.54 Z"/></svg>"#,
         ),

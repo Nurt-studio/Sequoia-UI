@@ -38,6 +38,7 @@ mod text_field;
 mod toast;
 mod tooltip;
 mod underline;
+mod window_controls;
 
 pub use avatar::{Avatar, avatar_color_for, initials_for};
 pub use badge::{Badge, badge_label};
@@ -83,6 +84,7 @@ pub use text_area::TextArea;
 pub use text_field::TextField;
 pub use toast::{DEFAULT_MAX_VISIBLE, DEFAULT_TTL, Toast, ToastKind, ToastQueue, ToastStack};
 pub use tooltip::Tooltip;
+pub use window_controls::WindowControls;
 
 pub mod prelude {
     pub use crate::avatar::{Avatar, avatar_color_for, initials_for};
@@ -123,6 +125,7 @@ pub mod prelude {
     pub use crate::text_field::TextField;
     pub use crate::toast::{Toast, ToastKind, ToastQueue, ToastStack};
     pub use crate::tooltip::Tooltip;
+    pub use crate::window_controls::WindowControls;
     pub use sequoia_input::{
         CursorIcon, Event, EventPhase, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
     };
