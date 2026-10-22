@@ -1,3 +1,20 @@
+//! Layout engine for the Sequoia GUI framework.
+//!
+//! Resolves sizes and positions for the view tree: flex distribution, grid
+//! tracks, docked panels, wrapping, and text measurement through
+//! [`LayoutCtx`].
+//!
+//! - [`box_model`] — padding, margin, insets, and aspect-ratio helpers.
+//! - [`container`] — axes, alignment, justification, and container styles.
+//! - [`ctx`] — text measurement used during layout.
+//! - [`dock`] — docking sides, thickness, and preview rectangles.
+//! - [`flex`] — flex grow/shrink distribution and justification.
+//! - [`grid`] — grid tracks, placement, and auto flow.
+//! - [`overflow`] — overflow and scrolling modes.
+//! - [`resolve`] — length resolution and main-axis distribution.
+//! - [`style`] — per-view layout styles and sanitizers.
+//! - [`wrap`] — wrapping lines for flow containers.
+
 #![forbid(unsafe_code)]
 
 pub mod box_model;

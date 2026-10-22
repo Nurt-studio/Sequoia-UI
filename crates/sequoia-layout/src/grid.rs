@@ -1,23 +1,35 @@
+//! Grid tracks, placements, and automatic flow.
+
 use crate::container::Align;
 use crate::dock::sanitize_gap;
 
+/// Size of a single grid column or row.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 #[derive(Default)]
 pub enum Track {
+    /// Size to the content of the track.
     #[default]
     Fit,
+    /// Fixed size in logical pixels.
     Px(f32),
+    /// Size as a percentage of the available space.
     Percent(f32),
+    /// Share of the free space, proportional to the weight.
     Fill(f32),
-
+    /// Combination of a minimum size and a maximum track definition.
     MinMax {
+        /// Lower bound of the track size.
         min: f32,
+        /// Definition used for the upper bound.
         max: Box<Track>,
     },
 }
 
 impl Track {
+    /// Creates a track with a minimum size and a maximum definition.
+    ///
+    /// Nested [`Track::MinMax`] maximums are flattened to their inner track.
     pub fn minmax(min: f32, max: Track) -> Self {
         let min = if min.is_finite() { min.max(0.0) } else { 0.0 };
 
@@ -31,6 +43,7 @@ impl Track {
         }
     }
 
+    /// Returns `true` if the track claims free space.
     pub fn is_fill_like(&self) -> bool {
         match self {
             Self::Fill(w) => *w > 0.0,
@@ -39,6 +52,7 @@ impl Track {
         }
     }
 
+    /// Returns the weight used to share free space, or zero.
     pub fn fill_weight(&self) -> f32 {
         match self {
             Self::Fill(w) if w.is_finite() => w.max(0.0),
@@ -47,6 +61,7 @@ impl Track {
         }
     }
 
+    /// Returns the minimum size enforced by this track.
     pub fn min_floor(&self) -> f32 {
         match self {
             Self::MinMax { min, .. } => *min,
@@ -55,15 +70,21 @@ impl Track {
     }
 }
 
+/// Placement of a grid item, with optional row and column indices.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GridPlacement {
+    /// Explicit column index, or `None` for auto placement.
     pub column: Option<usize>,
+    /// Explicit row index, or `None` for auto placement.
     pub row: Option<usize>,
+    /// Number of columns the item spans.
     pub col_span: usize,
+    /// Number of rows the item spans.
     pub row_span: usize,
 }
 
 impl GridPlacement {
+    /// Placement with no explicit position and single-cell spans.
     pub const AUTO: Self = Self {
         column: None,
         row: None,
@@ -71,63 +92,81 @@ impl GridPlacement {
         row_span: 1,
     };
 
+    /// Creates an automatic placement.
     pub fn new() -> Self {
         Self::AUTO
     }
 
+    /// Sets both the column and row index.
     pub fn at(mut self, column: usize, row: usize) -> Self {
         self.column = Some(column);
         self.row = Some(row);
         self
     }
 
+    /// Sets the column index.
     pub fn column(mut self, column: usize) -> Self {
         self.column = Some(column);
         self
     }
 
+    /// Sets the row index.
     pub fn row(mut self, row: usize) -> Self {
         self.row = Some(row);
         self
     }
 
+    /// Sets both spans, clamped to at least one cell.
     pub fn span(mut self, col_span: usize, row_span: usize) -> Self {
         self.col_span = col_span.max(1);
         self.row_span = row_span.max(1);
         self
     }
 
+    /// Sets the column span, clamped to at least one cell.
     pub fn col_span(mut self, span: usize) -> Self {
         self.col_span = span.max(1);
         self
     }
 
+    /// Sets the row span, clamped to at least one cell.
     pub fn row_span(mut self, span: usize) -> Self {
         self.row_span = span.max(1);
         self
     }
 
+    /// Returns `true` if the item has no explicit position or span.
     pub fn is_auto(self) -> bool {
         self.column.is_none() && self.row.is_none() && self.col_span <= 1 && self.row_span <= 1
     }
 }
 
+/// Direction in which auto-placed grid items flow.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GridFlow {
+    /// Fill rows left to right, then move to the next row.
     #[default]
     Row,
+    /// Fill columns top to bottom, then move to the next column.
     Column,
 }
 
+/// Layout style for a grid container.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridStyle {
+    /// Column track definitions.
     pub columns: Vec<Track>,
+    /// Row track definitions.
     pub rows: Vec<Track>,
+    /// Gap between columns.
     pub column_gap: f32,
+    /// Gap between rows.
     pub row_gap: f32,
+    /// Auto-placement direction.
     pub auto_flow: GridFlow,
-
+    /// Default cross-axis alignment of items within their cells.
     pub align_items: Align,
+    /// Default main-axis alignment of items within their cells.
     pub justify_items: Align,
 }
 
@@ -146,6 +185,7 @@ impl Default for GridStyle {
 }
 
 impl GridStyle {
+    /// Creates a style with the given column tracks.
     pub fn new(columns: impl IntoIterator<Item = Track>) -> Self {
         Self {
             columns: columns.into_iter().collect(),
@@ -153,11 +193,13 @@ impl GridStyle {
         }
     }
 
+    /// Sets the row tracks.
     pub fn rows(mut self, rows: impl IntoIterator<Item = Track>) -> Self {
         self.rows = rows.into_iter().collect();
         self
     }
 
+    /// Sets both the column and row gaps.
     pub fn gap(mut self, gap: f32) -> Self {
         let gap = sanitize_gap(gap);
         self.column_gap = gap;
@@ -165,36 +207,43 @@ impl GridStyle {
         self
     }
 
+    /// Sets the gap between columns.
     pub fn column_gap(mut self, gap: f32) -> Self {
         self.column_gap = sanitize_gap(gap);
         self
     }
 
+    /// Sets the gap between rows.
     pub fn row_gap(mut self, gap: f32) -> Self {
         self.row_gap = sanitize_gap(gap);
         self
     }
 
+    /// Sets the auto-placement direction.
     pub fn auto_flow(mut self, flow: GridFlow) -> Self {
         self.auto_flow = flow;
         self
     }
 
+    /// Uses column-wise auto placement.
     pub fn column_flow(mut self) -> Self {
         self.auto_flow = GridFlow::Column;
         self
     }
 
+    /// Sets the default cross-axis alignment of items.
     pub fn align_items(mut self, align: Align) -> Self {
         self.align_items = align;
         self
     }
 
+    /// Sets the default main-axis alignment of items.
     pub fn justify_items(mut self, align: Align) -> Self {
         self.justify_items = align;
         self
     }
 
+    /// Sets both the align and justify alignment of items.
     pub fn place_items(mut self, align: Align) -> Self {
         self.align_items = align;
         self.justify_items = align;
@@ -231,10 +280,18 @@ fn resolve_single(track: &Track, content: f32, available: f32) -> (f32, f32) {
     }
 }
 
+/// Resolves track sizes to concrete lengths.
+///
+/// `content` provides the intrinsic content size for each track and
+/// `available` is the space shared by fill tracks.
 pub fn resolve_tracks(tracks: &[Track], content: &[f32], available: f32, gap: f32) -> Vec<f32> {
     resolve_tracks_clamped(tracks, content, available, gap, None, None)
 }
 
+/// Resolves track sizes with optional per-track min and max limits.
+///
+/// Fill tracks share the remaining space; a track that reaches its max stops
+/// growing so the rest is handed to its siblings.
 pub fn resolve_tracks_clamped(
     tracks: &[Track],
     content: &[f32],
@@ -339,6 +396,9 @@ pub fn resolve_tracks_clamped(
     sizes
 }
 
+/// Returns the `(column, row)` cell for each auto-placed item.
+///
+/// `ncols` is clamped to at least one column.
 pub fn auto_cells(count: usize, ncols: usize, flow: GridFlow) -> Vec<(usize, usize)> {
     let ncols = ncols.max(1);
     (0..count)
@@ -352,6 +412,7 @@ pub fn auto_cells(count: usize, ncols: usize, flow: GridFlow) -> Vec<(usize, usi
         .collect()
 }
 
+/// Returns the starting offset of each track, including gaps.
 pub fn track_offsets(sizes: &[f32], gap: f32) -> Vec<f32> {
     let mut offsets = Vec::with_capacity(sizes.len());
     let mut cursor = 0.0;

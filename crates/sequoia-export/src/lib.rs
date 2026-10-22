@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use image::RgbaImage;
 use sequoia_assets::AssetRegistry;
 use sequoia_core::{
-    Color, GradientDraw, GradientKind, ImageDraw, ImageSource, Quad, Rect, RenderItem, RenderList,
-    RoundedClip, Shadow, TextDraw,
+    Color, GradientDraw, GradientKind, ImageDraw, ImageSource, Point, Quad, Rect, RenderItem,
+    RenderList, RoundedClip, Shadow, TextDraw, Transform,
 };
 use sequoia_reactive::Environment;
 use sequoia_style::Theme;
@@ -207,11 +207,13 @@ fn rasterize(
     fill_solid(&mut img, bg);
 
     let clips = list.item_clips();
+    let transforms = list.item_transforms();
     for (i, item) in list.items().iter().enumerate() {
         let clip = clips.get(i).copied().flatten();
+        let transform = transforms.get(i).copied().unwrap_or_default();
         match item {
             RenderItem::Quad(q) => draw_quad(&mut img, *q, clip, scale),
-            RenderItem::Text(t) => draw_text(&mut img, t, atlas, clip, scale),
+            RenderItem::Text(t) => draw_text(&mut img, t, atlas, clip, scale, transform),
             RenderItem::Image(d) => draw_image(&mut img, d, clip, scale),
             RenderItem::Shadow(s) => draw_shadow(&mut img, *s, clip, scale),
             RenderItem::Waveform(w) => {
@@ -632,6 +634,7 @@ fn draw_text(
     atlas: &GlyphAtlas,
     clip: Option<RoundedClip>,
     scale: f32,
+    transform: Transform,
 ) {
     if draw.glyphs.is_empty() || draw.color.a <= 0.0 {
         return;
@@ -642,21 +645,74 @@ fn draw_text(
     }
     let pixels = atlas.pixels();
     let stride = aw as usize * 4;
+    if transform.is_identity() {
+        for g in &draw.glyphs {
+            if g.rect.is_empty() {
+                continue;
+            }
+            let dx0 = (g.rect.left() * scale).floor() as i32;
+            let dy0 = (g.rect.top() * scale).floor() as i32;
+            let dx1 = (g.rect.right() * scale).ceil() as i32;
+            let dy1 = (g.rect.bottom() * scale).ceil() as i32;
+            let dw = (dx1 - dx0).max(1) as f32;
+            let dh = (dy1 - dy0).max(1) as f32;
+            let (u0, v0, u1, v1) = (g.uv[0], g.uv[1], g.uv[2], g.uv[3]);
+            for py in dy0.max(0)..dy1.min(img.height() as i32) {
+                for px in dx0.max(0)..dx1.min(img.width() as i32) {
+                    let fx = (px as f32 + 0.5 - dx0 as f32) / dw;
+                    let fy = (py as f32 + 0.5 - dy0 as f32) / dh;
+                    let tx = (((u0 + fx * (u1 - u0)) * aw as f32) as u32).min(aw - 1);
+                    let ty = (((v0 + fy * (v1 - v0)) * ah as f32) as u32).min(ah - 1);
+                    let off = (ty as usize) * stride + (tx as usize) * 4;
+                    if off + 3 >= pixels.len() {
+                        continue;
+                    }
+                    let ta = pixels[off + 3] as f32 / 255.0;
+                    if ta <= 0.0 {
+                        continue;
+                    }
+                    let (r, gg, b) = if g.color_glyph {
+                        (
+                            pixels[off] as f32 / 255.0,
+                            pixels[off + 1] as f32 / 255.0,
+                            pixels[off + 2] as f32 / 255.0,
+                        )
+                    } else {
+                        (draw.color.r, draw.color.g, draw.color.b)
+                    };
+                    let cov = clip_coverage(img, px as u32, py as u32, clip, scale);
+                    if cov > 0.0 {
+                        blend_pixel(img, px as u32, py as u32, r, gg, b, draw.color.a * ta * cov);
+                    }
+                }
+            }
+        }
+        return;
+    }
+    let Some(inverse) = transform.inverse() else {
+        return;
+    };
     for g in &draw.glyphs {
         if g.rect.is_empty() {
             continue;
         }
-        let dx0 = (g.rect.left() * scale).floor() as i32;
-        let dy0 = (g.rect.top() * scale).floor() as i32;
-        let dx1 = (g.rect.right() * scale).ceil() as i32;
-        let dy1 = (g.rect.bottom() * scale).ceil() as i32;
-        let dw = (dx1 - dx0).max(1) as f32;
-        let dh = (dy1 - dy0).max(1) as f32;
+        let bounds = transform.apply_rect_aabb(g.rect);
+        let dx0 = (bounds.left() * scale).floor() as i32;
+        let dy0 = (bounds.top() * scale).floor() as i32;
+        let dx1 = (bounds.right() * scale).ceil() as i32;
+        let dy1 = (bounds.bottom() * scale).ceil() as i32;
         let (u0, v0, u1, v1) = (g.uv[0], g.uv[1], g.uv[2], g.uv[3]);
         for py in dy0.max(0)..dy1.min(img.height() as i32) {
             for px in dx0.max(0)..dx1.min(img.width() as i32) {
-                let fx = (px as f32 + 0.5 - dx0 as f32) / dw;
-                let fy = (py as f32 + 0.5 - dy0 as f32) / dh;
+                let local = inverse.apply(Point::new(
+                    (px as f32 + 0.5) / scale,
+                    (py as f32 + 0.5) / scale,
+                ));
+                if !g.rect.contains(local) {
+                    continue;
+                }
+                let fx = (local.x - g.rect.left()) / g.rect.size.width;
+                let fy = (local.y - g.rect.top()) / g.rect.size.height;
                 let tx = (((u0 + fx * (u1 - u0)) * aw as f32) as u32).min(aw - 1);
                 let ty = (((v0 + fy * (v1 - v0)) * ah as f32) as u32).min(ah - 1);
                 let off = (ty as usize) * stride + (tx as usize) * 4;
@@ -821,6 +877,7 @@ fn bilinear(data: &[u8], sw: u32, sh: u32, x: f32, y: f32) -> (f32, f32, f32, f3
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sequoia_core::Length;
     use sequoia_view::prelude::*;
 
     #[test]
@@ -939,5 +996,59 @@ mod tests {
             })
             .count();
         assert!(inked > 20, "expected visible glyphs, got {inked}");
+    }
+
+    #[test]
+    fn rotated_text_export_swaps_ink_axis() {
+        let mut probe = TextSystem::new();
+        if probe.shape("Sequoia", 28.0).glyph_count() == 0 {
+            eprintln!("skip: no fonts in environment");
+            return;
+        }
+        let opts = ExportOptions::new(320.0, 320.0).scale(SCALE_1X);
+        let bg = opts.theme.background.to_rgb8();
+        let ink_bbox = |img: &RgbaImage| -> (u32, u32) {
+            let mut min_x = u32::MAX;
+            let mut min_y = u32::MAX;
+            let mut max_x = 0;
+            let mut max_y = 0;
+            for (x, y, p) in img.enumerate_pixels() {
+                let d = (p.0[0] as i32 - bg.0 as i32).abs()
+                    + (p.0[1] as i32 - bg.1 as i32).abs()
+                    + (p.0[2] as i32 - bg.2 as i32).abs();
+                if d > 30 {
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+            }
+            assert!(min_x <= max_x && min_y <= max_y, "expected visible text ink");
+            (max_x - min_x + 1, max_y - min_y + 1)
+        };
+        let plain = render_to_image(
+            Stack::new()
+                .size(Length::Fill(1.0), Length::Fill(1.0))
+                .overlay(Text::new("Sequoia").size(28.0), 120.0, 140.0),
+            &opts,
+        )
+        .unwrap();
+        let rotated = render_to_image(
+            Stack::new()
+                .size(Length::Fill(1.0), Length::Fill(1.0))
+                .overlay(Text::new("Sequoia").size(28.0).rotate(90.0), 120.0, 140.0),
+            &opts,
+        )
+        .unwrap();
+        let (plain_w, plain_h) = ink_bbox(&plain);
+        let (rot_w, rot_h) = ink_bbox(&rotated);
+        assert!(
+            plain_w > plain_h * 2,
+            "plain ink should be wide: {plain_w}x{plain_h}"
+        );
+        assert!(
+            rot_h > rot_w * 2,
+            "rotated ink should be tall: {rot_w}x{rot_h}"
+        );
     }
 }

@@ -1,14 +1,18 @@
+//! Line wrapping for flow containers.
+
 use crate::container::{Align, Axis};
 use crate::dock::sanitize_gap;
 
+/// Wrapping configuration for children along a main axis.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WrapStyle {
+    /// Main axis along which children are placed.
     pub axis: Axis,
-
+    /// Cross-axis alignment of the items within each line.
     pub align: Align,
-
+    /// Gap between items on the same line.
     pub column_gap: f32,
-
+    /// Gap between wrapped lines.
     pub row_gap: f32,
 }
 
@@ -24,6 +28,7 @@ impl Default for WrapStyle {
 }
 
 impl WrapStyle {
+    /// Creates a wrapping style for the given main axis.
     pub fn new(axis: Axis) -> Self {
         Self {
             axis,
@@ -31,6 +36,7 @@ impl WrapStyle {
         }
     }
 
+    /// Returns the gap used between items along the main axis.
     pub fn main_gap(self) -> f32 {
         match self.axis {
             Axis::Horizontal => self.column_gap,
@@ -38,6 +44,7 @@ impl WrapStyle {
         }
     }
 
+    /// Returns the gap used between wrapped lines.
     pub fn cross_gap(self) -> f32 {
         match self.axis {
             Axis::Horizontal => self.row_gap,
@@ -45,33 +52,43 @@ impl WrapStyle {
         }
     }
 
+    /// Sets both the column and row gap.
     pub fn gap(mut self, gap: f32) -> Self {
         self.column_gap = sanitize_gap(gap);
         self.row_gap = sanitize_gap(gap);
         self
     }
 
+    /// Sets the gap between items on the same line.
     pub fn column_gap(mut self, gap: f32) -> Self {
         self.column_gap = sanitize_gap(gap);
         self
     }
 
+    /// Sets the gap between wrapped lines.
     pub fn row_gap(mut self, gap: f32) -> Self {
         self.row_gap = sanitize_gap(gap);
         self
     }
 
+    /// Sets the cross-axis alignment of items within a line.
     pub fn align(mut self, align: Align) -> Self {
         self.align = align;
         self
     }
 
+    /// Sets the main axis and reinterprets the main and cross gaps.
     pub fn axis(mut self, axis: Axis) -> Self {
         self.axis = axis;
         self
     }
 }
 
+/// Splits main-axis sizes into lines that fit within `avail_main`.
+///
+/// Returns half-open index ranges `(start, end)` for each line. `gap` is
+/// counted between adjacent items. An unbounded axis keeps every item on a
+/// single line.
 pub fn wrap_lines(main_sizes: &[f32], avail_main: f32, gap: f32) -> Vec<(usize, usize)> {
     let mut lines = Vec::new();
     if main_sizes.is_empty() {

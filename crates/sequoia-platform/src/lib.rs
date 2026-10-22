@@ -45,7 +45,7 @@ pub use sequoia_render::{
     WgpuFrame, WgpuRenderer, WgpuSurface,
 };
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, NamedKey};
@@ -824,20 +824,43 @@ impl PlatformApp {
         let show_after_first_frame = s.visible;
         let mut attrs = Window::default_attributes()
             .with_title(spec.title.clone())
-            .with_inner_size(LogicalSize::new(spec.width, spec.height))
             .with_resizable(s.resizable)
             .with_maximized(s.maximized)
             .with_decorations(s.decorations)
             .with_transparent(s.transparent)
             .with_visible(false);
-        if let Some((w, h)) = s.min_size {
-            attrs = attrs.with_min_inner_size(LogicalSize::new(w, h));
-        }
-        if let Some((w, h)) = s.max_size {
-            attrs = attrs.with_max_inner_size(LogicalSize::new(w, h));
-        }
-        if let Some((x, y)) = s.position {
-            attrs = attrs.with_position(LogicalPosition::new(x, y));
+        if let Some(scale) = s.scale_override.map(sanitize_scale) {
+            let scale = f64::from(scale);
+            attrs = attrs.with_inner_size(PhysicalSize::new(
+                (spec.width * scale).round(),
+                (spec.height * scale).round(),
+            ));
+            if let Some((w, h)) = s.min_size {
+                attrs = attrs.with_min_inner_size(PhysicalSize::new(
+                    (w * scale).round(),
+                    (h * scale).round(),
+                ));
+            }
+            if let Some((w, h)) = s.max_size {
+                attrs = attrs.with_max_inner_size(PhysicalSize::new(
+                    (w * scale).round(),
+                    (h * scale).round(),
+                ));
+            }
+            if let Some((x, y)) = s.position {
+                attrs = attrs.with_position(PhysicalPosition::new(x * scale, y * scale));
+            }
+        } else {
+            attrs = attrs.with_inner_size(LogicalSize::new(spec.width, spec.height));
+            if let Some((w, h)) = s.min_size {
+                attrs = attrs.with_min_inner_size(LogicalSize::new(w, h));
+            }
+            if let Some((w, h)) = s.max_size {
+                attrs = attrs.with_max_inner_size(LogicalSize::new(w, h));
+            }
+            if let Some((x, y)) = s.position {
+                attrs = attrs.with_position(LogicalPosition::new(x, y));
+            }
         }
         if s.always_on_top {
             attrs = attrs.with_window_level(WindowLevel::AlwaysOnTop);
@@ -1001,6 +1024,29 @@ impl PlatformApp {
                         } else {
                             ws.window.set_title(&title);
                         }
+                    }
+                }
+                window::WindowRequest::Minimize(id) => {
+                    if let Some(wid) = self.id_map.get(&id)
+                        && let Some(ws) = self.live.get_mut(wid)
+                    {
+                        ws.window.set_minimized(true);
+                    }
+                }
+                window::WindowRequest::ToggleMaximize(id) => {
+                    if let Some(wid) = self.id_map.get(&id)
+                        && let Some(ws) = self.live.get_mut(wid)
+                    {
+                        let maximize = !ws.window.is_maximized();
+                        ws.window.set_maximized(maximize);
+                    }
+                }
+                window::WindowRequest::BeginDrag(id) => {
+                    if let Some(wid) = self.id_map.get(&id)
+                        && let Some(ws) = self.live.get_mut(wid)
+                        && let Err(e) = ws.window.drag_window()
+                    {
+                        log::warn!("sequoia-platform: window drag failed: {e}");
                     }
                 }
             }
@@ -1577,6 +1623,18 @@ mod tests {
         let assets = AssetRegistry::with_builtin_icons();
         assert!(window_icon(&assets, "star", Color::WHITE).is_some());
         assert!(window_icon(&assets, "no-such-icon", Color::WHITE).is_none());
+    }
+
+    #[test]
+    fn scale_override_is_sanitized_and_stored() {
+        assert_eq!(sanitize_scale(1.25), 1.25);
+        assert_eq!(sanitize_scale(0.0), 1.0);
+        assert_eq!(sanitize_scale(-2.0), 1.0);
+        assert_eq!(sanitize_scale(f64::NAN), 1.0);
+        assert_eq!(sanitize_scale(f64::INFINITY), 1.0);
+
+        let app = App::new().scale_factor(1.0);
+        assert_eq!(app.windows[0].settings.scale_override, Some(1.0));
     }
 
     #[test]

@@ -1,0 +1,14 @@
+[package]
+name = "paint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "MS Paint style image editor built with SequoiaUI"
+
+[dependencies]
+image = { workspace = true }
+sequoia-ui = { workspace = true }
+
+[lints]
+workspace = true

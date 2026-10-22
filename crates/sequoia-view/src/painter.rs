@@ -300,6 +300,22 @@ impl<'a, 'b> Painter<'a, 'b> {
         self.text(text, baseline, size, color);
     }
 
+    pub fn text_tl_rotated(
+        &mut self,
+        text: &str,
+        top_left: Point,
+        size: f32,
+        color: Color,
+        degrees: f32,
+        pivot: Point,
+    ) {
+        let pivot = self.to_global_point(pivot);
+        let t = Transform::rotate_around_degrees(degrees, pivot);
+        self.push_list_transform(t);
+        self.text_tl(text, top_left, size, color);
+        self.pop_list_transform();
+    }
+
     pub fn text_styled(
         &mut self,
         text: &str,

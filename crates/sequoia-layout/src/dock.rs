@@ -1,43 +1,52 @@
+//! Docking sides, thickness resolution, and preview rectangles.
+
 use sequoia_core::{Length, Rect};
 
 use crate::container::Axis;
 
+/// Side of a container a child is docked to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Dock {
+    /// Dock to the left edge.
     Left,
-
+    /// Dock to the right edge.
     Right,
-
+    /// Dock to the top edge.
     Top,
-
+    /// Dock to the bottom edge.
     Bottom,
-
+    /// Fill the remaining space.
     #[default]
     Fill,
 }
 
 impl Dock {
+    /// Returns `true` for [`Dock::Left`] and [`Dock::Right`].
     pub const fn is_horizontal(self) -> bool {
         matches!(self, Self::Left | Self::Right)
     }
 
+    /// Returns `true` for [`Dock::Top`] and [`Dock::Bottom`].
     pub const fn is_vertical(self) -> bool {
         matches!(self, Self::Top | Self::Bottom)
     }
 
+    /// Returns `true` for every side except [`Dock::Fill`].
     pub const fn is_side(self) -> bool {
         !matches!(self, Self::Fill)
     }
 }
 
+/// Docking configuration for a set of children.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DockStyle {
+    /// Dock side for each child, by index.
     pub docks: Vec<Dock>,
-
+    /// Gap between docked children.
     pub gap: f32,
-
+    /// Whether the last child should fill the remaining space.
     pub last_child_fill: bool,
-
+    /// Lay out children in declaration order instead of grouping sides first.
     pub ordered: bool,
 }
 
@@ -53,6 +62,7 @@ impl Default for DockStyle {
 }
 
 impl DockStyle {
+    /// Creates a style from the given dock sides.
     pub fn new(docks: impl IntoIterator<Item = Dock>) -> Self {
         Self {
             docks: docks.into_iter().collect(),
@@ -62,31 +72,42 @@ impl DockStyle {
         }
     }
 
+    /// Sets the gap between docked children.
     pub fn gap(mut self, gap: f32) -> Self {
         self.gap = sanitize_gap(gap);
         self
     }
 
+    /// Makes the last child fill the remaining space.
     pub fn last_child_fill(mut self, fill: bool) -> Self {
         self.last_child_fill = fill;
         self
     }
 
+    /// Uses declaration order rather than grouping sides before the fill.
     pub fn ordered(mut self, ordered: bool) -> Self {
         self.ordered = ordered;
         self
     }
 
+    /// Enables or disables border-style ordering.
+    ///
+    /// This is the inverse of [`DockStyle::ordered`].
     pub fn border(mut self, border: bool) -> Self {
         self.ordered = !border;
         self
     }
 }
 
+/// Clamps a gap to a finite, non-negative value.
 pub fn sanitize_gap(gap: f32) -> f32 {
     if gap.is_finite() { gap.max(0.0) } else { 0.0 }
 }
 
+/// Resolves the thickness of a docked side.
+///
+/// [`Length::Px`] is used directly, [`Length::Percent`] scales with
+/// `available`, and fit/fill fall back to the `intrinsic` thickness.
 pub fn dock_thickness(len: Length, intrinsic: f32, available: f32) -> f32 {
     let intrinsic = if intrinsic.is_finite() {
         intrinsic.max(0.0)
@@ -112,6 +133,9 @@ pub fn dock_thickness(len: Length, intrinsic: f32, available: f32) -> f32 {
     }
 }
 
+/// Returns the dock for `index`, honouring `last_child_fill`.
+///
+/// A missing entry defaults to [`Dock::Fill`].
 pub fn effective_dock(docks: &[Dock], last_child_fill: bool, index: usize, count: usize) -> Dock {
     if count > 0 && last_child_fill && index + 1 == count {
         return Dock::Fill;
@@ -119,6 +143,10 @@ pub fn effective_dock(docks: &[Dock], last_child_fill: bool, index: usize, count
     docks.get(index).copied().unwrap_or(Dock::Fill)
 }
 
+/// Resolves the dock for a child according to the layout mode.
+///
+/// In `ordered` mode this is [`effective_dock`]; otherwise the configured dock
+/// is used verbatim, so the last child is not forced to fill.
 pub fn resolve_dock(
     docks: &[Dock],
     last_child_fill: bool,
@@ -133,6 +161,10 @@ pub fn resolve_dock(
     }
 }
 
+/// Returns the order in which docked children should be laid out.
+///
+/// In border mode, top and bottom docks are placed first, then left and right,
+/// and finally fill children. `ordered` preserves the declaration order.
 pub fn dock_layout_order(
     docks: &[Dock],
     last_child_fill: bool,
@@ -152,6 +184,7 @@ pub fn dock_layout_order(
     order
 }
 
+/// Clamps a split fraction to `0.0..=1.0`; non-finite values become `0.5`.
 pub fn sanitize_frac(frac: f32) -> f32 {
     if frac.is_finite() {
         frac.clamp(0.0, 1.0)
@@ -160,6 +193,7 @@ pub fn sanitize_frac(frac: f32) -> f32 {
     }
 }
 
+/// Clamps a preview fraction to `0.15..=0.85`; non-finite values become `0.5`.
 pub fn sanitize_preview_frac(frac: f32) -> f32 {
     if frac.is_finite() {
         frac.clamp(0.15, 0.85)
@@ -168,6 +202,9 @@ pub fn sanitize_preview_frac(frac: f32) -> f32 {
     }
 }
 
+/// Returns the split axis for a dock and whether the docked child comes first.
+///
+/// Returns `None` for [`Dock::Fill`].
 pub fn split_axis_for_dock(dock: Dock) -> Option<(Axis, bool)> {
     match dock {
         Dock::Left => Some((Axis::Horizontal, true)),
@@ -178,6 +215,10 @@ pub fn split_axis_for_dock(dock: Dock) -> Option<(Axis, bool)> {
     }
 }
 
+/// Returns the rectangle a docked side would occupy for the given `frac`.
+///
+/// The fraction is clamped by [`sanitize_preview_frac`]; [`Dock::Fill`]
+/// returns the whole host rectangle.
 pub fn dock_preview_rect(host: Rect, dock: Dock, frac: f32) -> Rect {
     let f = sanitize_preview_frac(frac);
     let x = host.origin.x;

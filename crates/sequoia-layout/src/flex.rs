@@ -1,15 +1,28 @@
+//! Flex grow, shrink, and justification along a container's main axis.
+
 use crate::container::Justify;
 
+/// Flex parameters for one item along a container's main axis.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlexItem {
+    /// Base size before growing or shrinking.
     pub base: f32,
+    /// Relative weight used to claim free space.
     pub grow: f32,
+    /// Relative weight used to absorb a deficit.
     pub shrink: f32,
+    /// Minimum size the item may shrink to.
     pub min: f32,
+    /// Maximum size the item may grow to.
     pub max: f32,
 }
 
 impl FlexItem {
+    /// Creates a sanitized flex item.
+    ///
+    /// Non-finite or negative values are clamped: `base` and `min` to zero,
+    /// `grow` to zero, `shrink` to one, and `max` becomes infinity when it is
+    /// NaN or positive infinity.
     pub fn new(base: f32, grow: f32, shrink: f32, min: f32, max: f32) -> Self {
         Self {
             base: if base.is_finite() { base.max(0.0) } else { 0.0 },
@@ -44,6 +57,11 @@ impl FlexItem {
     }
 }
 
+/// Distributes `avail_main` among `sizes` according to the flex items.
+///
+/// `sizes` initially holds the base sizes and is updated in place. `gaps` is
+/// the total space consumed by gaps between items. Items grow until their max
+/// and shrink until their min; any remaining space is passed to siblings.
 pub fn distribute_flex(items: &[FlexItem], sizes: &mut [f32], gaps: f32, avail_main: f32) {
     assert_eq!(items.len(), sizes.len());
     if items.is_empty() {
@@ -131,6 +149,10 @@ fn items_scale(_items: &[FlexItem], _sizes: &[f32], _flex_pass: bool) -> f32 {
     1.0
 }
 
+/// Computes the leading offset and inter-item gap for a justified line.
+///
+/// Returns `(start_offset, added_gap)`; `used` is the space already occupied
+/// by items and `avail` is the available main-axis space.
 pub fn justify_layout(
     justify: Justify,
     count: usize,

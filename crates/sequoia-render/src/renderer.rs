@@ -1142,10 +1142,25 @@ impl GpuRenderer {
         image_draws.clear();
         if !images.is_empty() {
             for key in image_keys.iter() {
-                if !self.images.contains_key(key)
-                    && !self.image_failures.contains(key)
-                    && let Some(src) = find_image_source(list.items(), *key)
-                {
+                if self.image_failures.contains(key) {
+                    continue;
+                }
+                let Some(src) = find_image_source(list.items(), *key) else {
+                    continue;
+                };
+                let needs_upload = match self.images.get(key) {
+                    None => true,
+                    Some(entry) => {
+                        let version_changed = src
+                            .dynamic_version()
+                            .is_some_and(|version| Some(version) != entry.version);
+                        let extent_changed = src
+                            .extent()
+                            .is_some_and(|extent| extent != (entry.width, entry.height));
+                        version_changed || extent_changed
+                    }
+                };
+                if needs_upload {
                     Self::image_bind_group(
                         &self.device,
                         &self.queue,

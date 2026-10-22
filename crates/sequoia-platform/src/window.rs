@@ -225,6 +225,12 @@ pub(crate) enum WindowRequest {
     Close(WindowId),
 
     SetTitle(WindowId, String),
+
+    Minimize(WindowId),
+
+    ToggleMaximize(WindowId),
+
+    BeginDrag(WindowId),
 }
 
 struct WindowsInner {
@@ -301,6 +307,39 @@ impl Windows {
             .pending
             .borrow_mut()
             .push(WindowRequest::SetTitle(id, title));
+        true
+    }
+
+    pub fn minimize(&self, id: WindowId) -> bool {
+        if !self.contains(id) {
+            return false;
+        }
+        self.inner
+            .pending
+            .borrow_mut()
+            .push(WindowRequest::Minimize(id));
+        true
+    }
+
+    pub fn toggle_maximize(&self, id: WindowId) -> bool {
+        if !self.contains(id) {
+            return false;
+        }
+        self.inner
+            .pending
+            .borrow_mut()
+            .push(WindowRequest::ToggleMaximize(id));
+        true
+    }
+
+    pub fn begin_drag(&self, id: WindowId) -> bool {
+        if !self.contains(id) {
+            return false;
+        }
+        self.inner
+            .pending
+            .borrow_mut()
+            .push(WindowRequest::BeginDrag(id));
         true
     }
 
@@ -392,6 +431,26 @@ mod tests {
         assert_eq!(reqs.len(), 1);
         assert!(matches!(&reqs[0], WindowRequest::SetTitle(i, t) if *i == id && t == "new"));
         assert!(!w.set_title(WindowId::new(999), "x"));
+    }
+
+    #[test]
+    fn window_controls_queue_and_reject_unknown() {
+        let w = Windows::new();
+        let id = w.push_initial(spec("main"));
+        assert!(w.minimize(id));
+        assert!(w.toggle_maximize(id));
+        assert!(w.begin_drag(id));
+        let reqs = w.take_requests();
+        assert_eq!(reqs.len(), 3);
+        assert!(matches!(reqs[0], WindowRequest::Minimize(i) if i == id));
+        assert!(matches!(reqs[1], WindowRequest::ToggleMaximize(i) if i == id));
+        assert!(matches!(reqs[2], WindowRequest::BeginDrag(i) if i == id));
+
+        let unknown = WindowId::new(999);
+        assert!(!w.minimize(unknown));
+        assert!(!w.toggle_maximize(unknown));
+        assert!(!w.begin_drag(unknown));
+        assert!(w.take_requests().is_empty());
     }
 
     #[test]

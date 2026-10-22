@@ -1,5 +1,11 @@
+//! Length resolution and main-axis space distribution.
+
 use sequoia_core::{Constraints, Length, Size};
 
+/// Resolves a length along the main axis.
+///
+/// Returns `(size, fill_weight)`, where `fill_weight` is non-zero only for
+/// [`Length::Fill`] and describes how much of the free space to claim.
 pub fn resolve_main(len: Length, intrinsic: f32, available: f32) -> (f32, f32) {
     match len {
         Length::Px(v) => (v, 0.0),
@@ -15,6 +21,10 @@ pub fn resolve_main(len: Length, intrinsic: f32, available: f32) -> (f32, f32) {
     }
 }
 
+/// Resolves a length along the cross axis to a concrete size.
+///
+/// Percentages and [`Length::Fill`] fall back to the intrinsic size when the
+/// available space is unbounded.
 pub fn resolve_cross(len: Length, intrinsic: f32, available: f32) -> f32 {
     match len {
         Length::Px(v) => v,
@@ -36,6 +46,10 @@ pub fn resolve_cross(len: Length, intrinsic: f32, available: f32) -> f32 {
     }
 }
 
+/// Resolves a flex basis, preferring `basis` over the `fallback` result.
+///
+/// Returns `(size, fill_weight)` like [`resolve_main`]. An unset basis, or a
+/// percentage with unbounded space, keeps the fallback.
 pub fn resolve_flex_basis(
     basis: Option<Length>,
     fallback: (f32, f32),
@@ -59,10 +73,16 @@ pub fn resolve_flex_basis(
     }
 }
 
+/// Constrains `size` to the given minimum and maximum constraints.
 pub fn clamp_to(size: Size, constraints: Constraints) -> Size {
     constraints.constrain(size)
 }
 
+/// Distributes free space or a deficit across main-axis bases.
+///
+/// Positive `free` space is shared by items with a positive grow weight. A
+/// deficit first shrinks flexible items, then fixed items, without applying
+/// per-item limits.
 pub fn distribute_main(bases: &mut [f32], grows: &[f32], free: f32) {
     debug_assert_eq!(bases.len(), grows.len());
 
@@ -122,6 +142,11 @@ pub fn distribute_main(bases: &mut [f32], grows: &[f32], free: f32) {
 
 const CLAMP_EPS: f32 = 0.001;
 
+/// Distributes main-axis space while respecting per-item min/max limits.
+///
+/// Similar to [`distribute_main`], but items stop growing at their max and
+/// stop shrinking at their min; the remaining space is passed to siblings.
+/// `gaps` is the total space consumed by gaps between items.
 pub fn distribute_main_clamped(
     bases: &mut [f32],
     grows: &[f32],
