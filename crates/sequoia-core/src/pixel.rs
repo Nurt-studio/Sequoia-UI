@@ -1,16 +1,45 @@
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::geometry::Rect;
 use crate::paint::{Color, ImageSource};
 
 const BPP: usize = 4;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+static NEXT_PIXELS_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_pixels_id() -> u64 {
+    NEXT_PIXELS_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Debug)]
 pub struct Pixels {
     width: u32,
     height: u32,
-    data: Vec<u8>,
+    data: Arc<Vec<u8>>,
+    id: u64,
+    revision: u64,
 }
+
+impl Clone for Pixels {
+    fn clone(&self) -> Self {
+        Self {
+            width: self.width,
+            height: self.height,
+            data: Arc::clone(&self.data),
+            id: next_pixels_id(),
+            revision: 0,
+        }
+    }
+}
+
+impl PartialEq for Pixels {
+    fn eq(&self, other: &Self) -> bool {
+        self.width == other.width && self.height == other.height && self.data == other.data
+    }
+}
+
+impl Eq for Pixels {}
 
 impl Default for Pixels {
     fn default() -> Self {
@@ -24,13 +53,17 @@ impl Pixels {
             return Self {
                 width: 0,
                 height: 0,
-                data: Vec::new(),
+                data: Arc::new(Vec::new()),
+                id: next_pixels_id(),
+                revision: 0,
             };
         };
         Self {
             width,
             height,
-            data: vec![0; px * BPP],
+            data: Arc::new(vec![0; px * BPP]),
+            id: next_pixels_id(),
+            revision: 0,
         }
     }
 
@@ -54,7 +87,9 @@ impl Pixels {
         Some(Self {
             width,
             height,
-            data,
+            data: Arc::new(data),
+            id: next_pixels_id(),
+            revision: 0,
         })
     }
 
@@ -70,6 +105,18 @@ impl Pixels {
         self.width == 0 || self.height == 0
     }
 
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     pub fn pixel_count(&self) -> usize {
         self.data.len() / BPP
     }
@@ -79,11 +126,12 @@ impl Pixels {
     }
 
     pub fn data_mut(&mut self) -> &mut [u8] {
-        &mut self.data
+        self.touch();
+        Arc::make_mut(&mut self.data).as_mut_slice()
     }
 
     pub fn into_data(self) -> Vec<u8> {
-        self.data
+        Arc::try_unwrap(self.data).unwrap_or_else(|data| data.as_ref().clone())
     }
 
     pub fn index(&self, x: i32, y: i32) -> Option<usize> {
@@ -106,7 +154,9 @@ impl Pixels {
         let Some(i) = self.index(x, y) else {
             return false;
         };
-        self.data[i..i + BPP].copy_from_slice(&pack(color));
+        let data = Arc::make_mut(&mut self.data);
+        data[i..i + BPP].copy_from_slice(&pack(color));
+        self.touch();
         true
     }
 
@@ -114,16 +164,23 @@ impl Pixels {
         let Some(i) = self.index(x, y) else {
             return false;
         };
-        let out = blend_over(unpack(&self.data[i..i + BPP]), color);
-        self.data[i..i + BPP].copy_from_slice(&out);
+        let data = Arc::make_mut(&mut self.data);
+        let out = blend_over(unpack(&data[i..i + BPP]), color);
+        data[i..i + BPP].copy_from_slice(&out);
+        self.touch();
         true
     }
 
     pub fn fill(&mut self, color: Color) {
+        if self.data.is_empty() {
+            return;
+        }
         let px = pack(color);
-        for chunk in self.data.chunks_exact_mut(BPP) {
+        let data = Arc::make_mut(&mut self.data);
+        for chunk in data.chunks_exact_mut(BPP) {
             chunk.copy_from_slice(&px);
         }
+        self.touch();
     }
 
     pub fn fill_rect(&mut self, rect: Rect, color: Color) -> Rect {
@@ -131,13 +188,15 @@ impl Pixels {
             return Rect::ZERO;
         };
         let px = pack(color);
+        let data = Arc::make_mut(&mut self.data);
         for y in y0..y1 {
             let row = y as usize * self.width as usize;
             for x in x0..x1 {
                 let i = (row + x as usize) * BPP;
-                self.data[i..i + BPP].copy_from_slice(&px);
+                data[i..i + BPP].copy_from_slice(&px);
             }
         }
+        self.touch();
         bounds_rect(x0, y0, x1, y1)
     }
 
@@ -145,14 +204,16 @@ impl Pixels {
         let Some((x0, y0, x1, y1)) = self.rect_bounds(rect) else {
             return Rect::ZERO;
         };
+        let data = Arc::make_mut(&mut self.data);
         for y in y0..y1 {
             let row = y as usize * self.width as usize;
             for x in x0..x1 {
                 let i = (row + x as usize) * BPP;
-                let out = blend_over(unpack(&self.data[i..i + BPP]), color);
-                self.data[i..i + BPP].copy_from_slice(&out);
+                let out = blend_over(unpack(&data[i..i + BPP]), color);
+                data[i..i + BPP].copy_from_slice(&out);
             }
         }
+        self.touch();
         bounds_rect(x0, y0, x1, y1)
     }
 
@@ -175,6 +236,7 @@ impl Pixels {
         if sx0 >= sx1 || sy0 >= sy1 {
             return Rect::ZERO;
         }
+        let data = Arc::make_mut(&mut self.data);
         for sy in sy0..sy1 {
             let dy_row = (dy + sy) as usize * self.width as usize;
             let sx_row = sy as usize * src.width as usize;
@@ -182,21 +244,24 @@ impl Pixels {
                 let si = (sx_row + sx as usize) * BPP;
                 let di = (dy_row + (dx + sx) as usize) * BPP;
                 if blend {
-                    let out = blend_over(
-                        unpack(&self.data[di..di + BPP]),
-                        unpack(&src.data[si..si + BPP]),
-                    );
-                    self.data[di..di + BPP].copy_from_slice(&out);
+                    let out =
+                        blend_over(unpack(&data[di..di + BPP]), unpack(&src.data[si..si + BPP]));
+                    data[di..di + BPP].copy_from_slice(&out);
                 } else {
-                    self.data[di..di + BPP].copy_from_slice(&src.data[si..si + BPP]);
+                    data[di..di + BPP].copy_from_slice(&src.data[si..si + BPP]);
                 }
             }
         }
+        self.touch();
         bounds_rect(dx + sx0, dy + sy0, dx + sx1, dy + sy1)
     }
 
     pub fn clear(&mut self) {
-        self.data.fill(0);
+        if self.data.is_empty() {
+            return;
+        }
+        Arc::make_mut(&mut self.data).fill(0);
+        self.touch();
     }
 
     pub fn crop(&self, rect: Rect) -> Pixels {
@@ -213,7 +278,9 @@ impl Pixels {
         Pixels {
             width: (x1 - x0) as u32,
             height: (y1 - y0) as u32,
-            data: out,
+            data: Arc::new(out),
+            id: next_pixels_id(),
+            revision: 0,
         }
     }
 
@@ -223,8 +290,9 @@ impl Pixels {
         }
         let w = self.width as usize;
         let row_bytes = w * BPP;
+        let data = Arc::make_mut(&mut self.data);
         for y in 0..self.height as usize {
-            let row = &mut self.data[y * row_bytes..(y + 1) * row_bytes];
+            let row = &mut data[y * row_bytes..(y + 1) * row_bytes];
             for x in 0..w / 2 {
                 let a = x * BPP;
                 let b = (w - 1 - x) * BPP;
@@ -233,6 +301,7 @@ impl Pixels {
                 }
             }
         }
+        self.touch();
     }
 
     pub fn flip_vertical(&mut self) {
@@ -241,12 +310,14 @@ impl Pixels {
         }
         let row_bytes = self.width as usize * BPP;
         let h = self.height as usize;
+        let data = Arc::make_mut(&mut self.data);
         for y in 0..h / 2 {
             let (a, b) = (y * row_bytes, (h - 1 - y) * row_bytes);
             for k in 0..row_bytes {
-                self.data.swap(a + k, b + k);
+                data.swap(a + k, b + k);
             }
         }
+        self.touch();
     }
 
     pub fn rotate180(&mut self) {
@@ -265,12 +336,15 @@ impl Pixels {
         let mut out = Pixels::new(w, h);
         let xr = self.width as f32 / w as f32;
         let yr = self.height as f32 / h as f32;
+        let out_width = out.width as usize;
+        let out_data = Arc::make_mut(&mut out.data);
         for y in 0..h {
             let sy = (y as f32 * yr).floor() as i32;
             for x in 0..w {
                 let sx = (x as f32 * xr).floor() as i32;
-                if let (Some(si), Some(di)) = (self.index(sx, sy), out.index(x as i32, y as i32)) {
-                    out.data[di..di + BPP].copy_from_slice(&self.data[si..si + BPP]);
+                if let Some(si) = self.index(sx, sy) {
+                    let di = (y as usize * out_width + x as usize) * BPP;
+                    out_data[di..di + BPP].copy_from_slice(&self.data[si..si + BPP]);
                 }
             }
         }
@@ -288,14 +362,15 @@ impl Pixels {
         let mut out = Pixels::new(w, h);
         let sx = self.width as f32 / w as f32;
         let sy = self.height as f32 / h as f32;
+        let out_width = out.width as usize;
+        let out_data = Arc::make_mut(&mut out.data);
         for y in 0..h {
             let fy = (y as f32 + 0.5) * sy - 0.5;
             for x in 0..w {
                 let fx = (x as f32 + 0.5) * sx - 0.5;
                 let c = self.sample_bilinear(fx, fy);
-                if let Some(di) = out.index(x as i32, y as i32) {
-                    out.data[di..di + BPP].copy_from_slice(&pack(c));
-                }
+                let di = (y as usize * out_width + x as usize) * BPP;
+                out_data[di..di + BPP].copy_from_slice(&pack(c));
             }
         }
         out
@@ -358,14 +433,19 @@ impl Pixels {
     }
 
     pub fn for_each_pixel(&mut self, mut f: impl FnMut(i32, i32, Color) -> Color) {
+        if self.data.is_empty() {
+            return;
+        }
         let w = self.width as usize;
+        let data = Arc::make_mut(&mut self.data);
         for y in 0..self.height as usize {
             for x in 0..w {
                 let i = (y * w + x) * BPP;
-                let c = unpack(&self.data[i..i + BPP]);
-                self.data[i..i + BPP].copy_from_slice(&pack(f(x as i32, y as i32, c)));
+                let c = unpack(&data[i..i + BPP]);
+                data[i..i + BPP].copy_from_slice(&pack(f(x as i32, y as i32, c)));
             }
         }
+        self.touch();
     }
 
     pub fn map(&self, mut f: impl FnMut(i32, i32, Color) -> Color) -> Pixels {
@@ -432,23 +512,23 @@ impl Pixels {
         ))
     }
 
-    pub fn to_source(&self, id: u64, version: u64) -> ImageSource {
+    pub fn to_source(&self) -> ImageSource {
         ImageSource::Dynamic {
-            id,
+            id: self.id,
             width: self.width,
             height: self.height,
-            data: Rc::from(self.data.clone().into_boxed_slice()),
-            version,
+            data: Arc::clone(&self.data),
+            version: self.revision,
         }
     }
 
-    pub fn into_source(self, id: u64, version: u64) -> ImageSource {
+    pub fn into_source(self) -> ImageSource {
         ImageSource::Dynamic {
-            id,
+            id: self.id,
             width: self.width,
             height: self.height,
-            data: Rc::from(self.data.into_boxed_slice()),
-            version,
+            data: self.data,
+            version: self.revision,
         }
     }
 
@@ -696,11 +776,30 @@ mod tests {
     }
 
     #[test]
-    fn source_conversions_carry_dimensions() {
+    fn source_conversions_carry_dimensions_and_identity() {
         let px = Pixels::filled(3, 2, red());
-        assert_eq!(px.to_source(7, 1).extent(), Some((3, 2)));
-        assert_eq!(px.clone().into_source(7, 1).dynamic_version(), Some(1));
-        assert_eq!(px.to_source(9, 1).cache_key(), 9);
+        assert_eq!(px.to_source().extent(), Some((3, 2)));
+        assert_eq!(px.to_source().cache_key(), px.id());
+        assert_eq!(px.clone().into_source().dynamic_version(), Some(0));
+    }
+
+    #[test]
+    fn mutations_bump_revision_and_clones_get_fresh_ids() {
+        let mut px = Pixels::filled(2, 2, red());
+        let id = px.id();
+        let revision = px.revision();
+        px.set(0, 0, Color::BLUE);
+        assert_eq!(px.id(), id);
+        assert_eq!(px.revision(), revision + 1);
+
+        let fx = px.data_mut();
+        fx[0] = 1;
+        assert_eq!(px.revision(), revision + 2);
+
+        let clone = px.clone();
+        assert_ne!(clone.id(), px.id());
+        assert_eq!(clone.revision(), 0);
+        assert_eq!(clone.data(), px.data());
     }
 
     #[test]

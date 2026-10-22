@@ -47,7 +47,6 @@ pub fn open_into(state: &mut State, path: PathBuf) {
             state.clear_selection_committing();
             state.text = None;
             state.doc = px;
-            state.doc_version = state.doc_version.wrapping_add(1);
             state.path = Some(path.clone());
             state.dirty = false;
             state.undo.clear();

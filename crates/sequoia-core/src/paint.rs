@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::geometry::{Rect, Transform, Vec2};
 
@@ -659,7 +659,7 @@ pub enum ImageSource {
 
         height: u32,
 
-        data: Rc<[u8]>,
+        data: Arc<Vec<u8>>,
     },
 
     Dynamic {
@@ -669,7 +669,7 @@ pub enum ImageSource {
 
         height: u32,
 
-        data: Rc<[u8]>,
+        data: Arc<Vec<u8>>,
 
         version: u64,
     },
@@ -1959,7 +1959,7 @@ mod tests {
             id,
             width: 2,
             height: 2,
-            data: Rc::from(vec![0u8; 16].into_boxed_slice()),
+            data: Arc::new(vec![0u8; 16]),
         };
         assert_eq!(rgba(7).cache_key(), 7);
         assert_ne!(rgba(7).cache_key(), rgba(8).cache_key());
@@ -2077,14 +2077,14 @@ mod tests {
             id: 7,
             width: 4,
             height: 1,
-            data: Rc::from(vec![0u8; 16].into_boxed_slice()),
+            data: Arc::new(vec![0u8; 16]),
             version: 1,
         };
         let b = ImageSource::Dynamic {
             id: 7,
             width: 4,
             height: 1,
-            data: Rc::from(vec![255u8; 16].into_boxed_slice()),
+            data: Arc::new(vec![255u8; 16]),
             version: 2,
         };
         assert_eq!(a.cache_key(), 7);
@@ -2096,7 +2096,7 @@ mod tests {
                 id: 7,
                 width: 1,
                 height: 1,
-                data: Rc::from(vec![0u8; 4].into_boxed_slice()),
+                data: Arc::new(vec![0u8; 4]),
             }
             .dynamic_version(),
             None

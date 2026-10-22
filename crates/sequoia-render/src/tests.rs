@@ -19,6 +19,7 @@ use sequoia_view::{PointerEvent, SurfaceDraw, Unit, View};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn embedded_shader_parses_and_validates() {
@@ -179,7 +180,7 @@ fn decode_image_rejects_oversize_and_mismatched_buffers() {
             id: 1,
             width: u32::MAX,
             height: u32::MAX,
-            data: Rc::from([]),
+            data: Arc::new(Vec::new()),
         })
         .is_none()
     );
@@ -188,7 +189,7 @@ fn decode_image_rejects_oversize_and_mismatched_buffers() {
             id: 2,
             width: MAX_IMAGE_DIM + 1,
             height: 16,
-            data: Rc::from([0; 64]),
+            data: Arc::new(vec![0; 64]),
         })
         .is_none()
     );
@@ -198,7 +199,7 @@ fn decode_image_rejects_oversize_and_mismatched_buffers() {
             id: 3,
             width: 4,
             height: 4,
-            data: Rc::from([0; 10]),
+            data: Arc::new(vec![0; 10]),
         })
         .is_none()
     );
@@ -208,7 +209,7 @@ fn decode_image_rejects_oversize_and_mismatched_buffers() {
             id: 4,
             width: 0,
             height: 4,
-            data: Rc::from([]),
+            data: Arc::new(Vec::new()),
         })
         .is_none()
     );
@@ -218,7 +219,7 @@ fn decode_image_rejects_oversize_and_mismatched_buffers() {
             id: 5,
             width: 2,
             height: 1,
-            data: Rc::from([128; 2 * 4]),
+            data: Arc::new(vec![128; 2 * 4]),
         })
         .is_some()
     );
@@ -579,7 +580,7 @@ fn runs_collect_images_in_paint_order() {
                 id,
                 width: 1,
                 height: 1,
-                data: std::rc::Rc::from([0u8, 0, 0, 255]),
+                data: std::sync::Arc::new(vec![0u8, 0, 0, 255]),
             },
         })
     };
@@ -889,7 +890,7 @@ fn viewport_culls_offscreen_instances() {
                 id: 11,
                 width: 1,
                 height: 1,
-                data: std::rc::Rc::from([0u8, 0, 0, 255]),
+                data: std::sync::Arc::new(vec![0u8, 0, 0, 255]),
             },
         }),
         RenderItem::Shadow(Shadow {
@@ -1133,7 +1134,7 @@ fn decode_image_validates_rgba() {
         id: 1,
         width: 2,
         height: 1,
-        data: std::rc::Rc::from(vec![0u8; 8].into_boxed_slice()),
+        data: std::sync::Arc::new(vec![0u8; 8]),
     };
     let (w, h, data) = decode_image(&good).expect("poprawne RGBA");
     assert_eq!((w, h), (2, 1));
@@ -1142,7 +1143,7 @@ fn decode_image_validates_rgba() {
         id: 2,
         width: 2,
         height: 2,
-        data: std::rc::Rc::from(vec![0u8; 8].into_boxed_slice()),
+        data: std::sync::Arc::new(vec![0u8; 8]),
     };
     assert!(decode_image(&bad_len).is_none(), "bad data size");
     let missing = ImageSource::File("no/such/file.png".into());
@@ -1807,7 +1808,7 @@ fn decode_dynamic_validates_like_rgba() {
         id: 9,
         width: 4,
         height: 1,
-        data: std::rc::Rc::from(vec![0u8; 16].into_boxed_slice()),
+        data: std::sync::Arc::new(vec![0u8; 16]),
         version: 3,
     };
     assert!(decode_image(&good).is_some());

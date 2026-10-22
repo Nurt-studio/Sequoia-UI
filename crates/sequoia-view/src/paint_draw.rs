@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use sequoia_core::{Color, ImageSource, Point, Rect, Shadow, Vec2};
 use sequoia_draw::{
@@ -611,7 +611,7 @@ impl PaintCtx<'_> {
                 id,
                 width: w,
                 height: h,
-                data: Rc::from(data.into_boxed_slice()),
+                data: Arc::new(data),
                 version,
             },
         );

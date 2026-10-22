@@ -8,7 +8,6 @@ use crate::model::{Icon, ShapeKind};
 
 struct Entry {
     pixels: Pixels,
-    image_id: u64,
 }
 
 static ICONS: OnceLock<HashMap<&'static str, Entry>> = OnceLock::new();
@@ -94,7 +93,7 @@ fn load_icons() -> HashMap<&'static str, Entry> {
     ];
 
     let mut map = HashMap::with_capacity(files.len());
-    for (index, (name, bytes)) in files.iter().enumerate() {
+    for (name, bytes) in files {
         let Ok(image) = image::load_from_memory(bytes) else {
             continue;
         };
@@ -103,13 +102,7 @@ fn load_icons() -> HashMap<&'static str, Entry> {
         let Some(pixels) = Pixels::from_rgba(width, height, rgba.into_raw()) else {
             continue;
         };
-        map.insert(
-            *name,
-            Entry {
-                pixels,
-                image_id: 0x5041_494E_5400 + index as u64,
-            },
-        );
+        map.insert(*name, Entry { pixels });
     }
     map
 }
@@ -133,7 +126,7 @@ pub fn draw_named(g: &mut Painter, name: &str, rect: Rect) -> bool {
     let w = width * scale;
     let h = height * scale;
     let target = Rect::from_xywh(rect.center().x - w * 0.5, rect.center().y - h * 0.5, w, h);
-    g.pixels(target, &entry.pixels, entry.image_id, 1);
+    g.pixels(target, &entry.pixels);
     true
 }
 

@@ -8,10 +8,11 @@ use sequoia_view::prelude::*;
 fn canvas_paints_pixel_buffer_as_image() {
     let mut pixels = Pixels::filled(4, 4, Color::RED);
     pixels.set(0, 0, Color::BLUE);
+    let id = pixels.id();
 
     let rt = Runtime::new();
     rt.mount(Canvas::new().on_draw(move |g: &mut Painter| {
-        g.pixels(g.rect(), &pixels, 42, 1);
+        g.pixels(g.rect(), &pixels);
     }));
     let mut text = TextSystem::new();
     rt.layout(Rect::from_xywh(0.0, 0.0, 100.0, 100.0), &mut text);
@@ -20,7 +21,7 @@ fn canvas_paints_pixel_buffer_as_image() {
 
     let images: Vec<_> = list.images().collect();
     assert_eq!(images.len(), 1, "one image item");
-    assert_eq!(images[0].source.cache_key(), 42);
+    assert_eq!(images[0].source.cache_key(), id);
     assert_eq!(images[0].source.extent(), Some((4, 4)));
     assert_eq!(images[0].uv, [0.0, 0.0, 1.0, 1.0]);
     assert_eq!(images[0].rect, Rect::from_xywh(0.0, 0.0, 100.0, 100.0));
@@ -29,11 +30,12 @@ fn canvas_paints_pixel_buffer_as_image() {
 #[test]
 fn canvas_paints_zoomed_pixel_region_with_matching_uv() {
     let pixels = Pixels::filled(100, 50, Color::GREEN);
+    let revision = pixels.revision();
 
     let rt = Runtime::new();
     rt.mount(Canvas::new().on_draw(move |g: &mut Painter| {
         let dst = Rect::from_xywh(0.0, 0.0, 200.0, 100.0);
-        g.pixels_region(dst, &pixels, 7, 3, Rect::from_xywh(25.0, 10.0, 50.0, 25.0));
+        g.pixels_region(dst, &pixels, Rect::from_xywh(25.0, 10.0, 50.0, 25.0));
     }));
     let mut text = TextSystem::new();
     rt.layout(Rect::from_xywh(0.0, 0.0, 300.0, 200.0), &mut text);
@@ -42,7 +44,7 @@ fn canvas_paints_zoomed_pixel_region_with_matching_uv() {
 
     let images: Vec<_> = list.images().collect();
     assert_eq!(images.len(), 1);
-    assert_eq!(images[0].source.dynamic_version(), Some(3));
+    assert_eq!(images[0].source.dynamic_version(), Some(revision));
     assert_eq!(
         images[0].uv,
         [0.25, 0.2, 0.75, 0.7],
@@ -56,7 +58,7 @@ fn empty_pixel_buffer_paints_nothing() {
 
     let rt = Runtime::new();
     rt.mount(Canvas::new().on_draw(move |g: &mut Painter| {
-        g.pixels(g.rect(), &pixels, 1, 1);
+        g.pixels(g.rect(), &pixels);
     }));
     let mut text = TextSystem::new();
     rt.layout(Rect::from_xywh(0.0, 0.0, 50.0, 50.0), &mut text);

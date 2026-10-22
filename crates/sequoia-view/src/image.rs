@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use sequoia_assets::AssetRegistry;
 use sequoia_core::{ImageSource, Length, Rect, Size};
@@ -30,7 +30,7 @@ impl Image {
                 id,
                 width: width.max(1),
                 height: height.max(1),
-                data: Rc::from(data.into_boxed_slice()),
+                data: Arc::new(data),
             },
             style: LayoutStyle {
                 width: Length::Fill(1.0),
@@ -184,7 +184,7 @@ impl Image {
                 id,
                 width: width.max(1),
                 height: height.max(1),
-                data: Rc::from(data.into_boxed_slice()),
+                data: Arc::new(data),
                 version,
             },
             style: LayoutStyle {

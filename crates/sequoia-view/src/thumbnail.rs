@@ -2,11 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use sequoia_core::{ImageSource, Pixels};
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Default)]
 pub struct ThumbnailCache {
@@ -36,7 +33,7 @@ impl ThumbnailCache {
             return src.clone();
         }
         let buf = build(Pixels::new(w, h));
-        let src = buf.into_source(NEXT_ID.fetch_add(1, Ordering::Relaxed), 0);
+        let src = buf.into_source();
         map.insert(k, src.clone());
         src
     }

@@ -535,7 +535,7 @@ fn paint_workspace(g: &mut Painter, state: &State, l: &Layout, pointer: Point) {
 
     g.clipped(l.viewport, |g| {
         g.fill(l.canvas, Fill::solid(Color::WHITE));
-        g.pixels(l.canvas, &state.doc, DOC_IMAGE_ID, state.doc_version);
+        g.pixels(l.canvas, &state.doc);
         if state.view.grid {
             paint_grid(g, state, l);
         }
@@ -583,7 +583,7 @@ fn paint_workspace(g: &mut Painter, state: &State, l: &Layout, pointer: Point) {
                     h * scale,
                 );
                 g.fill(r, Fill::solid(Color::WHITE));
-                g.pixels(r, &thumb, THUMB_IMAGE_ID, state.doc_version);
+                g.pixels(r, &thumb);
             }
         }
     }
@@ -641,7 +641,7 @@ fn paint_selection_and_preview(g: &mut Painter, state: &State, l: &Layout) {
             sel.rect.h as f32 * zoom,
         );
         if let Some(pix) = &sel.floating {
-            g.pixels(r, pix, SEL_IMAGE_ID, state.doc_version);
+            g.pixels(r, pix);
         }
         ants(g, r);
     }
@@ -1115,7 +1115,7 @@ fn paint_backstage(g: &mut Painter, state: &State, l: &Layout, bs: Rect, pointer
             h * scale,
         );
         g.fill(r, Fill::solid(Color::WHITE));
-        g.pixels(r, &thumb, THUMB_IMAGE_ID + 1, state.doc_version);
+        g.pixels(r, &thumb);
         g.rect_outline(r, 0.0, BrushStroke::new(1.0), COL_BORDER);
         g.text_tl(
             &state.font_file_name(),

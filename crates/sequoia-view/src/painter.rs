@@ -355,19 +355,12 @@ impl<'a, 'b> Painter<'a, 'b> {
         rect
     }
 
-    pub fn pixels(&mut self, rect: Rect, pixels: &Pixels, id: u64, version: u64) -> Rect {
+    pub fn pixels(&mut self, rect: Rect, pixels: &Pixels) -> Rect {
         let full = Rect::from_xywh(0.0, 0.0, pixels.width() as f32, pixels.height() as f32);
-        self.pixels_region(rect, pixels, id, version, full)
+        self.pixels_region(rect, pixels, full)
     }
 
-    pub fn pixels_region(
-        &mut self,
-        dst: Rect,
-        pixels: &Pixels,
-        id: u64,
-        version: u64,
-        src: Rect,
-    ) -> Rect {
+    pub fn pixels_region(&mut self, dst: Rect, pixels: &Pixels, src: Rect) -> Rect {
         if dst.is_empty() {
             return Rect::ZERO;
         }
@@ -375,9 +368,7 @@ impl<'a, 'b> Painter<'a, 'b> {
             return Rect::ZERO;
         };
         let global = self.to_global_rect(dst);
-        self.ctx
-            .list
-            .push_image(global, uv, pixels.to_source(id, version));
+        self.ctx.list.push_image(global, uv, pixels.to_source());
         dst
     }
 
