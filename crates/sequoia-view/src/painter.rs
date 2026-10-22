@@ -346,6 +346,22 @@ impl<'a, 'b> Painter<'a, 'b> {
         self.ctx.text_width_weighted(text, size, weight)
     }
 
+    pub fn text_center_x(&mut self, text: &str, center_x: f32, top: f32, size: f32, color: Color) {
+        let width = self.text_width(text, size);
+        self.text_tl(text, Point::new(center_x - width * 0.5, top), size, color);
+    }
+
+    pub fn text_center(&mut self, rect: Rect, text: &str, size: f32, color: Color) {
+        let metrics = self.ctx.text_metrics(text, size);
+        let top = rect.top() + (rect.size.height - metrics.height) * 0.5;
+        self.text_tl(
+            text,
+            Point::new(rect.center().x - metrics.width * 0.5, top),
+            size,
+            color,
+        );
+    }
+
     pub fn image(&mut self, rect: Rect, uv: [f32; 4], source: ImageSource) -> Rect {
         if rect.is_empty() {
             return Rect::ZERO;

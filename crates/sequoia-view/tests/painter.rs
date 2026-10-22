@@ -361,6 +361,11 @@ fn text_measure_helpers_are_sane() {
                 .height(Length::Px(40.0))
         }
         fn paint_self(&self, ctx: &mut PaintCtx) {
+            let metrics = ctx.text_metrics("hi", 14.0);
+            assert_eq!(metrics, ctx.text_metrics("hi", 14.0));
+            assert!(metrics.width.is_finite() && metrics.width >= 0.0);
+            assert!(metrics.height.is_finite() && metrics.height >= 0.0);
+
             let mut g = Painter::new(ctx);
             assert_eq!(g.text_width("", 14.0), 0.0);
             assert_eq!(g.text_width("hi", 0.0), 0.0);
@@ -368,6 +373,14 @@ fn text_measure_helpers_are_sane() {
             assert!(w.is_finite() && w >= 0.0);
             let ww = g.text_width_weighted("hi", 14.0, FontWeight::BOLD);
             assert!(ww.is_finite() && ww >= 0.0);
+
+            g.text_center_x("hi", 50.0, 5.0, 14.0, Color::RED);
+            g.text_center(
+                Rect::from_xywh(0.0, 0.0, 100.0, 40.0),
+                "hi",
+                14.0,
+                Color::RED,
+            );
 
             g.text_styled(
                 "hi",

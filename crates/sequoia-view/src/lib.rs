@@ -124,7 +124,7 @@ pub use track::{Orientation, Pad2D, Track1D};
 pub use transition::{Sequence, SequenceFrame, fade_in, pop_in, slide_in, stagger};
 pub use tree::{FlatRow, TreeNode, TreeView};
 pub use value::{Value, ValueExt, derived, spring_spec, value};
-pub use view::{CustomLayout, EventCtx, PaintCtx, View};
+pub use view::{CustomLayout, EventCtx, PaintCtx, TextMetrics, View};
 pub use views::{
     AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Panel, Row, Spacer,
     Stack, StackPos, Text, Unit, Wrap,
@@ -229,7 +229,7 @@ pub mod prelude {
     pub use crate::transition::{Sequence, fade_in, pop_in, slide_in, stagger};
     pub use crate::tree::{FlatRow, TreeNode, TreeView};
     pub use crate::value::{Value, ValueExt, derived, spring_spec, value};
-    pub use crate::view::{CustomLayout, EventCtx, PaintCtx, View};
+    pub use crate::view::{CustomLayout, EventCtx, PaintCtx, TextMetrics, View};
     pub use crate::views::{
         AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Panel, Row,
         Spacer, Stack, StackPos, Text, Unit, Wrap,

@@ -255,6 +255,10 @@ pub struct EventCtx<'a> {
 }
 
 impl EventCtx<'_> {
+    pub fn local_pos(&self) -> Point {
+        Point::new(self.pos.x - self.rect.left(), self.pos.y - self.rect.top())
+    }
+
     pub fn stop_propagation(&mut self) {
         self.stopped.set(true);
     }
@@ -426,6 +430,13 @@ impl EventCtx<'_> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextMetrics {
+    pub width: f32,
+
+    pub height: f32,
+}
+
 pub struct PaintCtx<'a> {
     pub(crate) list: &'a mut RenderList,
     pub(crate) text: &'a mut TextSystem,
@@ -477,6 +488,17 @@ impl PaintCtx<'_> {
 
     pub fn element(&self) -> ElementId {
         self.element
+    }
+
+    pub fn text_metrics(&mut self, text: &str, size: f32) -> TextMetrics {
+        if text.is_empty() || !(size > 0.0) {
+            return TextMetrics::default();
+        }
+        let shaped = self.text.shape(text, size);
+        TextMetrics {
+            width: shaped.width(),
+            height: shaped.height(),
+        }
     }
 
     pub fn baseline_centered(rect_top: f32, rect_h: f32, size: f32) -> f32 {
