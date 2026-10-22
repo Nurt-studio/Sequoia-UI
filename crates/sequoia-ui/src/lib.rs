@@ -15,9 +15,10 @@ pub use sequoia_input as input;
 pub use sequoia_layout as layout;
 pub use sequoia_platform as platform;
 pub use sequoia_platform::{
-    Accelerator, App, CliArgs, DockLayoutStore, Executor, FileFilter, GlobalHotkeys, HotkeyError,
-    HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles, RedrawMode, Settings,
-    SingleInstance, WindowSettings, WindowSpec, Windows, help_text, native_message, not_editing,
+    Accelerator, AcceleratorCtx, App, CliArgs, DockLayoutStore, Executor, FileFilter,
+    GlobalHotkeys, HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles,
+    RedrawMode, Settings, SingleInstance, WindowSettings, WindowSpec, Windows, help_text,
+    native_message, not_editing,
 };
 pub use sequoia_reactive as reactive;
 pub use sequoia_reactive::{Environment, Signal, Store, UndoSignal};
@@ -32,11 +33,11 @@ pub use sequoia_view::{
 };
 pub mod prelude {
     pub use crate::{
-        Accelerator, AnyView, App, AsyncRuntime, AsyncState, CliArgs, Debouncer, DockLayoutStore,
-        Emitter, Environment, Executor, FileFilter, GlobalHotkeys, HotkeyError, HotkeyId, JobId,
-        MessageKind, NativeFileDialog, RecentFiles, RedrawMode, Resource, ScopedTask, Settings,
-        Signal, SignalAsyncExt, SingleInstance, Store, TaskHandle, TaskId, Throttler, View,
-        WindowId, WindowSpec, Windows, help_text, native_message, not_editing,
+        Accelerator, AcceleratorCtx, AnyView, App, AsyncRuntime, AsyncState, CliArgs, Debouncer,
+        DockLayoutStore, Emitter, Environment, Executor, FileFilter, GlobalHotkeys, HotkeyError,
+        HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles, RedrawMode, Resource,
+        ScopedTask, Settings, Signal, SignalAsyncExt, SingleInstance, Store, TaskHandle, TaskId,
+        Throttler, View, WindowId, WindowSpec, Windows, help_text, native_message, not_editing,
     };
     pub use crate::{sleep, timeout};
     pub use sequoia_animation::Track as AnimTrack;
@@ -71,7 +72,7 @@ pub mod prelude {
         Form, Kbd, MenuBar, Modal, ModalScrim, MultiSelect, NumberField, PIPETTE_SVG, Picker,
         PickerFloat, PopupState, ProgressBar, RadioButton, RadioGroup, ResizeHandle, Sheet,
         SheetSide, Skeleton, Slider, Slider1D, Spinner, SvPad, Switch, TabStrip, TabTear, TextArea,
-        TextField, Toast, ToastKind, ToastQueue, ToastStack, Tooltip, ValidField,
+        TextField, Toast, ToastKind, ToastQueue, ToastStack, Tooltip, ValidField, WindowControls,
     };
     pub use sequoia_elements::{Clipboard, MemClipboard, SharedClipboard};
     pub use sequoia_elements::{avatar_color_for, badge_label, divider_line_rect, initials_for};
@@ -127,5 +128,5 @@ pub mod prelude {
         Clip, Enter, Motion, Rotated, Scaled, StatePatch, States, Value, ValueExt, ViewModifiers,
         When, derived, fade, slide_y, spring_spec, value, when,
     };
-    pub use sequoia_view::{EventCtx, PaintCtx};
+    pub use sequoia_view::{EventCtx, PaintCtx, TextMetrics};
 }
