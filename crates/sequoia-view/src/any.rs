@@ -10,7 +10,8 @@ use crate::runtime::{ElementId, Runtime};
 use crate::surface::SurfaceInputBinding;
 use crate::view::{EventCtx, PaintCtx, View};
 use sequoia_layout::{
-    ContainerStyle, DockStyle, GridPlacement, GridStyle, LayoutCtx, LayoutStyle, WrapStyle,
+    ContainerStyle, DockStyle, GridPlacement, GridStyle, LayoutCtx, LayoutStyle, MasonryStyle,
+    WrapStyle,
 };
 
 pub(crate) trait ErasedView: 'static {
@@ -26,6 +27,7 @@ pub(crate) trait ErasedView: 'static {
     fn grid(&self) -> Option<GridStyle>;
     fn dock(&self) -> Option<DockStyle>;
     fn wrap(&self) -> Option<WrapStyle>;
+    fn masonry(&self) -> Option<MasonryStyle>;
     fn grid_placement(&self) -> Option<GridPlacement>;
     fn grid_placements(&self) -> Option<Vec<GridPlacement>>;
     fn flex_weights(&self) -> Option<Vec<f32>>;
@@ -114,6 +116,9 @@ impl<V: View + 'static> ErasedView for V {
     }
     fn wrap(&self) -> Option<WrapStyle> {
         View::wrap(self)
+    }
+    fn masonry(&self) -> Option<MasonryStyle> {
+        View::masonry(self)
     }
     fn grid_placement(&self) -> Option<GridPlacement> {
         View::grid_placement(self)

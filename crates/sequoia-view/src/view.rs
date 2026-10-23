@@ -6,7 +6,8 @@ use sequoia_core::{Color, ImageSource, Point, Rect, RenderList, Size, Vec2, Wind
 use sequoia_draw::ShapeCache;
 use sequoia_input::{CursorIcon, Event, EventPhase, Modifiers, PenTool};
 use sequoia_layout::{
-    ContainerStyle, DockStyle, GridPlacement, GridStyle, LayoutCtx, LayoutStyle, WrapStyle,
+    ContainerStyle, DockStyle, GridPlacement, GridStyle, LayoutCtx, LayoutStyle, MasonryStyle,
+    WrapStyle,
 };
 use sequoia_reactive::Environment;
 use sequoia_style::{BoxStyle, Theme, VisualState};
@@ -80,6 +81,11 @@ pub trait View {
 
     #[doc(hidden)]
     fn wrap(&self) -> Option<WrapStyle> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn masonry(&self) -> Option<MasonryStyle> {
         None
     }
 

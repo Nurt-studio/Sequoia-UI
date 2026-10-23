@@ -20,9 +20,10 @@ use sequoia_input::{
 };
 use sequoia_layout::{
     Align, Axis, ContainerStyle, Dock, DockStyle, FlexItem, GridPlacement, GridStyle, LayoutCtx,
-    LayoutStyle, Overflow, Track, WrapStyle, clamp_to, distribute_flex, dock_layout_order,
-    dock_thickness, resolve_cross, resolve_dock, resolve_flex_basis, resolve_main, resolve_tracks,
-    sanitize_gap, track_offsets, wrap_lines,
+    LayoutStyle, MasonryStyle, Overflow, Track, WrapStyle, clamp_to, distribute_flex,
+    dock_layout_order, dock_thickness, masonry_assign, masonry_column_width, resolve_cross,
+    resolve_dock, resolve_flex_basis, resolve_main, resolve_tracks, sanitize_gap, track_offsets,
+    wrap_lines,
 };
 use sequoia_reactive::{Environment, ReadSet, Signal, Watcher, capture_reads, flush_effects};
 use sequoia_style::{Theme, VisualState};
@@ -148,6 +149,7 @@ struct MeasureEntry {
     dock: Option<DockStyle>,
 
     wrap: Option<WrapStyle>,
+    masonry: Option<MasonryStyle>,
     children_len: usize,
     size: Size,
 }
@@ -2590,6 +2592,12 @@ impl Runtime {
             v.wrap()
         };
 
+        let masonry = if grid.is_some() || dock.is_some() || wrap.is_some() {
+            None
+        } else {
+            v.masonry()
+        };
+
         let flex = v.flex_weights().unwrap_or_default();
         let pre_placements = v.grid_placements().unwrap_or_default();
         let children_len = self.children_len(el);
@@ -2604,6 +2612,7 @@ impl Runtime {
                 && e.placements == pre_placements
                 && e.dock == dock
                 && e.wrap == wrap
+                && e.masonry == masonry
                 && e.children_len == children_len
             {
                 return e.size;
@@ -2677,21 +2686,21 @@ impl Runtime {
             (w, h)
         };
 
-        let eff_container: Option<ContainerStyle> = if grid.is_some()
-            || dock.is_some()
-            || wrap.is_some()
-        {
-            None
-        } else {
-            container.or_else(|| {
-                if children.is_empty() || intrinsic.is_some() || (!content_width && !content_height)
-                {
-                    None
-                } else {
-                    Some(ContainerStyle::new(Axis::Vertical, 0.0))
-                }
-            })
-        };
+        let eff_container: Option<ContainerStyle> =
+            if grid.is_some() || dock.is_some() || wrap.is_some() || masonry.is_some() {
+                None
+            } else {
+                container.or_else(|| {
+                    if children.is_empty()
+                        || intrinsic.is_some()
+                        || (!content_width && !content_height)
+                    {
+                        None
+                    } else {
+                        Some(ContainerStyle::new(Axis::Vertical, 0.0))
+                    }
+                })
+            };
 
         if let Some(cstyle) = eff_container
             && !children.is_empty()
@@ -2784,6 +2793,26 @@ impl Runtime {
             }
         }
 
+        if let Some(mstyle) = masonry
+            && !children.is_empty()
+            && !(intrinsic.is_some() && !content_width && !content_height)
+            && !(v.contain_size_erased() && !content_width && !content_height)
+        {
+            let pad = style.padding;
+            let inner_avail = Size::new(
+                ((if content_width { avail.width } else { w }) - pad.horizontal_sum()).max(0.0),
+                ((if content_height { avail.height } else { h }) - pad.vertical_sum()).max(0.0),
+            );
+            let (mw, mh) =
+                self.measure_masonry(&children, &mstyle, inner_avail, content_width, ctx);
+            if content_width && intrinsic.is_none() {
+                w = mw + pad.horizontal_sum();
+            }
+            if content_height && intrinsic.is_none() {
+                h = mh + pad.vertical_sum();
+            }
+        }
+
         let (w, h) = apply_aspect(w, h);
         let size = clamp_to(style.clamp_size(Size::new(w, h)), constraints);
         self.inner.measures.borrow_mut().insert(
@@ -2796,6 +2825,7 @@ impl Runtime {
                 placements,
                 dock,
                 wrap,
+                masonry,
                 children_len: children.len(),
                 size,
             },
@@ -2963,6 +2993,15 @@ impl Runtime {
                 };
                 if let Some(w) = wrap
                     && w.axis == axis
+                {
+                    found = true;
+                    break;
+                }
+                if axis == Axis::Horizontal
+                    && wrap.is_none()
+                    && dock.is_none()
+                    && grid.is_none()
+                    && v.masonry().is_some()
                 {
                     found = true;
                     break;
@@ -3474,6 +3513,66 @@ impl Runtime {
         }
     }
 
+    fn measure_masonry(
+        &self,
+        children: &[ElementId],
+        mstyle: &MasonryStyle,
+        inner_avail: Size,
+        content_width: bool,
+        ctx: &mut LayoutCtx,
+    ) -> (f32, f32) {
+        let flow: Vec<ElementId> = children
+            .iter()
+            .copied()
+            .filter(|c| !self.child_layout_style(*c).is_absolute())
+            .collect();
+        if flow.is_empty() {
+            return (0.0, 0.0);
+        }
+
+        let columns = mstyle.columns.max(1);
+        let column_gap = sanitize_gap(mstyle.column_gap);
+        let row_gap = sanitize_gap(mstyle.row_gap);
+
+        let column_width = if content_width || !inner_avail.width.is_finite() {
+            flow.iter()
+                .map(|&child| {
+                    let m = self.measure(
+                        child,
+                        Constraints {
+                            min: Size::ZERO,
+                            max: Size::new(f32::INFINITY, f32::INFINITY),
+                        },
+                        ctx,
+                    );
+                    let cs = self.child_layout_style(child);
+                    (m.width + cs.margin.horizontal_sum()).max(0.0)
+                })
+                .fold(0.0_f32, f32::max)
+        } else {
+            masonry_column_width(inner_avail.width, columns, column_gap)
+        };
+
+        let mut heights = Vec::with_capacity(flow.len());
+        for child in flow {
+            let cs = self.child_layout_style(child);
+            let max_width = (column_width - cs.margin.horizontal_sum()).max(0.0);
+            let m = self.measure(
+                child,
+                Constraints {
+                    min: Size::ZERO,
+                    max: Size::new(max_width, f32::INFINITY),
+                },
+                ctx,
+            );
+            heights.push((m.height + cs.margin.vertical_sum()).max(0.0));
+        }
+
+        let (_, height) = masonry_assign(&heights, columns, row_gap);
+        let width = column_width * columns as f32 + column_gap * columns.saturating_sub(1) as f32;
+        (width.max(0.0), height.max(0.0))
+    }
+
     fn wrap_child_sizes(
         &self,
         children: &[ElementId],
@@ -3568,6 +3667,14 @@ impl Runtime {
             let children = self.children(el);
             if !children.is_empty() {
                 self.arrange_wrap(&children, &wstyle, content, ctx);
+            }
+            return;
+        }
+
+        if let Some(mstyle) = v.masonry() {
+            let children = self.children(el);
+            if !children.is_empty() {
+                self.arrange_masonry(&children, &mstyle, content, ctx);
             }
             return;
         }
@@ -3745,6 +3852,94 @@ impl Runtime {
                 main_cursor += main_outer;
             }
             cross_cursor += line_cross;
+        }
+
+        for &child in children {
+            if self.child_layout_style(child).is_absolute() {
+                self.arrange_absolute(child, content, ctx);
+            }
+        }
+    }
+
+    fn arrange_masonry(
+        &self,
+        children: &[ElementId],
+        mstyle: &MasonryStyle,
+        content: Rect,
+        ctx: &mut LayoutCtx,
+    ) {
+        let flow: Vec<ElementId> = children
+            .iter()
+            .copied()
+            .filter(|c| !self.child_layout_style(*c).is_absolute())
+            .collect();
+        let columns = mstyle.columns.max(1);
+        let column_gap = sanitize_gap(mstyle.column_gap);
+        let row_gap = sanitize_gap(mstyle.row_gap);
+
+        let column_width = if content.size.width.is_finite() {
+            masonry_column_width(content.size.width, columns, column_gap)
+        } else {
+            flow.iter()
+                .map(|&child| {
+                    let m = self.measure(
+                        child,
+                        Constraints {
+                            min: Size::ZERO,
+                            max: Size::new(f32::INFINITY, f32::INFINITY),
+                        },
+                        ctx,
+                    );
+                    let cs = self.child_layout_style(child);
+                    (m.width + cs.margin.horizontal_sum()).max(0.0)
+                })
+                .fold(0.0_f32, f32::max)
+        };
+
+        let mut infos = Vec::with_capacity(flow.len());
+        let mut heights = Vec::with_capacity(flow.len());
+        for &child in &flow {
+            let cs = self.child_layout_style(child);
+            let max_width = (column_width - cs.margin.horizontal_sum()).max(0.0);
+            let m = self.measure(
+                child,
+                Constraints {
+                    min: Size::ZERO,
+                    max: Size::new(max_width, f32::INFINITY),
+                },
+                ctx,
+            );
+            heights.push((m.height + cs.margin.vertical_sum()).max(0.0));
+            infos.push((child, cs, m));
+        }
+
+        let (placements, _) = masonry_assign(&heights, columns, row_gap);
+        for (i, (child, cs, m)) in infos.into_iter().enumerate() {
+            let placement = placements.get(i).copied().unwrap_or_default();
+            let avail_w = (column_width - cs.margin.horizontal_sum()).max(0.0);
+            let align = cs.effective_align(mstyle.align);
+            let mut w = cs
+                .clamp_width(resolve_cross(cs.width, m.width, avail_w))
+                .max(0.0);
+            if align == Align::Stretch && matches!(cs.width, Length::Fit) {
+                w = avail_w.min(cs.max_width).max(cs.min_width).max(0.0);
+            }
+            let h = cs.clamp_height(m.height).max(0.0);
+            let ox = match align {
+                Align::Start | Align::Stretch => 0.0,
+                Align::Center => ((avail_w - w).max(0.0)) * 0.5,
+                Align::End => (avail_w - w).max(0.0),
+            };
+            let column_x = content.left()
+                + placement.column as f32 * (column_width + column_gap)
+                + cs.margin.left
+                + ox;
+            let y = content.top() + placement.top + cs.margin.top;
+            self.arrange(
+                child,
+                Rect::from_xywh(column_x, y, w.max(0.0), h.max(0.0)),
+                ctx,
+            );
         }
 
         for &child in children {
