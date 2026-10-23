@@ -1838,4 +1838,59 @@ mod tests {
         assert_eq!(window_clear_color(theme, false), theme.background);
         assert_eq!(window_clear_color(theme, true).a, 0.0);
     }
+
+    #[test]
+    fn paint_from_input_supersedes_the_queued_redraw() {
+        let mut gate = PaintGate::default();
+        gate.request();
+        gate.schedule();
+        assert!(
+            gate.begin_paint(),
+            "input arrived while a redraw was queued"
+        );
+        assert!(!gate.on_redraw(), "queued redraw would duplicate the frame");
+    }
+
+    #[test]
+    fn paint_without_new_input_does_not_schedule_again() {
+        let mut gate = PaintGate::default();
+        gate.request();
+        assert!(!gate.begin_paint());
+        assert!(!gate.end_paint(false));
+        assert!(!gate.redraw_pending && !gate.skip_next_redraw);
+    }
+
+    #[test]
+    fn input_during_paint_schedules_the_next_frame() {
+        let mut gate = PaintGate::default();
+        gate.request();
+        assert!(!gate.begin_paint());
+        gate.request();
+        assert!(gate.end_paint(false));
+        assert!(gate.redraw_pending);
+        assert!(gate.on_redraw());
+    }
+
+    #[test]
+    fn input_during_paint_requests_another_frame_instead_of_skipping() {
+        let mut gate = PaintGate::default();
+        gate.request();
+        gate.schedule();
+        assert!(gate.begin_paint());
+        gate.request();
+        assert!(!gate.end_paint(true), "superseded paint stays coalesced");
+        assert!(!gate.skip_next_redraw);
+        assert!(gate.on_redraw());
+    }
+
+    #[test]
+    fn input_after_a_skipped_redraw_is_not_swallowed() {
+        let mut gate = PaintGate::default();
+        gate.request();
+        gate.schedule();
+        assert!(gate.begin_paint());
+        assert!(!gate.end_paint(true));
+        gate.request();
+        assert!(gate.on_redraw(), "fresh input must force a paint");
+    }
 }
