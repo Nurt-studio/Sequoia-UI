@@ -2839,6 +2839,18 @@ impl View for Wrap {
 /// Items are appended to the shortest column, keeping their natural height.
 /// This is useful for card feeds and galleries where rows should not share a
 /// common height. Absolute children are excluded from the flow.
+///
+/// ```
+/// use sequoia_view::prelude::*;
+///
+/// let feed = Masonry::new(2)
+///     .gap(12.0)
+///     .padding(16.0)
+///     .child(Panel::new().height(120.0))
+///     .child(Panel::new().height(80.0))
+///     .child(Panel::new().height(160.0));
+/// # let _ = feed;
+/// ```
 pub struct Masonry {
     children: Vec<AnyView>,
     style: LayoutStyle,

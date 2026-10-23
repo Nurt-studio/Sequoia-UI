@@ -42,6 +42,28 @@ fn main() {
 }
 ```
 
+## Layout containers
+
+`Row`, `Column`, and `Wrap` handle linear flow, `Grid` handles fixed tracks,
+`DockArea` manages IDE-style panels, and `Masonry` places variable-height items
+into equal-width columns, always appending to the shortest column.
+
+```rust
+let feed = Masonry::new(3)
+    .gap(12.0)
+    .padding(16.0)
+    .children(cards);
+```
+
+The same container is available in `.seq` files:
+
+```text
+Masonry(columns: 3, gap: 12, padding: 16) {
+  Card { ... }
+  Card { ... }
+}
+```
+
 ## Documentation
 
 - API docs: <https://docs.rs/sequoia-ui>
