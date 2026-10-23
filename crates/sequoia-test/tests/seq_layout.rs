@@ -67,6 +67,29 @@ fn wrap_axis_and_gaps_paint() {
 }
 
 #[test]
+fn masonry_columns_and_gaps_paint() {
+    let src = app_with(
+        "    Masonry(columns: 3, gap: 10, width: px(320)) {\n      Panel(height: px(40))\n      Panel(height: px(60))\n      Panel(height: px(20))\n      Panel(height: px(30))\n    }",
+    );
+    let loaded = SeqLoader::load_str("Main.seq", &src).unwrap();
+    let h = Harness::new(loaded.view);
+    h.layout(400.0, 300.0);
+
+    let masonry = h.children(h.root().unwrap())[0];
+    let kids = h.children(masonry);
+    assert_eq!(kids.len(), 4);
+    let rects: Vec<_> = kids.iter().map(|k| h.rect(*k).unwrap()).collect();
+    for (i, x) in [0.0, 110.0, 220.0].into_iter().enumerate() {
+        assert!((rects[i].left() - x).abs() < 0.01, "{:?}", rects[i]);
+        assert!((rects[i].size.width - 100.0).abs() < 0.01, "{:?}", rects[i]);
+        assert!((rects[i].top() - 0.0).abs() < 0.01, "{:?}", rects[i]);
+    }
+    assert!((rects[3].left() - 220.0).abs() < 0.01, "{:?}", rects[3]);
+    assert!((rects[3].top() - 30.0).abs() < 0.01, "{:?}", rects[3]);
+    assert!((h.rect(masonry).unwrap().size.height - 60.0).abs() < 0.01);
+}
+
+#[test]
 fn box_props_on_flex_containers() {
     let src = app_with(
         "    Column(margin: 4, margin_x: 2, min_width: 10, max_width: 380, min_height: 10, max_height: 280, overflow: hidden, main_gap: 2, cross_gap: 2, wrap: true) {\n      Text(\"a\")\n    }",

@@ -12,7 +12,7 @@ use sequoia_style::{BoxStyle, ButtonStyle, ShadowSpec, Theme};
 use sequoia_view::{
     Align, AnimSpec, AnimatedSize, AnyView, AsyncView, Axis, Canvas, Column, EventCtx, Grid,
     GridFlow, GridPlacement, Icon, Image, Indents, Justify, Live, LiveOffset, LiveOpacity,
-    MAX_ANIM_DT, Margined, Motion, Overflow, Painter, Panel, Pulse, Rotated, Row, Scaled,
+    MAX_ANIM_DT, Margined, Masonry, Motion, Overflow, Painter, Panel, Pulse, Rotated, Row, Scaled,
     ScrollAxis, ScrollView, Shake, Spacer, SplitPanel, Stack, StackPos, Text, Track, View,
     VirtualList, Wrap, when,
 };
@@ -1446,6 +1446,7 @@ fn lower_node(
         "Stack" => lower_stack(file, theme, styles, node, res, row),
         "Grid" => lower_grid(file, theme, styles, node, res, row),
         "Wrap" => lower_wrap(file, theme, styles, node, res, row),
+        "Masonry" => lower_masonry(file, theme, styles, node, res, row),
         "If" => lower_if(file, theme, styles, node, res, row),
         "Width" => lower_width(file, theme, styles, node, res, row),
         "Height" => lower_height(file, theme, styles, node, res, row),
@@ -2407,6 +2408,65 @@ fn lower_wrap(
                     }
                 };
             }
+            "gap" => v = v.gap(num(file, arg, res, row)?),
+            "column_gap" => v = v.column_gap(num(file, arg, res, row)?),
+            "row_gap" => v = v.row_gap(num(file, arg, res, row)?),
+            "align" => v = v.align_items(align_val(file, arg)?),
+            "min_width" => v = v.min_width(num(file, arg, res, row)?),
+            "max_width" => v = v.max_width(num(file, arg, res, row)?),
+            "min_height" => v = v.min_height(num(file, arg, res, row)?),
+            "max_height" => v = v.max_height(num(file, arg, res, row)?),
+            "margin" => match margin_val(file, arg, res, row)? {
+                MarginVal::All(n) => v = v.margin(n),
+                MarginVal::Xy(x, y) => v = v.margin_xy(x, y),
+            },
+            "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
+            "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
+            "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
+            "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
+            "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
+            "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
+            "overflow" => v = v.overflow(overflow_val(file, arg)?),
+            "hit" => v = v.hit_testable(flag(file, arg, res, row)?),
+            "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right" | "indent_top"
+            | "indent_bottom" => {}
+            _ => unreachable_checked(file, node, arg)?,
+        }
+    }
+    for c in &node.children {
+        let clean = without_placement(c);
+        let kid = lower_node(file, theme, styles, &clean, res, row)?;
+        let _ = child_flex_weight(file, res, row, c)?;
+        v = v.child(kid);
+    }
+    Ok(AnyView::new(v))
+}
+
+fn lower_masonry(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let columns = count_val(file, node, res, row, "columns")?
+        .unwrap_or(2)
+        .max(1);
+    let mut v = Masonry::new(columns);
+    for arg in &node.args {
+        match arg.name.as_str() {
+            "columns" => {}
+            "width" => v = v.width(len(file, arg, res, row)?),
+            "height" => v = v.height(len(file, arg, res, row)?),
+            "padding" => match padding_val(file, arg, res, row)? {
+                PaddingVal::All(n) => v = v.padding(n),
+                PaddingVal::Xy(x, y) => v = v.padding_xy(x, y),
+            },
+            "padding_x" => v = v.padding_x(num(file, arg, res, row)?),
+            "padding_y" => v = v.padding_y(num(file, arg, res, row)?),
+            "background" => v = v.background(color(file, theme, arg)?),
+            "flex" => v = v.flex(num(file, arg, res, row)?),
             "gap" => v = v.gap(num(file, arg, res, row)?),
             "column_gap" => v = v.column_gap(num(file, arg, res, row)?),
             "row_gap" => v = v.row_gap(num(file, arg, res, row)?),
@@ -7830,7 +7890,16 @@ fn is_click_boundary(node: &SeqNode) -> bool {
 fn can_be_hitless(kind: &str) -> bool {
     matches!(
         kind,
-        "Column" | "Row" | "Container" | "Panel" | "Stack" | "Wrap" | "Text" | "Icon" | "Spacer"
+        "Column"
+            | "Row"
+            | "Container"
+            | "Panel"
+            | "Stack"
+            | "Wrap"
+            | "Masonry"
+            | "Text"
+            | "Icon"
+            | "Spacer"
     )
 }
 

@@ -46,6 +46,7 @@ pub const COMPONENTS: &[&str] = &[
     "Stack",
     "Grid",
     "Wrap",
+    "Masonry",
     "SplitPanel",
     "Checkbox",
     "Switch",
@@ -330,6 +331,40 @@ pub fn props_for(component: &str) -> &'static [&'static str] {
             "background",
             "flex",
             "axis",
+            "gap",
+            "column_gap",
+            "row_gap",
+            "align",
+            "min_width",
+            "max_width",
+            "min_height",
+            "max_height",
+            "margin",
+            "margin_x",
+            "margin_y",
+            "margin_left",
+            "margin_right",
+            "margin_top",
+            "margin_bottom",
+            "overflow",
+            "hit",
+            "indent",
+            "indent_x",
+            "indent_y",
+            "indent_left",
+            "indent_right",
+            "indent_top",
+            "indent_bottom",
+        ],
+        "Masonry" => &[
+            "width",
+            "height",
+            "padding",
+            "padding_x",
+            "padding_y",
+            "background",
+            "flex",
+            "columns",
             "gap",
             "column_gap",
             "row_gap",
@@ -1338,6 +1373,8 @@ mod tests {
         assert!(props_for("Slider").contains(&"on_change"));
         assert!(props_for("Dropdown").contains(&"on_select"));
         assert!(props_for("Text").contains(&"wrap"));
+        assert!(props_for("Masonry").contains(&"columns"));
+        assert!(props_for("Masonry").contains(&"column_gap"));
         assert!(props_for("Text").contains(&"style"));
         assert!(props_for("Container").contains(&"style"));
         assert!(props_for("Canvas").contains(&"on_pinch"));

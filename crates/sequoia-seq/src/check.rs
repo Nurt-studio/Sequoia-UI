@@ -21,6 +21,7 @@ const COMPONENTS: &[&str] = &[
     "Stack",
     "Grid",
     "Wrap",
+    "Masonry",
     "SplitPanel",
     "Checkbox",
     "Switch",
@@ -520,7 +521,7 @@ fn check_node(
             node.line,
             1,
             format!(
-                "unknown component '{}' (Column/Row/Container/Panel/ScrollView/Text/Button/Spacer/Icon/Image/List/VirtualList/Canvas/Stack/Grid/Wrap/SplitPanel/Checkbox/Switch/TextFiel d/TextArea/Field/NumberField/DateField/MultiSelect/Slider/DragValue/Dropdown/Progress/If/Opacity/Scale/Rotate/Translate/Pulse/Shake/Async/Effect + shapes)",
+                "unknown component '{}' (Column/Row/Container/Panel/ScrollView/Text/Button/Spacer/Icon/Image/List/VirtualList/Canvas/Stack/Grid/Wrap/Masonry/SplitPanel/Checkbox/Switch/TextFiel d/TextArea/Field/NumberField/DateField/MultiSelect/Slider/DragValue/Dropdown/Progress/If/Opacity/Scale/Rotate/Translate/Pulse/Shake/Async/Effect + shapes)",
                 node.kind
             ),
         ));
@@ -756,6 +757,7 @@ fn check_arg(
             | "Stack"
             | "Grid"
             | "Wrap"
+            | "Masonry"
             | "ScrollView"
             | "Text"
             | "Button"
@@ -789,6 +791,7 @@ fn check_arg(
                 | "Panel"
                 | "Stack"
                 | "Wrap"
+                | "Masonry"
                 | "SplitPanel"
                 | "Text"
                 | "Icon"
@@ -976,6 +979,32 @@ fn check_arg(
             "background",
             "flex",
             "axis",
+            "gap",
+            "column_gap",
+            "row_gap",
+            "align",
+            "min_width",
+            "max_width",
+            "min_height",
+            "max_height",
+            "margin",
+            "margin_x",
+            "margin_y",
+            "margin_left",
+            "margin_right",
+            "margin_top",
+            "margin_bottom",
+            "overflow",
+        ],
+        "Masonry" => &[
+            "width",
+            "height",
+            "padding",
+            "padding_x",
+            "padding_y",
+            "background",
+            "flex",
+            "columns",
             "gap",
             "column_gap",
             "row_gap",
