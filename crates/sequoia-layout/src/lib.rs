@@ -10,6 +10,7 @@
 //! - [`dock`] — docking sides, thickness, and preview rectangles.
 //! - [`flex`] — flex grow/shrink distribution and justification.
 //! - [`grid`] — grid tracks, placement, and auto flow.
+//! - [`masonry`] — waterfall columns with variable item heights.
 //! - [`overflow`] — overflow and scrolling modes.
 //! - [`resolve`] — length resolution and main-axis distribution.
 //! - [`style`] — per-view layout styles and sanitizers.
@@ -23,6 +24,7 @@ pub mod ctx;
 pub mod dock;
 pub mod flex;
 pub mod grid;
+pub mod masonry;
 pub mod overflow;
 pub mod resolve;
 pub mod style;
@@ -42,6 +44,7 @@ pub use grid::{
     GridFlow, GridPlacement, GridStyle, Track, auto_cells, resolve_tracks, resolve_tracks_clamped,
     track_offsets,
 };
+pub use masonry::{MasonryPlacement, MasonryStyle, masonry_assign, masonry_column_width};
 pub use overflow::Overflow;
 pub use resolve::{
     clamp_to, distribute_main, distribute_main_clamped, resolve_cross, resolve_flex_basis,
