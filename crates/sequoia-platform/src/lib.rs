@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -527,6 +528,67 @@ fn sanitize_scale(scale: f64) -> f32 {
     if s.is_finite() && s > 0.0 { s } else { 1.0 }
 }
 
+#[derive(Default)]
+struct PaintGate {
+    requested: bool,
+    redraw_pending: bool,
+    skip_next_redraw: bool,
+}
+
+impl PaintGate {
+    fn request(&mut self) {
+        self.requested = true;
+    }
+
+    fn has_request(&self) -> bool {
+        self.requested
+    }
+
+    fn clear_request(&mut self) {
+        self.requested = false;
+    }
+
+    fn schedule(&mut self) {
+        self.redraw_pending = true;
+        self.skip_next_redraw = false;
+    }
+
+    fn on_redraw(&mut self) -> bool {
+        self.redraw_pending = false;
+        if self.skip_next_redraw && !self.requested {
+            self.skip_next_redraw = false;
+            false
+        } else {
+            self.skip_next_redraw = false;
+            true
+        }
+    }
+
+    fn begin_paint(&mut self) -> bool {
+        self.requested = false;
+        if self.redraw_pending {
+            self.redraw_pending = false;
+            self.skip_next_redraw = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn end_paint(&mut self, superseded: bool) -> bool {
+        if !std::mem::take(&mut self.requested) {
+            return false;
+        }
+        if superseded {
+            self.skip_next_redraw = false;
+            false
+        } else {
+            self.redraw_pending = true;
+            true
+        }
+    }
+}
+
 struct WindowState {
     id: WindowId,
     window: Arc<Window>,
@@ -550,11 +612,32 @@ struct WindowState {
 
     continuous_paced: bool,
 
+    gate: Rc<RefCell<PaintGate>>,
+
     list: RenderList,
 }
 
 impl WindowState {
+    fn request_redraw(&mut self) {
+        self.gate.borrow_mut().schedule();
+        self.window.request_redraw();
+    }
+
+    fn paint_if_requested(&mut self) {
+        if !self.gate.borrow().has_request() {
+            return;
+        }
+        let wid = self.window.id();
+        self.draw_frame(wid);
+        if self.continuous_paced
+            && let Some(fps) = self.settings.fps_limit
+        {
+            self.next_frame = Some(frame_deadline(fps));
+        }
+    }
+
     fn draw_frame(&mut self, wid: WinitWindowId) {
+        let superseded = self.gate.borrow_mut().begin_paint();
         let gap_ms = frame_gap_ms(wid);
         let mut t = Instant::now();
         self.rt.tick();
@@ -585,18 +668,22 @@ impl WindowState {
         }
 
         match self.gpu.take_frame_skip() {
-            Some(FrameSkip::Timeout) => self.window.request_redraw(),
+            Some(FrameSkip::Timeout) => self.gate.borrow_mut().request(),
             Some(FrameSkip::Occluded) | None => {}
 
             Some(_) => {}
         }
 
         if self.gpu.take_redraw_request() {
-            self.window.request_redraw();
+            self.gate.borrow_mut().request();
         }
 
         sync_cursor(&self.window, &mut self.last_cursor, &self.rt);
         sync_ime_cursor(&self.window, self.scale, &self.rt);
+
+        if self.gate.borrow_mut().end_paint(superseded) {
+            self.window.request_redraw();
+        }
     }
 }
 
@@ -969,9 +1056,10 @@ impl PlatformApp {
         }
         rt.set_environment(self.env.clone());
 
+        let gate = Rc::new(RefCell::new(PaintGate::default()));
         {
-            let window = window.clone();
-            rt.set_redraw_hook(move || window.request_redraw());
+            let gate = gate.clone();
+            rt.set_redraw_hook(move || gate.borrow_mut().request());
         }
 
         let wid = window.id();
@@ -993,16 +1081,17 @@ impl PlatformApp {
             fps_frames: std::collections::VecDeque::new(),
             fps_last_push: None,
             continuous_paced,
+            gate,
             list: RenderList::new(),
         };
 
         state.draw_frame(wid);
+        state.gate.borrow_mut().clear_request();
         if show_after_first_frame {
             state.window.set_visible(true);
         }
-        let redraw = state.window.clone();
+        state.request_redraw();
         self.live.insert(wid, state);
-        redraw.request_redraw();
         log::debug!("sequoia-platform: created window {id} (winit {wid:?})");
         Ok(())
     }
@@ -1260,20 +1349,20 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             match event {
                 WindowEvent::Resized(size) => {
                     ws.gpu.resize(size.width, size.height);
-                    ws.window.request_redraw();
+                    ws.request_redraw();
                 }
 
                 WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                     if ws.settings.scale_override.is_none() {
                         ws.scale = sanitize_scale(scale_factor);
                         ws.text.set_scale_factor(ws.scale);
-                        ws.window.request_redraw();
+                        ws.request_redraw();
                     }
                 }
 
                 WindowEvent::Occluded(occluded) => {
                     if !occluded {
-                        ws.window.request_redraw();
+                        ws.request_redraw();
                     }
                 }
 
@@ -1350,7 +1439,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                             }
                         }
                         if hit {
-                            ws.window.request_redraw();
+                            ws.request_redraw();
                         } else {
                             ws.rt.key(k, ws.mods, &mut ws.text);
                         }
@@ -1390,9 +1479,11 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                 }
 
                 WindowEvent::RedrawRequested => {
-                    ws.draw_frame(wid);
+                    if ws.gate.borrow_mut().on_redraw() {
+                        ws.draw_frame(wid);
+                    }
                     if redraw_mode == RedrawMode::Continuous && !ws.continuous_paced {
-                        ws.window.request_redraw();
+                        ws.request_redraw();
                     }
                 }
 
@@ -1484,7 +1575,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                     }
                 }
                 for ws in self.live.values() {
-                    ws.window.request_redraw();
+                    ws.gate.borrow_mut().request();
                 }
             }
         }
@@ -1492,6 +1583,9 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             return;
         }
 
+        for ws in self.live.values_mut() {
+            ws.paint_if_requested();
+        }
         for ws in self.live.values_mut() {
             ws.refresh_fps_title();
         }
@@ -1509,7 +1603,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             };
             if now >= deadline {
                 ws.next_frame = Some(frame_deadline(fps));
-                ws.window.request_redraw();
+                ws.request_redraw();
             }
         }
         self.update_control_flow(event_loop);
@@ -1520,7 +1614,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             return;
         }
         for ws in self.live.values() {
-            ws.window.request_redraw();
+            ws.gate.borrow_mut().request();
         }
         self.update_control_flow(event_loop);
     }
