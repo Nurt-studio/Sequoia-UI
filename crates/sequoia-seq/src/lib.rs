@@ -15,11 +15,9 @@ pub use bindings::{ActionSig, FieldSignal, HostBindings, PropType, SeqRow, SeqRo
 pub use check::check;
 pub use error::SeqError;
 pub use ir::{
-    AnimDecl, AnimTrackDecl, BinOp, CompParam, ComponentDef, DeferredDecl, DeferredKind, FnParam,
-    ImportDecl, LengthVal, MachineDecl, MachineStateDecl, MachineTransitionDecl, MatchPat, SeqApp,
-    SeqArg, SeqExpr, SeqExprKind, SeqFile, SeqFn, SeqMatchArm, SeqNode, SeqStmt, SeqValue,
-    SeqWindow, SpringDecl, SpringStateDecl, SpringTransitionDecl, StateDecl, StyleDecl, ThemeName,
-    UnOp, Visibility, resolve_seq_calls,
+    BinOp, CompParam, ComponentDef, DeferredDecl, DeferredKind, FnParam, ImportDecl, LengthVal,
+    MatchPat, SeqApp, SeqArg, SeqExpr, SeqExprKind, SeqFile, SeqFn, SeqMatchArm, SeqNode, SeqStmt,
+    SeqValue, SeqWindow, StateDecl, StyleDecl, ThemeName, UnOp, Visibility, resolve_seq_calls,
 };
 pub use loader::{AppMeta, LoadedApp, SeqLoader};
 pub use lower::{

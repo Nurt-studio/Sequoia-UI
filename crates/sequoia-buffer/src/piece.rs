@@ -328,13 +328,14 @@ mod tests {
 
     #[test]
     fn offsets_snap_to_char_boundaries() {
-        let mut buf = TextBuffer::from("turn yellow");
+        let mut buf = TextBuffer::from("zażółć");
 
         buf.insert(3, "X");
-        assert_eq!(buf.to_string(), "zaXyellow");
+        assert_eq!(buf.to_string(), "zaXżółć");
+        assert_eq!(buf.substring(3..4), "");
         let removed = buf.delete(2..3);
         assert_eq!(removed, "X");
-        assert_eq!(buf.to_string(), "turn yellow");
+        assert_eq!(buf.to_string(), "zażółć");
         buf.check_invariants();
     }
 

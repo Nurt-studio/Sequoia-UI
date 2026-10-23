@@ -42,12 +42,9 @@ pub mod prelude {
     pub use crate::{sleep, timeout};
     pub use sequoia_animation::Track as AnimTrack;
     pub use sequoia_animation::{
-        AnimValue, Animate, AnimateBuilder, AnimateFrame, Animation, AnimationController,
-        AnimationFrame, Animator, Choreography, CmpOp, Condition, CubicBezier, Easing, FromState,
-        Interpolation, Keyframe, Lerp, LoopMode, MachineError, MachineInputs, MachineState, Mixer,
-        Spring, SpringBuilder, SpringMachine, SpringPoint, SpringValue, StateDef, StateMachine,
-        ToState, Transition, TransitionDef, Trigger, Tween, TweenBuilder, animate, animation,
-        spring,
+        Animate, AnimateBuilder, AnimateFrame, Animation, AnimationFrame, Animator, CubicBezier,
+        Easing, Interpolation, Keyframe, Lerp, LoopMode, Spring, SpringBuilder, TweenBuilder,
+        animate, animation, spring,
     };
 
     pub use sequoia_animation::Value as TrackValue;

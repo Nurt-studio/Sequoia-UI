@@ -10,8 +10,9 @@ use sequoia_layout::{Align, LayoutStyle};
 use sequoia_reactive::Signal;
 use sequoia_style::{Backdrop, Theme, ToastStyle};
 use sequoia_view::{
-    Anchor, AnyView, BackdropBlur, Column, Dismiss, Easing, InputMode, OverlayEntry, OverlayId,
-    OverlayLayer, OverlayOverflow, PaintCtx, Placement, Presence, Row, Text, Unit, View,
+    Anchor, AnyView, BackdropBlur, Column, Dismiss, Easing, ElementId, InputMode, OverlayEntry,
+    OverlayId, OverlayLayer, OverlayOverflow, PaintCtx, Placement, Presence, Row, Runtime, Text,
+    Unit, View,
 };
 
 use crate::Container;
@@ -187,7 +188,7 @@ struct ToastRow {
     style: ResolvedRow,
     content: AnyView,
 
-    fade_out: Rc<RefCell<Option<Instant>>>,
+    fade_out: Rc<RefCell<Option<f32>>>,
 }
 
 impl ToastRow {
@@ -260,9 +261,9 @@ impl ToastRow {
         }
     }
 
-    fn exit_progress(&self) -> Option<f32> {
+    fn exit_progress(&self, now: f32) -> Option<f32> {
         let start = (*self.fade_out.borrow())?;
-        let el = Instant::now().duration_since(start).as_secs_f32();
+        let el = (now - start).max(0.0);
         Some((el / TOAST_EXIT_SECS.max(f32::MIN_POSITIVE)).clamp(0.0, 1.0))
     }
 }
@@ -281,23 +282,23 @@ impl View for ToastRow {
             ..LayoutStyle::default()
         }
     }
-    fn paint_opacity(&self) -> Option<f32> {
-        self.exit_progress().map(|p| 1.0 - p)
+    fn paint_opacity_ctx(&self, rt: &Runtime, _el: ElementId) -> Option<f32> {
+        self.exit_progress(rt.elapsed_secs()).map(|p| 1.0 - p)
     }
-    fn paint_offset(&self) -> Vec2 {
-        match self.exit_progress() {
+    fn paint_offset_ctx(&self, rt: &Runtime, _el: ElementId) -> Vec2 {
+        match self.exit_progress(rt.elapsed_secs()) {
             Some(p) => Vec2::new(0.0, TOAST_EXIT_DY * p),
             None => Vec2::ZERO,
         }
     }
     fn paint_self(&self, ctx: &mut PaintCtx) {
         let _ = &self.style;
+        let now = ctx.runtime().elapsed_secs();
         if let Some(deadline) = self.queue.deadline(self.toast.id)
             && Instant::now() >= deadline
         {
-            let now = Instant::now();
             let start = *self.fade_out.borrow_mut().get_or_insert(now);
-            if now.duration_since(start).as_secs_f32() >= TOAST_EXIT_SECS {
+            if now - start >= TOAST_EXIT_SECS {
                 self.queue.dismiss(self.toast.id);
                 return;
             }

@@ -252,7 +252,7 @@ fn lowercase_name_rejected() {
         "component card(title: String) {\n  Text(text: title)\n}",
         "    Text(\"x\")",
     ));
-    assert!(err.message.contains("capital letter"), "{err}");
+    assert!(err.message.contains("capitalized"), "{err}");
 }
 
 #[test]
@@ -271,13 +271,13 @@ fn empty_body_rejected() {
         Err(e) => e,
         Ok(_) => panic!("oczekiwano bledu"),
     };
-    assert!(err.message.contains("min. 1 node"), "{err}");
+    assert!(err.message.contains("at least 1 node"), "{err}");
 }
 
 #[test]
 fn unknown_component_still_errors() {
     let err = check_err(&app_body("    Nope(x: 1)"));
-    assert!(err.message.contains("nieznany komponent"), "{err}");
+    assert!(err.message.contains("unknown component"), "{err}");
 }
 
 #[test]
@@ -315,7 +315,7 @@ fn bad_literal_type() {
         "    Card(title: 12)",
     ));
     assert!(
-        err.message.contains("wrong type of 'title' parameter"),
+        err.message.contains("bad type of parameter 'title'"),
         "{err}"
     );
     assert!(err.message.contains("String"), "{err}");
@@ -327,7 +327,7 @@ fn fraction_into_int_param() {
         "component Card(n: Int) {\n  Text(\"x\")\n}",
         "    Card(n: 1.5)",
     ));
-    assert!(err.message.contains("wrong type of parameter 'n'"), "{err}");
+    assert!(err.message.contains("bad type of parameter 'n'"), "{err}");
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn callback_param_rejected() {
         "    Card(title: { go() })",
     ));
     assert!(
-        err.message.contains("wrong type of 'title' parameter"),
+        err.message.contains("bad type of parameter 'title'"),
         "{err}"
     );
 }
@@ -409,7 +409,7 @@ fn component_in_canvas_rejected() {
         "component Card(title: String) {\n  Text(text: title)\n}",
         "    Canvas {\n      Card(title: \"A\")\n    }",
     ));
-    assert!(err.message.contains("canvas interior"), "{err}");
+    assert!(err.message.contains("inside Canvas"), "{err}");
 }
 
 #[test]
@@ -419,7 +419,7 @@ fn bad_shape_in_expansion_reports_call() {
         "    Card(title: [1, 2])",
     ));
     assert!(
-        err.message.contains("wrong type of 'title' parameter"),
+        err.message.contains("bad type of parameter 'title'"),
         "{err}"
     );
 }

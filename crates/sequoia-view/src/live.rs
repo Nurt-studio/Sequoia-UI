@@ -7,7 +7,7 @@ use sequoia_animation::Easing;
 use sequoia_core::{Color, Vec2};
 use sequoia_reactive::{Memo, Signal};
 
-use crate::animated::MAX_ANIM_DT;
+use crate::clock::MAX_FRAME_STEP_SECS;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Prop(pub u64);
@@ -551,10 +551,10 @@ impl AnimState {
             let dt = now
                 .duration_since(state.last_tick)
                 .as_secs_f32()
-                .clamp(0.0, MAX_ANIM_DT);
+                .clamp(0.0, MAX_FRAME_STEP_SECS);
             state.last_tick = now;
 
-            let steps = 4;
+            let steps = ((dt * 120.0).ceil() as usize).max(1);
             let h = dt / steps as f32;
             for _ in 0..steps {
                 let (p, v) = spring_step(state.current, state.velocity, target, sp, h.max(0.0));
@@ -612,7 +612,7 @@ impl AnimState {
             let dt = now
                 .duration_since(state.last_tick)
                 .as_secs_f32()
-                .clamp(0.0, MAX_ANIM_DT);
+                .clamp(0.0, MAX_FRAME_STEP_SECS);
             state.last_tick = now;
             if exp_settled(state.current, target) {
                 state.current = target;
@@ -674,9 +674,9 @@ impl AnimState {
             let dt = now
                 .duration_since(state.last_tick)
                 .as_secs_f32()
-                .clamp(0.0, MAX_ANIM_DT);
+                .clamp(0.0, MAX_FRAME_STEP_SECS);
             state.last_tick = now;
-            let steps = 4;
+            let steps = ((dt * 120.0).ceil() as usize).max(1);
             let h = dt / steps as f32;
             for _ in 0..steps {
                 let (px, vx) =

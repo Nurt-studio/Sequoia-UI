@@ -46,6 +46,8 @@ fn if_toggles_with_host_bool() {
     let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
     let h = Harness::new(loaded.view);
     h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
     assert_eq!(glyphs(&h), 8);
     show.set(false);
 
@@ -53,7 +55,10 @@ fn if_toggles_with_host_bool() {
         std::thread::sleep(std::time::Duration::from_millis(10));
         h.tick();
         h.layout(200.0, 100.0);
+        h.paint();
     }
+    h.tick();
+    h.layout(200.0, 100.0);
     assert_eq!(glyphs(&h), 0);
 }
 
@@ -96,6 +101,8 @@ fn memo_bool_drives_if() {
     let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
     let h = Harness::new(loaded.view);
     h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
     assert_eq!(glyphs(&h), 3);
 }
 

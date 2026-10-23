@@ -167,6 +167,33 @@ impl Animator {
             }
     }
 
+    /// Jump to the end of the current clip and stop.
+    ///
+    /// Used when the host has reduced motion enabled. State machines and
+    /// springs are paused in place because they have no single final frame.
+    pub fn finish(&mut self) -> bool {
+        let end = {
+            let inner = self.inner.borrow();
+            inner.clip.as_ref().map(|clip| {
+                let speed = f64::from(clip.speed());
+                if speed > 0.0 {
+                    clip.duration() / speed
+                } else {
+                    0.0
+                }
+            })
+        };
+        {
+            let mut inner = self.inner.borrow_mut();
+            if let Some(end) = end {
+                inner.elapsed = end;
+            }
+            inner.playing = false;
+        }
+        let _ = self.advance(0.0);
+        false
+    }
+
     pub fn advance_frame(&mut self) -> bool {
         let now = Instant::now();
         let dt = {

@@ -7,6 +7,7 @@ pub mod app;
 pub mod async_view;
 mod backdrop;
 mod canvas;
+mod clock;
 pub mod dev_overlay;
 mod dnd;
 mod dock;
@@ -59,6 +60,7 @@ pub use any::AnyView;
 pub use async_view::AsyncView;
 pub use backdrop::BackdropBlur;
 pub use canvas::{Canvas, KeyBinding};
+pub use clock::{FrameClock, MAX_FRAME_STEP_SECS};
 pub use dev_overlay::DevOverlay;
 pub use dnd::{
     DRAG_THRESHOLD, DragEnd, DragId, DragOptions, DragPayload, DragSession, DropPosition,

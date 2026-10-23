@@ -85,7 +85,7 @@ fn on_signature_mismatch_reports_decl_line() {
         Err(e) => e,
         Ok(_) => panic!("oczekiwano bledu"),
     };
-    assert!(err.message.contains("sygnatura"), "{err}");
+    assert!(err.message.contains("does not match the host"), "{err}");
     assert_eq!(err.line, 4);
 }
 

@@ -85,16 +85,25 @@ fn when_mounts_and_unmounts_child() {
     rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
     let mut list = RenderList::new();
     rt.paint(&mut list, &mut text);
+
+    rt.advance_for_test(std::time::Duration::from_millis(16));
+    rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
+    let mut list = RenderList::new();
+    rt.paint(&mut list, &mut text);
     assert_eq!(list.quads().count(), 1, "otwarte montuje dziecko");
 
     open.set(false);
     rt.tick();
 
     for _ in 0..60 {
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        rt.advance_for_test(std::time::Duration::from_millis(10));
         rt.tick();
         rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
+        let mut scratch = RenderList::new();
+        rt.paint(&mut scratch, &mut text);
     }
+    rt.tick();
+    rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
     let mut list = RenderList::new();
     rt.paint(&mut list, &mut text);
     assert_eq!(list.quads().count(), 0, "closed, unfastens after leaving");

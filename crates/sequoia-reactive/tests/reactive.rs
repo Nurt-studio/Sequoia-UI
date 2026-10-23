@@ -59,7 +59,7 @@ fn get_untracked_does_not_track() {
 
 #[test]
 fn track_subscribes_without_cloning_the_value() {
-    let a = Signal::new(1);
+    let a = Signal::<i32>::new(1);
     let runs = Rc::new(Cell::new(0u32));
     let _e = effect({
         let (a, runs) = (a.clone(), runs.clone());

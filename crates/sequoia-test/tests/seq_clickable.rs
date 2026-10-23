@@ -172,6 +172,7 @@ fn nested_button_fires_once_row_stays_quiet() {
 }
 
 #[test]
+#[ignore = "scratch diagnostic"]
 fn tmp_touch_pan_debug() {
     for variant in ["plain", "click", "hover", "ifonly"] {
         let row = match variant {
@@ -230,6 +231,7 @@ fn tmp_touch_pan_debug() {
 }
 
 #[test]
+#[ignore = "scratch diagnostic"]
 fn tmp_if_flip_in_list_row() {
     use sequoia_core::{Color, RenderItem};
     let src = "app A {\n  title: \"A\"\n  size: (300, 400)\n  on play(id: Int)\n  on flip()\n  window M {\n    Column {\n      Button(\"flip\", on_click: { flip() })\n      ScrollView(axis: vertical) {\n        Column(width: fill(1), gap: 0) {\n          List(items: songs, key: id) {\n            Row(width: fill(1), height: px(48), hover: #2B2B2B, on_click: { play(item.id) }) {\n              If(when: item.selected) {\n                Container(width: px(10), height: px(10), background: #35C2F1)\n              }\n              Text(dynamic: item.title)\n            }\n          }\n        }\n      }\n    }\n  }\n}\n";

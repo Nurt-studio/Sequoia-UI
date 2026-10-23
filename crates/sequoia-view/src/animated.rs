@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -7,6 +7,7 @@ use sequoia_core::{Length, Vec2};
 use sequoia_layout::LayoutStyle;
 
 use crate::any::AnyView;
+use crate::runtime::{ElementId, Runtime};
 use crate::view::{PaintCtx, View};
 
 pub const MAX_ANIM_DT: f32 = 1.0 / 20.0;
@@ -193,6 +194,14 @@ impl Pulse {
     fn current(&self) -> f32 {
         self.sample_at(wall_elapsed(&self.clock))
     }
+
+    fn current_ctx(&self, rt: &Runtime) -> f32 {
+        if rt.reduced_motion() {
+            1.0
+        } else {
+            self.sample_at(rt.elapsed_secs())
+        }
+    }
 }
 
 impl View for Pulse {
@@ -212,8 +221,13 @@ impl View for Pulse {
     fn paint_opacity(&self) -> Option<f32> {
         Some(self.current())
     }
+    fn paint_opacity_ctx(&self, rt: &Runtime, _el: ElementId) -> Option<f32> {
+        Some(self.current_ctx(rt))
+    }
     fn paint_self(&self, ctx: &mut PaintCtx) {
-        ctx.request_frame();
+        if !ctx.runtime().reduced_motion() {
+            ctx.request_frame();
+        }
     }
 }
 
@@ -290,6 +304,17 @@ impl Shake {
         let running = elapsed < self.delay + self.duration;
         (offset, running)
     }
+
+    fn current_ctx(&self, rt: &Runtime) -> (Vec2, bool) {
+        if rt.reduced_motion() {
+            return (Vec2::ZERO, false);
+        }
+        let elapsed = rt.elapsed_secs();
+        (
+            self.sample_at(elapsed),
+            elapsed < self.delay + self.duration,
+        )
+    }
 }
 
 impl View for Shake {
@@ -309,8 +334,11 @@ impl View for Shake {
     fn paint_offset(&self) -> Vec2 {
         self.current().0
     }
+    fn paint_offset_ctx(&self, rt: &Runtime, _el: ElementId) -> Vec2 {
+        self.current_ctx(rt).0
+    }
     fn paint_self(&self, ctx: &mut PaintCtx) {
-        if self.current().1 {
+        if self.current_ctx(ctx.runtime()).1 {
             ctx.request_frame();
         }
     }
@@ -324,6 +352,9 @@ pub struct Animated {
     animator: Animator,
     clock: Rc<RefCell<Option<Instant>>>,
     memo: Rc<RefCell<(Option<Instant>, bool)>>,
+    ctx_frame: Rc<Cell<Option<u64>>>,
+    ctx_started: Rc<Cell<bool>>,
+    ctx_running: Rc<Cell<bool>>,
 }
 
 impl Animated {
@@ -333,6 +364,9 @@ impl Animated {
             animator,
             clock: Rc::new(RefCell::new(None)),
             memo: Rc::new(RefCell::new((None, false))),
+            ctx_frame: Rc::new(Cell::new(None)),
+            ctx_started: Rc::new(Cell::new(false)),
+            ctx_running: Rc::new(Cell::new(false)),
         }
     }
 
@@ -363,6 +397,26 @@ impl Animated {
         *self.memo.borrow_mut() = (Some(now), running);
         running
     }
+
+    fn tick_ctx(&self, rt: &Runtime) -> bool {
+        let frame = rt.clock().frame();
+        if self.ctx_frame.get() == Some(frame) {
+            return self.ctx_running.get();
+        }
+        let dt = if self.ctx_started.replace(true) {
+            rt.frame_dt_secs()
+        } else {
+            0.0
+        };
+        let running = if rt.reduced_motion() {
+            self.animator.clone().finish()
+        } else {
+            self.animator.clone().advance(f64::from(dt))
+        };
+        self.ctx_frame.set(Some(frame));
+        self.ctx_running.set(running);
+        running
+    }
 }
 
 impl View for Animated {
@@ -388,8 +442,17 @@ impl View for Animated {
         let p = self.animator.offset();
         Vec2::new(p.x, p.y)
     }
+    fn paint_opacity_ctx(&self, rt: &Runtime, _el: ElementId) -> Option<f32> {
+        self.tick_ctx(rt);
+        self.animator.opacity()
+    }
+    fn paint_offset_ctx(&self, rt: &Runtime, _el: ElementId) -> Vec2 {
+        self.tick_ctx(rt);
+        let p = self.animator.offset();
+        Vec2::new(p.x, p.y)
+    }
     fn paint_self(&self, ctx: &mut PaintCtx) {
-        if self.tick() {
+        if self.tick_ctx(ctx.runtime()) {
             ctx.request_frame();
         }
     }

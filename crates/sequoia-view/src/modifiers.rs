@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -169,11 +169,14 @@ impl View for When {
     fn layout_style(&self) -> LayoutStyle {
         self.presence.layout_style()
     }
-    fn paint_opacity(&self) -> Option<f32> {
-        self.presence.paint_opacity()
+    fn paint_opacity_ctx(&self, rt: &Runtime, el: ElementId) -> Option<f32> {
+        self.presence.paint_opacity_ctx(rt, el)
     }
-    fn paint_offset(&self) -> Vec2 {
-        self.presence.paint_offset()
+    fn paint_offset_ctx(&self, rt: &Runtime, el: ElementId) -> Vec2 {
+        self.presence.paint_offset_ctx(rt, el)
+    }
+    fn paint_scale_ctx(&self, rt: &Runtime, el: ElementId) -> f32 {
+        self.presence.paint_scale_ctx(rt, el)
     }
     fn paint_self(&self, ctx: &mut PaintCtx) {
         self.presence.paint_self(ctx);
@@ -345,7 +348,8 @@ impl View for Rotated {
 pub struct Enter {
     child: AnyView,
     motion: Motion,
-    start: Rc<RefCell<Option<Instant>>>,
+    start: Rc<Cell<Option<f32>>>,
+    wall_start: Rc<Cell<Option<Instant>>>,
 }
 
 impl Enter {
@@ -353,15 +357,26 @@ impl Enter {
         Self {
             child: AnyView::new(child),
             motion: motion.into(),
-            start: Rc::new(RefCell::new(None)),
+            start: Rc::new(Cell::new(None)),
+            wall_start: Rc::new(Cell::new(None)),
         }
     }
 
-    fn elapsed(&self) -> f32 {
+    fn elapsed_ctx(&self, rt: &Runtime) -> f32 {
+        if rt.reduced_motion() {
+            return f32::MAX;
+        }
+        let now = rt.elapsed_secs();
+        let start = self.start.get().unwrap_or(now);
+        self.start.set(Some(start));
+        (now - start).max(0.0)
+    }
+
+    fn elapsed_wall(&self) -> f32 {
         let now = Instant::now();
-        let mut slot = self.start.borrow_mut();
-        let t0 = *slot.get_or_insert(now);
-        now.duration_since(t0).as_secs_f32().min(600.0)
+        let start = self.wall_start.get().unwrap_or(now);
+        self.wall_start.set(Some(start));
+        now.saturating_duration_since(start).as_secs_f32()
     }
 }
 
@@ -380,16 +395,27 @@ impl View for Enter {
         }
     }
     fn paint_opacity(&self) -> Option<f32> {
-        self.motion.sample_at(self.elapsed()).0
+        self.motion.sample_at(self.elapsed_wall()).0
     }
     fn paint_offset(&self) -> Vec2 {
         self.motion
-            .sample_at(self.elapsed())
+            .sample_at(self.elapsed_wall())
+            .1
+            .unwrap_or(Vec2::ZERO)
+    }
+    fn paint_opacity_ctx(&self, rt: &Runtime, _el: ElementId) -> Option<f32> {
+        self.motion.sample_at(self.elapsed_ctx(rt)).0
+    }
+    fn paint_offset_ctx(&self, rt: &Runtime, _el: ElementId) -> Vec2 {
+        self.motion
+            .sample_at(self.elapsed_ctx(rt))
             .1
             .unwrap_or(Vec2::ZERO)
     }
     fn paint_self(&self, ctx: &mut PaintCtx) {
-        if self.motion.is_running(self.elapsed()) {
+        if !ctx.runtime().reduced_motion()
+            && self.motion.is_running(self.elapsed_ctx(ctx.runtime()))
+        {
             ctx.request_frame();
         }
     }
@@ -400,6 +426,8 @@ pub struct StatePatch {
     background: Option<Live<Color>>,
     opacity: Option<Live<f32>>,
     scale: Option<Live<f32>>,
+    offset: Option<Live<Vec2>>,
+    rotation: Option<Live<f32>>,
     spec: Option<AnimSpec>,
     spring: Option<SpringSpec>,
 }
@@ -421,6 +449,21 @@ impl StatePatch {
 
     pub fn scale(mut self, scale: impl Into<Live<f32>>) -> Self {
         self.scale = Some(scale.into());
+        self
+    }
+
+    pub fn offset(mut self, offset: impl Into<Live<Vec2>>) -> Self {
+        self.offset = Some(offset.into());
+        self
+    }
+
+    pub fn translate(mut self, dx: f32, dy: f32) -> Self {
+        self.offset = Some(Live::fixed(Vec2::new(dx, dy)));
+        self
+    }
+
+    pub fn rotate(mut self, degrees: impl Into<Live<f32>>) -> Self {
+        self.rotation = Some(degrees.into());
         self
     }
 
@@ -550,38 +593,64 @@ impl States {
         if let Some(v) = &p.scale {
             Self::touch_f32(v);
         }
+        if let Some(v) = &p.offset {
+            let _ = v.target();
+        }
+        if let Some(v) = &p.rotation {
+            Self::touch_f32(v);
+        }
     }
 
-    fn active_patch(&self, hovered: bool, pressed: bool, focused: bool) -> Option<&StatePatch> {
+    /// Patches that apply for the current visual state, highest priority first.
+    ///
+    /// Disabled is exclusive. Other states compose per property, so a hovered
+    /// and selected control can animate both its own hover background and its
+    /// selected accent without one clobbering the other.
+    fn layers(&self, hovered: bool, pressed: bool, focused: bool) -> Vec<&StatePatch> {
         let disabled = self
             .disabled_when
             .as_ref()
             .map(|c| c.target_untracked())
             .unwrap_or(false);
         if disabled && self.disabled.is_some() {
-            return self.disabled.as_ref();
+            return vec![self.disabled.as_ref().unwrap()];
         }
-        if pressed && self.pressed.is_some() {
-            return self.pressed.as_ref();
-        }
-        if hovered && self.hover.is_some() {
-            return self.hover.as_ref();
-        }
-        if focused && self.focused.is_some() {
-            return self.focused.as_ref();
-        }
+
         let selected = self
             .selected_when
             .as_ref()
             .map(|c| c.target_untracked())
             .unwrap_or(false);
-        if selected && self.selected.is_some() {
-            return self.selected.as_ref();
+
+        let mut out = Vec::with_capacity(4);
+        if pressed && let Some(p) = self.pressed.as_ref() {
+            out.push(p);
         }
-        None
+        if hovered && let Some(p) = self.hover.as_ref() {
+            out.push(p);
+        }
+        if focused && let Some(p) = self.focused.as_ref() {
+            out.push(p);
+        }
+        if selected && let Some(p) = self.selected.as_ref() {
+            out.push(p);
+        }
+        out
     }
 
-    fn eff_f32(patch: &StatePatch, live: &Live<f32>) -> Live<f32> {
+    fn pick<'a, T>(
+        layers: &[&'a StatePatch],
+        f: impl Fn(&'a StatePatch) -> Option<&'a Live<T>>,
+    ) -> Option<(&'a Live<T>, &'a StatePatch)> {
+        layers.iter().find_map(|p| f(p).map(|live| (live, *p)))
+    }
+
+    #[cfg(test)]
+    fn active_patch(&self, hovered: bool, pressed: bool, focused: bool) -> Option<&StatePatch> {
+        self.layers(hovered, pressed, focused).into_iter().next()
+    }
+
+    fn eff_live<T: Clone + PartialEq + 'static>(patch: &StatePatch, live: &Live<T>) -> Live<T> {
         if live.tween_spec().is_some() || live.spring_spec().is_some() {
             return live.clone();
         }
@@ -592,6 +661,10 @@ impl States {
             out.spring_mut(s);
         }
         out
+    }
+
+    fn eff_f32(patch: &StatePatch, live: &Live<f32>) -> Live<f32> {
+        Self::eff_live(patch, live)
     }
 
     fn eff_color(patch: &StatePatch, live: &Live<Color>) -> Live<Color> {
@@ -643,36 +716,54 @@ impl View for States {
     }
     fn paint_opacity_ctx(&self, rt: &Runtime, el: ElementId) -> Option<f32> {
         let st = rt.visual_state(el);
-        let patch = self.active_patch(st.hovered, st.pressed, st.focused)?;
-        let live = patch.opacity.as_ref()?;
+        let layers = self.layers(st.hovered, st.pressed, st.focused);
+        let (live, patch) = Self::pick(&layers, |p| p.opacity.as_ref())?;
         let live = Self::eff_f32(patch, live);
         Some(
             rt.resolve_live_f32(el, Prop::OPACITY, &live)
                 .clamp(0.0, 1.0),
         )
     }
+
     fn paint_scale_ctx(&self, rt: &Runtime, el: ElementId) -> f32 {
         let st = rt.visual_state(el);
-        let patch = match self.active_patch(st.hovered, st.pressed, st.focused) {
-            Some(p) => p,
-            None => return 1.0,
-        };
-        let live = match patch.scale.as_ref() {
-            Some(v) => v,
-            None => return 1.0,
+        let layers = self.layers(st.hovered, st.pressed, st.focused);
+        let Some((live, patch)) = Self::pick(&layers, |p| p.scale.as_ref()) else {
+            return 1.0;
         };
         let live = Self::eff_f32(patch, live);
         rt.resolve_live_f32(el, Prop::SCALE, &live)
     }
+
+    fn paint_offset_ctx(&self, rt: &Runtime, el: ElementId) -> Vec2 {
+        let st = rt.visual_state(el);
+        let layers = self.layers(st.hovered, st.pressed, st.focused);
+        let Some((live, patch)) = Self::pick(&layers, |p| p.offset.as_ref()) else {
+            return Vec2::ZERO;
+        };
+        let live = Self::eff_live(patch, live);
+        rt.resolve_live_vec2(el, Prop::OFFSET, &live)
+    }
+
+    fn paint_rotation_ctx(&self, rt: &Runtime, el: ElementId) -> f32 {
+        let st = rt.visual_state(el);
+        let layers = self.layers(st.hovered, st.pressed, st.focused);
+        let Some((live, patch)) = Self::pick(&layers, |p| p.rotation.as_ref()) else {
+            return 0.0;
+        };
+        let live = Self::eff_f32(patch, live);
+        rt.resolve_live_f32(el, Prop::ROTATION, &live)
+    }
+
     fn paint_self(&self, ctx: &mut PaintCtx) {
         let st = ctx.state;
+        let layers = self.layers(st.hovered, st.pressed, st.focused);
+        if layers.is_empty() {
+            return;
+        }
 
-        let patch = match self.active_patch(st.hovered, st.pressed, st.focused) {
-            Some(p) => p,
-            None => return,
-        };
         let mut running = false;
-        if let Some(live) = &patch.background {
+        if let Some((live, patch)) = Self::pick(&layers, |p| p.background.as_ref()) {
             let live = Self::eff_color(patch, live);
             let target = live.target_untracked();
             let (color, r) = ctx.runtime.live_color(
@@ -686,7 +777,7 @@ impl View for States {
                 ctx.quad(ctx.rect, color, self.radius);
             }
         }
-        if let Some(live) = &patch.opacity {
+        if let Some((live, patch)) = Self::pick(&layers, |p| p.opacity.as_ref()) {
             let live = Self::eff_f32(patch, live);
             let target = live.target_untracked();
             let (_, r) = ctx.runtime.live_f32(
@@ -698,12 +789,36 @@ impl View for States {
             );
             running |= r;
         }
-        if let Some(live) = &patch.scale {
+        if let Some((live, patch)) = Self::pick(&layers, |p| p.scale.as_ref()) {
             let live = Self::eff_f32(patch, live);
             let target = live.target_untracked();
             let (_, r) = ctx.runtime.live_f32(
                 ctx.element,
                 Prop::SCALE,
+                target,
+                live.tween_spec().as_ref(),
+                live.spring_spec().as_ref(),
+            );
+            running |= r;
+        }
+        if let Some((live, patch)) = Self::pick(&layers, |p| p.offset.as_ref()) {
+            let live = Self::eff_live(patch, live);
+            let target = live.target_untracked();
+            let (_, r) = ctx.runtime.live_vec2(
+                ctx.element,
+                Prop::OFFSET,
+                target,
+                live.tween_spec().as_ref(),
+                live.spring_spec().as_ref(),
+            );
+            running |= r;
+        }
+        if let Some((live, patch)) = Self::pick(&layers, |p| p.rotation.as_ref()) {
+            let live = Self::eff_f32(patch, live);
+            let target = live.target_untracked();
+            let (_, r) = ctx.runtime.live_f32(
+                ctx.element,
+                Prop::ROTATION,
                 target,
                 live.tween_spec().as_ref(),
                 live.spring_spec().as_ref(),
@@ -979,6 +1094,27 @@ mod tests {
                 .is_some()
         );
         assert!(c.active_patch(false, false, false).is_none());
+    }
+
+    #[test]
+    fn states_compose_layers_per_property() {
+        let v = crate::views::Unit.state(|s| {
+            s.hover(|h| h.opacity(0.8))
+                .focused(|f| f.scale(1.05))
+                .selected(|p| p.translate(4.0, 2.0).rotate(12.0))
+                .selected_when(true)
+        });
+        let layers = v.layers(true, false, true);
+        assert_eq!(layers.len(), 3, "hover, focus and selected all apply");
+        assert!(layers[0].opacity.is_some(), "hover wins opacity");
+        assert!(layers[1].scale.is_some(), "focus wins scale");
+        assert!(layers[2].offset.is_some(), "selected supplies offset");
+        assert!(layers[2].rotation.is_some(), "selected supplies rotation");
+
+        let (offset, _) = States::pick(&layers, |p| p.offset.as_ref()).expect("offset");
+        assert_eq!(offset.target_untracked(), Vec2::new(4.0, 2.0));
+        let (rotation, _) = States::pick(&layers, |p| p.rotation.as_ref()).expect("rotation");
+        assert_eq!(rotation.target_untracked(), 12.0);
     }
 
     #[test]

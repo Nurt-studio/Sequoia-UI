@@ -26,7 +26,7 @@ fn unknown_action_in_callback_reports_missing_host() {
         Err(e) => e,
         Ok(_) => panic!("oczekiwano bledu"),
     };
-    assert!(e.message.contains("nieznany callback 'nope'"), "{e}");
+    assert!(e.message.contains("unknown callback 'nope'"), "{e}");
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn callseq_outside_callback_is_rejected() {
         "  fn f() { out = 1; }",
         "Button(\"x\", width: { f() })",
     ));
-    assert!(e.message.contains("tylko jako callback"), "{e}");
+    assert!(e.message.contains("only as callback"), "{e}");
 }
 
 #[test]

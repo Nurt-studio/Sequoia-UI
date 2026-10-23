@@ -29,6 +29,7 @@ use sequoia_style::{Theme, VisualState};
 use sequoia_text::TextSystem;
 
 use crate::any::{AnyView, ErasedView};
+use crate::clock::FrameClock;
 use crate::live::{AnimSpec, AnimState, Live, Prop, SpringSpec};
 use crate::surface::SurfaceDraw;
 use crate::view::{EventCtx, PaintCtx, View};
@@ -220,6 +221,8 @@ struct Inner {
 
     live_anims: RefCell<HashMap<(ElementId, u64), AnimState>>,
 
+    clock: Cell<FrameClock>,
+
     states: RefCell<HashMap<ElementId, Box<dyn Any>>>,
 
     layout_epoch: Cell<u64>,
@@ -300,6 +303,7 @@ impl Runtime {
                 window: Cell::new(WindowId::PRIMARY),
                 wrap_cache: RefCell::new(HashMap::new()),
                 live_anims: RefCell::new(HashMap::new()),
+                clock: Cell::new(FrameClock::new()),
                 states: RefCell::new(HashMap::new()),
                 layout_epoch: Cell::new(0),
                 scoped_cancels: RefCell::new(HashMap::new()),
@@ -382,6 +386,79 @@ impl Runtime {
         self.request_redraw();
     }
 
+    /// Snapshot of the frame clock used by every view animation.
+    pub fn clock(&self) -> FrameClock {
+        self.inner.clock.get()
+    }
+
+    pub fn now(&self) -> std::time::Instant {
+        self.inner.clock.get().now()
+    }
+
+    pub fn elapsed_secs(&self) -> f32 {
+        self.inner.clock.get().elapsed_secs()
+    }
+
+    pub fn frame_dt_secs(&self) -> f32 {
+        self.inner.clock.get().dt_secs()
+    }
+
+    pub fn reduced_motion(&self) -> bool {
+        self.inner.clock.get().reduced_motion()
+    }
+
+    pub fn set_reduced_motion(&self, reduced: bool) {
+        let mut c = self.inner.clock.get();
+        if c.reduced_motion() == reduced {
+            return;
+        }
+        c.set_reduced_motion(reduced);
+        self.inner.clock.set(c);
+        self.request_redraw();
+    }
+
+    pub fn set_animation_speed(&self, speed: f32) {
+        let mut c = self.inner.clock.get();
+        c.set_speed(speed);
+        self.inner.clock.set(c);
+        self.request_redraw();
+    }
+
+    pub fn animation_speed(&self) -> f32 {
+        self.inner.clock.get().speed()
+    }
+
+    /// Switch to explicit time control. Hosts and tests can then call
+    /// [`Runtime::advance_for_test`] without coupling to wall time.
+    pub fn set_manual_clock(&self, manual: bool) {
+        let mut c = self.inner.clock.get();
+        c.set_manual(manual);
+        self.inner.clock.set(c);
+    }
+
+    /// Advance the shared clock by an exact duration.
+    ///
+    /// This also flips the clock into manual mode, so subsequent `tick` calls
+    /// do not advance it from the wall clock.
+    pub fn advance_for_test(&self, dt: std::time::Duration) {
+        let mut c = self.inner.clock.get();
+        c.set_manual(true);
+        c.advance_by(dt);
+        self.inner.clock.set(c);
+    }
+
+    pub fn reset_clock(&self) {
+        let mut c = self.inner.clock.get();
+        c.reset();
+        self.inner.clock.set(c);
+    }
+
+    fn advance_clock(&self) {
+        let mut c = self.inner.clock.get();
+        c.advance();
+        self.inner.clock.set(c);
+    }
+
     pub fn live_f32(
         &self,
         el: ElementId,
@@ -390,11 +467,12 @@ impl Runtime {
         tween: Option<&AnimSpec>,
         spring: Option<&SpringSpec>,
     ) -> (f32, bool) {
-        if tween.is_none() && spring.is_none() {
+        let key = (el, prop.0);
+        if self.reduced_motion() || (tween.is_none() && spring.is_none()) {
+            self.inner.live_anims.borrow_mut().remove(&key);
             return (target, false);
         }
-        let now = std::time::Instant::now();
-        let key = (el, prop.0);
+        let now = self.now();
         let mut map = self.inner.live_anims.borrow_mut();
         let entry = map.entry(key).or_insert_with(|| {
             AnimState::F32(crate::live::F32State {
@@ -441,11 +519,12 @@ impl Runtime {
         target: sequoia_core::Color,
         tween: Option<&AnimSpec>,
     ) -> (sequoia_core::Color, bool) {
-        if tween.is_none() {
+        let key = (el, prop.0);
+        if self.reduced_motion() || tween.is_none() {
+            self.inner.live_anims.borrow_mut().remove(&key);
             return (target, false);
         }
-        let now = std::time::Instant::now();
-        let key = (el, prop.0);
+        let now = self.now();
         let mut map = self.inner.live_anims.borrow_mut();
         let entry = map.entry(key).or_insert_with(|| {
             AnimState::Color(crate::live::ColorState {
@@ -489,11 +568,12 @@ impl Runtime {
         target: sequoia_core::Color,
         rate: f32,
     ) -> (sequoia_core::Color, bool) {
-        if !(rate > 0.0) {
+        let key = (el, prop.0);
+        if self.reduced_motion() || !(rate > 0.0) {
+            self.inner.live_anims.borrow_mut().remove(&key);
             return (target, false);
         }
-        let now = std::time::Instant::now();
-        let key = (el, prop.0);
+        let now = self.now();
         let mut map = self.inner.live_anims.borrow_mut();
         let entry = map.entry(key).or_insert_with(|| {
             AnimState::Color(crate::live::ColorState {
@@ -538,11 +618,12 @@ impl Runtime {
         tween: Option<&AnimSpec>,
         spring: Option<&SpringSpec>,
     ) -> (sequoia_core::Vec2, bool) {
-        if tween.is_none() && spring.is_none() {
+        let key = (el, prop.0);
+        if self.reduced_motion() || (tween.is_none() && spring.is_none()) {
+            self.inner.live_anims.borrow_mut().remove(&key);
             return (target, false);
         }
-        let now = std::time::Instant::now();
-        let key = (el, prop.0);
+        let now = self.now();
         let mut map = self.inner.live_anims.borrow_mut();
         let entry = map.entry(key).or_insert_with(|| {
             AnimState::Vec2(crate::live::Vec2State {
@@ -719,6 +800,11 @@ impl Runtime {
     }
 
     pub fn tick(&self) {
+        self.advance_clock();
+        self.settle();
+    }
+
+    fn settle(&self) {
         flush_effects();
         loop {
             let next = self.inner.queue.borrow_mut().pop();
@@ -942,7 +1028,7 @@ impl Runtime {
                 return;
             }
             if pass + 1 < MAX_SETTLE_PASSES {
-                self.tick();
+                self.settle();
             }
         }
         log::warn!(
@@ -1032,6 +1118,11 @@ impl Runtime {
                 self.paint_rec(el, Vec2::ZERO, 1.0, Transform::IDENTITY, list, text);
             }
         }
+
+        self.inner
+            .live_anims
+            .borrow_mut()
+            .retain(|(el, _), _| self.inner.arena.borrow().get(*el).is_some());
     }
 
     pub fn take_surface_draws(&self) -> Vec<SurfaceDraw> {
@@ -5151,6 +5242,50 @@ mod tests {
         let bounds = Rect::from_xywh(0.0, 0.0, 800.0, 600.0);
         rt.layout(bounds, &mut text);
         assert_eq!(rt.rect_of(rt.root().unwrap()).unwrap().size, bounds.size);
+    }
+
+    #[test]
+    fn clock_advances_exactly_in_manual_mode() {
+        let rt = Runtime::new();
+        rt.set_manual_clock(true);
+        rt.advance_for_test(std::time::Duration::from_millis(500));
+        assert!((rt.elapsed_secs() - 0.5).abs() < 1e-6);
+        assert!((rt.frame_dt_secs() - 0.5).abs() < 1e-6);
+
+        rt.set_animation_speed(2.0);
+        rt.advance_for_test(std::time::Duration::from_millis(250));
+        assert!((rt.elapsed_secs() - 1.0).abs() < 1e-6);
+        assert!((rt.frame_dt_secs() - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reduced_motion_freezes_the_shared_clock() {
+        let rt = Runtime::new();
+        rt.set_manual_clock(true);
+        rt.set_reduced_motion(true);
+        rt.advance_for_test(std::time::Duration::from_millis(500));
+        assert_eq!(rt.elapsed_secs(), 0.0);
+        assert_eq!(rt.frame_dt_secs(), 0.0);
+    }
+
+    #[test]
+    fn live_anims_are_evicted_with_their_elements() {
+        let rt = Runtime::new();
+        rt.mount(crate::Unit);
+        let root = rt.root().unwrap();
+        let spec = AnimSpec::FAST;
+        rt.live_f32(root, Prop::OPACITY, 1.0, Some(&spec), None);
+        assert_eq!(rt.live_anim_count(), 1);
+
+        rt.live_f32(id(9999), Prop::OPACITY, 1.0, Some(&spec), None);
+        assert_eq!(rt.live_anim_count(), 2);
+        let mut list = RenderList::default();
+        let mut text = TextSystem::new();
+        rt.paint(&mut list, &mut text);
+        assert_eq!(rt.live_anim_count(), 1, "detached element evicted on paint");
+
+        rt.mount(crate::Unit);
+        assert_eq!(rt.live_anim_count(), 0, "unmount evicts animations");
     }
 
     #[test]

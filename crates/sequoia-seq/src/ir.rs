@@ -18,12 +18,6 @@ pub struct SeqApp {
 
     pub fns: Vec<SeqFn>,
 
-    pub anims: Vec<AnimDecl>,
-
-    pub machines: Vec<MachineDecl>,
-
-    pub springs: Vec<SpringDecl>,
-
     pub imports: Vec<ImportDecl>,
 
     pub app_line: usize,
@@ -449,70 +443,4 @@ fn resolve_value(fns: &std::collections::HashSet<&str>, value: &mut SeqValue) {
         }
         _ => {}
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct AnimDecl {
-    pub name: String,
-    pub line: usize,
-    pub duration: Option<f32>,
-    pub speed: Option<f32>,
-    pub loop_mode: Option<String>,
-    pub tracks: Vec<AnimTrackDecl>,
-}
-
-#[derive(Clone, Debug)]
-pub struct AnimTrackDecl {
-    pub name: String,
-    pub line: usize,
-    pub value: SeqValue,
-}
-
-#[derive(Clone, Debug)]
-pub struct MachineDecl {
-    pub name: String,
-    pub line: usize,
-    pub states: Vec<MachineStateDecl>,
-    pub transitions: Vec<MachineTransitionDecl>,
-}
-
-#[derive(Clone, Debug)]
-pub struct MachineStateDecl {
-    pub name: String,
-    pub line: usize,
-    pub kind: String,
-    pub target: Option<String>,
-    pub args: Vec<SeqArg>,
-}
-
-#[derive(Clone, Debug)]
-pub struct MachineTransitionDecl {
-    pub from: String,
-    pub to: String,
-    pub line: usize,
-    pub conditions: Vec<String>,
-    pub mix: Option<f32>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SpringDecl {
-    pub name: String,
-    pub line: usize,
-    pub states: Vec<SpringStateDecl>,
-    pub transitions: Vec<SpringTransitionDecl>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SpringStateDecl {
-    pub name: String,
-    pub line: usize,
-    pub value: SeqValue,
-}
-
-#[derive(Clone, Debug)]
-pub struct SpringTransitionDecl {
-    pub from: String,
-    pub to: String,
-    pub line: usize,
-    pub trigger: String,
 }

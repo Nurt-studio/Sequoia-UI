@@ -82,21 +82,21 @@ fn field_hides_error_until_touched() {
     let h = Harness::new(Column::new().fill_size().child(f.clone()));
     h.sync(400.0, 300.0);
     assert!(
-        !all_texts(&h).iter().any(|t| t.contains("puste")),
+        !all_texts(&h).iter().any(|t| t.contains("cannot be empty")),
         "przed touch brak komunikatu: {:?}",
         all_texts(&h)
     );
     form.touch_all();
     h.sync(400.0, 300.0);
     assert!(
-        all_texts(&h).iter().any(|t| t.contains("puste")),
+        all_texts(&h).iter().any(|t| t.contains("cannot be empty")),
         "after touch_all error visible: {:?}",
         all_texts(&h)
     );
     v.set("stal".to_string());
     h.sync(400.0, 300.0);
     assert!(form.is_valid());
-    assert!(!all_texts(&h).iter().any(|t| t.contains("puste")));
+    assert!(!all_texts(&h).iter().any(|t| t.contains("cannot be empty")));
 }
 
 #[derive(Clone, PartialEq)]
@@ -269,7 +269,7 @@ fn boundary_shows_fallback_after_child_panic() {
     assert!(b.is_failed(), "panika dziecka stawia fallback");
     assert_eq!(seen.get(), 1);
     assert!(
-        all_texts(&h).iter().any(|t| t.contains("it's gone")),
+        all_texts(&h).iter().any(|t| t.contains("it fell")),
         "{:?}",
         all_texts(&h)
     );

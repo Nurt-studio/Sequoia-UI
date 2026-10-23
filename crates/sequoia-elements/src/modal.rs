@@ -3,15 +3,14 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
 
 use sequoia_core::{Color, Edges, Length};
 use sequoia_layout::LayoutStyle;
 use sequoia_reactive::Signal;
 use sequoia_style::{Backdrop, BoxStyle, ModalStyle, ShadowSpec, Theme};
 use sequoia_view::{
-    Anchor, AnyView, Dismiss, Easing, InputMode, OverlayEntry, OverlayId, OverlayLayer,
-    OverlayOverflow, PaintCtx, Placement, Presence, Unit, View,
+    Anchor, AnyView, Dismiss, Easing, ElementId, InputMode, OverlayEntry, OverlayId, OverlayLayer,
+    OverlayOverflow, PaintCtx, Placement, Presence, Runtime, Unit, View,
 };
 
 thread_local! {
@@ -33,11 +32,11 @@ fn take_entry(key: usize) -> Option<OverlayId> {
 }
 
 thread_local! {
-    static SCRIM_CLOCKS: RefCell<HashMap<usize, Rc<RefCell<Option<Instant>>>>> =
+    static SCRIM_CLOCKS: RefCell<HashMap<usize, Rc<RefCell<Option<f32>>>>> =
         RefCell::new(HashMap::new());
 }
 
-fn scrim_clock(open_id: usize) -> Rc<RefCell<Option<Instant>>> {
+fn scrim_clock(open_id: usize) -> Rc<RefCell<Option<f32>>> {
     SCRIM_CLOCKS.with(|m| m.borrow_mut().entry(open_id).or_default().clone())
 }
 
@@ -59,13 +58,12 @@ struct ScrimFill {
     scrim: Color,
     backdrop: Backdrop,
     open_id: usize,
-    fade: Rc<RefCell<Option<Instant>>>,
+    fade: Rc<RefCell<Option<f32>>>,
 }
 
-fn fade_in_opacity(clock: &Rc<RefCell<Option<Instant>>>, secs: f32) -> (f32, bool) {
-    let now = Instant::now();
+fn fade_in_opacity(clock: &Rc<RefCell<Option<f32>>>, secs: f32, now: f32) -> (f32, bool) {
     let start = *clock.borrow_mut().get_or_insert(now);
-    let el = now.duration_since(start).as_secs_f32();
+    let el = (now - start).max(0.0);
     if el >= secs {
         (1.0, false)
     } else {
@@ -93,15 +91,16 @@ impl View for ScrimFill {
     fn on_unmount(&self) {
         forget_scrim_clock(self.open_id);
     }
-    fn paint_opacity(&self) -> Option<f32> {
-        Some(fade_in_opacity(&self.fade, SCRIM_FADE_SECS).0)
+    fn paint_opacity_ctx(&self, rt: &Runtime, _el: ElementId) -> Option<f32> {
+        Some(fade_in_opacity(&self.fade, SCRIM_FADE_SECS, rt.elapsed_secs()).0)
     }
     fn paint_self(&self, ctx: &mut PaintCtx) {
         ctx.push_backdrop(ctx.rect, self.backdrop);
         if self.scrim.a > 0.0 {
             ctx.quad(ctx.rect, self.scrim, 0.0);
         }
-        if fade_in_opacity(&self.fade, SCRIM_FADE_SECS).1 {
+        let now = ctx.runtime().elapsed_secs();
+        if fade_in_opacity(&self.fade, SCRIM_FADE_SECS, now).1 {
             ctx.request_frame();
         }
     }
@@ -558,9 +557,9 @@ mod tests {
         let b = scrim_clock(open.id());
         assert!(Rc::ptr_eq(&a, &b), "same signal = same clock");
 
-        let (v, _) = fade_in_opacity(&a, SCRIM_FADE_SECS);
-        let (v2, _) = fade_in_opacity(&b, SCRIM_FADE_SECS);
-        assert!(v2 >= v, "fade does not undo between rebuilds: {v} -> {v2}");
+        let (v, _) = fade_in_opacity(&a, SCRIM_FADE_SECS, 1.0);
+        let (v2, _) = fade_in_opacity(&b, SCRIM_FADE_SECS, 1.1);
+        assert!(v2 > v, "fade does not undo between rebuilds: {v} -> {v2}");
         forget_scrim_clock(open.id());
     }
 
@@ -568,7 +567,7 @@ mod tests {
     fn scrim_clock_resets_after_close() {
         let open = Signal::new(true);
         let a = scrim_clock(open.id());
-        let _ = fade_in_opacity(&a, SCRIM_FADE_SECS);
+        let _ = fade_in_opacity(&a, SCRIM_FADE_SECS, 0.0);
         forget_scrim_clock(open.id());
         let b = scrim_clock(open.id());
         assert!(!Rc::ptr_eq(&a, &b), "after closing, the clock is fresh");

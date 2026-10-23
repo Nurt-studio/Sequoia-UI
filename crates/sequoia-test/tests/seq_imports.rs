@@ -228,7 +228,7 @@ fn parse_error_inside_imported_file_cites_that_file() {
         &[("ui/card.seq", lib)],
     );
     assert_eq!(e.file, "ui/card.seq");
-    assert!(e.message.contains("nieznany komponent"), "{e}");
+    assert!(e.message.contains("unknown component"), "{e}");
 }
 
 fn tmp_dir(tag: &str) -> PathBuf {

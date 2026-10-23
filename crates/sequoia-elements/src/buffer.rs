@@ -639,13 +639,13 @@ mod tests {
 
     #[test]
     fn delete_snaps_mid_char_pos_for_undo() {
-        let (value, mut eng) = engine_of("turn yellow");
-        let removed = eng.delete(3..4);
-        assert_eq!(removed, "With");
+        let (value, mut eng) = engine_of("aébc");
+        let removed = eng.delete(2..3);
+        assert_eq!(removed, "é");
         eng.commit(&value);
-        assert_eq!(value.get_untracked(), "turn yellow");
+        assert_eq!(value.get_untracked(), "abc");
         eng.undo();
         eng.commit(&value);
-        assert_eq!(value.get_untracked(), "turn yellow");
+        assert_eq!(value.get_untracked(), "aébc");
     }
 }

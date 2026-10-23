@@ -1,4 +1,4 @@
-﻿use crate::error::SeqError;
+use crate::error::SeqError;
 use crate::ir::{
     BinOp, ComponentDef, MatchPat, SeqApp, SeqExpr, SeqExprKind, SeqFn, SeqNode, SeqStmt, SeqValue,
     StyleDecl, UnOp, Visibility,
@@ -95,9 +95,6 @@ pub fn check(file: &str, app: &SeqApp) -> Result<(), SeqError> {
     check_styles(file, app)?;
     let comps = check_components(file, &app.components, &app.styles)?;
     let fns = check_fns(file, app)?;
-    check_anims(file, app)?;
-    check_machines(file, app)?;
-    check_springs(file, app)?;
     check_seq_calls(file, app, &fns)?;
     let ctx = CheckCtx {
         styles: &app.styles,
@@ -2668,104 +2665,6 @@ fn check_callback_call(
                     p.name(),
                     e.name()
                 ),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn check_anims(file: &str, app: &crate::ir::SeqApp) -> Result<(), SeqError> {
-    use std::collections::HashSet;
-    let mut names: HashSet<String> = HashSet::new();
-    for a in &app.anims {
-        if !names.insert(a.name.clone()) {
-            return Err(SeqError::new(
-                file,
-                a.line,
-                1,
-                format!("anim '{}' zdefiniowany dwa razy", a.name),
-            ));
-        }
-        if let Some(m) = &a.loop_mode {
-            if !matches!(m.as_str(), "once" | "loop" | "pingpong") {
-                return Err(SeqError::new(
-                    file,
-                    a.line,
-                    1,
-                    format!("nieznany tryb loop '{}'", m),
-                ));
-            }
-        }
-        for t in &a.tracks {
-            if let crate::ir::SeqValue::Array(items) = &t.value {
-                let mut prev: Option<f32> = None;
-                for kf in items {
-                    if let crate::ir::SeqValue::Tuple(parts) = kf {
-                        if let Some(crate::ir::SeqValue::Num(time)) = parts.first() {
-                            if let Some(p) = prev {
-                                if *time < p {
-                                    return Err(SeqError::new(
-                                        file,
-                                        t.line,
-                                        1,
-                                        format!(
-                                            "{}: track {}: czas {} po {}",
-                                            a.name, t.name, time, p
-                                        ),
-                                    ));
-                                }
-                            }
-                            prev = Some(*time);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn check_machines(file: &str, app: &crate::ir::SeqApp) -> Result<(), SeqError> {
-    use std::collections::HashSet;
-    let mut names: HashSet<String> = HashSet::new();
-    for m in &app.machines {
-        if !names.insert(m.name.clone()) {
-            return Err(SeqError::new(
-                file,
-                m.line,
-                1,
-                format!("machine '{}' zdefiniowany dwa razy", m.name),
-            ));
-        }
-        for tr in &m.transitions {
-            for c in &tr.conditions {
-                if c.starts_with("num(") {
-                    let ops = ["<", "<=", "==", "!=", ">=", ">"];
-                    if !ops.iter().any(|o| c.contains(o)) {
-                        return Err(SeqError::new(
-                            file,
-                            tr.line,
-                            1,
-                            "nieznany operator".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn check_springs(file: &str, app: &crate::ir::SeqApp) -> Result<(), SeqError> {
-    use std::collections::HashSet;
-    let mut names: HashSet<String> = HashSet::new();
-    for s in &app.springs {
-        if !names.insert(s.name.clone()) {
-            return Err(SeqError::new(
-                file,
-                s.line,
-                1,
-                format!("spring '{}' zdefiniowany dwa razy", s.name),
             ));
         }
     }
