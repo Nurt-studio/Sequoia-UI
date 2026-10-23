@@ -144,7 +144,6 @@ impl StyledBuffer {
         if let Some(m) = middle {
             out.push(StyledSpan::new(pos, pos + ins_len, m));
             out.sort_by_key(|s| (s.start, s.end));
-        } else {
         }
         self.spans = out;
     }

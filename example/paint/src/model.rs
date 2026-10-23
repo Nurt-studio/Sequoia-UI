@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use sequoia_ui::prelude::*;
 
-pub const PALETTE_COLORS: [Color; 20] = [
+pub(crate) const PALETTE_COLORS: [Color; 20] = [
     Color::hex(0x000000),
     Color::hex(0x7F7F7F),
     Color::hex(0x880015),
@@ -26,7 +26,7 @@ pub const PALETTE_COLORS: [Color; 20] = [
     Color::hex(0xC8BFE7),
 ];
 
-pub const CUSTOM_COLORS: [Color; 20] = [
+pub(crate) const CUSTOM_COLORS: [Color; 20] = [
     Color::hex(0x4B1E78),
     Color::hex(0x2D5DA8),
     Color::hex(0x1D7D3F),
@@ -49,30 +49,25 @@ pub const CUSTOM_COLORS: [Color; 20] = [
     Color::hex(0x7CFF00),
 ];
 
-pub const ZOOMS: [f32; 11] = [
+pub(crate) const ZOOMS: [f32; 11] = [
     12.5, 25.0, 50.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0,
 ];
 
-pub const LINE_WIDTHS: [f32; 4] = [1.0, 3.0, 5.0, 8.0];
+pub(crate) const LINE_WIDTHS: [f32; 4] = [1.0, 3.0, 5.0, 8.0];
 
-pub const DEFAULT_DOC_W: u32 = 1152;
-pub const DEFAULT_DOC_H: u32 = 600;
-pub const MAX_UNDO: usize = 30;
-pub const COL_BG: Color = Color::hex(0xF3F3F3);
-pub const COL_RIBBON: Color = Color::hex(0xFCFCFC);
-pub const COL_BORDER: Color = Color::hex(0xD6D6D6);
-pub const COL_GROUP_TEXT: Color = Color::hex(0x6B6B6B);
-pub const COL_TEXT: Color = Color::hex(0x202020);
-pub const COL_MUTED: Color = Color::hex(0x6D6D6D);
-pub const COL_HOVER: Color = Color::hex(0xE5F1FB);
-pub const COL_ACTIVE: Color = Color::hex(0xCCE8FF);
-pub const COL_ACCENT: Color = Color::hex(0x2B579A);
-pub const COL_VIEWPORT: Color = Color::hex(0xEFEFEF);
-pub const COL_RULER: Color = Color::hex(0xFAFAFA);
-pub const COL_STATUS: Color = Color::hex(0xF0F0F0);
+pub(crate) const DEFAULT_DOC_W: u32 = 1152;
+pub(crate) const DEFAULT_DOC_H: u32 = 600;
+pub(crate) const MAX_UNDO: usize = 30;
+pub(crate) const COL_BG: Color = Color::hex(0xF3F3F3);
+pub(crate) const COL_BORDER: Color = Color::hex(0xD6D6D6);
+pub(crate) const COL_TEXT: Color = Color::hex(0x202020);
+pub(crate) const COL_MUTED: Color = Color::hex(0x6D6D6D);
+pub(crate) const COL_HOVER: Color = Color::hex(0xE5F1FB);
+pub(crate) const COL_ACCENT: Color = Color::hex(0x2B579A);
+pub(crate) const COL_RULER: Color = Color::hex(0xFAFAFA);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tool {
+pub(crate) enum Tool {
     Pencil,
     Fill,
     Text,
@@ -85,7 +80,7 @@ pub enum Tool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BrushKind {
+pub(crate) enum BrushKind {
     Brush,
     Airbrush,
     Calligraphy1,
@@ -98,7 +93,7 @@ pub enum BrushKind {
 }
 
 impl BrushKind {
-    pub const ALL: [BrushKind; 9] = [
+    pub(crate) const ALL: [BrushKind; 9] = [
         BrushKind::Brush,
         BrushKind::Airbrush,
         BrushKind::Calligraphy1,
@@ -109,24 +104,10 @@ impl BrushKind {
         BrushKind::Watercolor,
         BrushKind::Highlighter,
     ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            BrushKind::Brush => "Brush",
-            BrushKind::Airbrush => "Airbrush",
-            BrushKind::Calligraphy1 => "Calligraphy 1",
-            BrushKind::Calligraphy2 => "Calligraphy 2",
-            BrushKind::Crayon => "Crayon",
-            BrushKind::Marker => "Marker",
-            BrushKind::NaturalPencil => "Natural pencil",
-            BrushKind::Watercolor => "Watercolor",
-            BrushKind::Highlighter => "Highlighter",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShapeKind {
+pub(crate) enum ShapeKind {
     Line,
     Curve,
     Oval,
@@ -152,7 +133,7 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
-    pub const ALL: [ShapeKind; 22] = [
+    pub(crate) const ALL: [ShapeKind; 22] = [
         ShapeKind::Line,
         ShapeKind::Curve,
         ShapeKind::Oval,
@@ -176,60 +157,24 @@ impl ShapeKind {
         ShapeKind::Heart,
         ShapeKind::Lightning,
     ];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            ShapeKind::Line => "Line",
-            ShapeKind::Curve => "Curve",
-            ShapeKind::Oval => "Oval",
-            ShapeKind::Rectangle => "Rectangle",
-            ShapeKind::RoundedRectangle => "Rounded rectangle",
-            ShapeKind::Polygon => "Polygon",
-            ShapeKind::Triangle => "Triangle",
-            ShapeKind::RightTriangle => "Right triangle",
-            ShapeKind::Diamond => "Diamond",
-            ShapeKind::Pentagon => "Pentagon",
-            ShapeKind::Hexagon => "Hexagon",
-            ShapeKind::ArrowRight => "Arrow right",
-            ShapeKind::ArrowLeft => "Arrow left",
-            ShapeKind::ArrowUp => "Arrow up",
-            ShapeKind::ArrowDown => "Arrow down",
-            ShapeKind::Star4 => "Four-point star",
-            ShapeKind::Star5 => "Five-point star",
-            ShapeKind::Star6 => "Six-point star",
-            ShapeKind::Callout => "Callout",
-            ShapeKind::OvalCallout => "Oval callout",
-            ShapeKind::Heart => "Heart",
-            ShapeKind::Lightning => "Lightning",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FillMode {
+pub(crate) enum FillMode {
     Outline,
     Filled,
     Both,
 }
 
-impl FillMode {
-    pub fn name(self) -> &'static str {
-        match self {
-            FillMode::Outline => "Outline",
-            FillMode::Filled => "Fill",
-            FillMode::Both => "Outline and fill",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tab {
+pub(crate) enum Tab {
     Home,
     View,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Icon {
+pub(crate) enum Icon {
     Save,
     Undo,
     Redo,
@@ -274,8 +219,9 @@ pub enum Icon {
     Wallpaper,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     Save,
     Undo,
     Redo,
@@ -326,7 +272,7 @@ pub enum Action {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DialogHit {
+pub(crate) enum DialogHit {
     Ok,
     Cancel,
     Field(usize),
@@ -338,7 +284,7 @@ pub enum DialogHit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CtlStyle {
+pub(crate) enum CtlStyle {
     Plain,
     Qat,
     BigText,
@@ -356,7 +302,7 @@ pub enum CtlStyle {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Control {
+pub(crate) struct Control {
     pub rect: Rect,
     pub icon: Icon,
     pub label: Option<&'static str>,
@@ -369,7 +315,7 @@ pub struct Control {
 }
 
 impl Control {
-    pub fn new(rect: Rect, icon: Icon, action: Action) -> Self {
+    pub(crate) fn new(rect: Rect, icon: Icon, action: Action) -> Self {
         Self {
             rect,
             icon,
@@ -383,39 +329,39 @@ impl Control {
         }
     }
 
-    pub fn with_label(mut self, label: &'static str) -> Self {
+    pub(crate) fn with_label(mut self, label: &'static str) -> Self {
         self.label = Some(label);
         self
     }
 
-    pub fn with_style(mut self, style: CtlStyle) -> Self {
+    pub(crate) fn with_style(mut self, style: CtlStyle) -> Self {
         self.style = style;
         self
     }
 
-    pub fn with_arrow(mut self) -> Self {
+    pub(crate) fn with_arrow(mut self) -> Self {
         self.arrow = true;
         self
     }
 
-    pub fn with_selected(mut self, selected: bool) -> Self {
+    pub(crate) fn with_selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 
-    pub fn with_check(mut self, checked: bool) -> Self {
+    pub(crate) fn with_check(mut self, checked: bool) -> Self {
         self.check = Some(checked);
         self
     }
 
-    pub fn with_swatch(mut self, color: Color) -> Self {
+    pub(crate) fn with_swatch(mut self, color: Color) -> Self {
         self.swatch = Some(color);
         self
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IRect {
+pub(crate) struct IRect {
     pub x: i32,
     pub y: i32,
     pub w: i32,
@@ -423,7 +369,7 @@ pub struct IRect {
 }
 
 impl IRect {
-    pub fn from_points(a: Point, b: Point) -> Self {
+    pub(crate) fn from_points(a: Point, b: Point) -> Self {
         let x0 = a.x.min(b.x).floor() as i32;
         let y0 = a.y.min(b.y).floor() as i32;
         let x1 = a.x.max(b.x).ceil() as i32;
@@ -436,20 +382,7 @@ impl IRect {
         }
     }
 
-    pub fn from_xywh(x: f32, y: f32, w: f32, h: f32) -> Self {
-        let x0 = x.floor() as i32;
-        let y0 = y.floor() as i32;
-        let x1 = (x + w).ceil() as i32;
-        let y1 = (y + h).ceil() as i32;
-        Self {
-            x: x0,
-            y: y0,
-            w: (x1 - x0).max(1),
-            h: (y1 - y0).max(1),
-        }
-    }
-
-    pub fn clamp(self, width: u32, height: u32) -> Self {
+    pub(crate) fn clamp(self, width: u32, height: u32) -> Self {
         let x0 = self.x.clamp(0, width as i32);
         let y0 = self.y.clamp(0, height as i32);
         let x1 = (self.x + self.w).clamp(0, width as i32);
@@ -462,26 +395,26 @@ impl IRect {
         }
     }
 
-    pub fn contains(self, p: Point) -> bool {
+    pub(crate) fn contains(self, p: Point) -> bool {
         p.x >= self.x as f32
             && p.y >= self.y as f32
             && p.x < (self.x + self.w) as f32
             && p.y < (self.y + self.h) as f32
     }
 
-    pub fn as_rect(self) -> Rect {
+    pub(crate) fn as_rect(self) -> Rect {
         Rect::from_xywh(self.x as f32, self.y as f32, self.w as f32, self.h as f32)
     }
 }
 
 #[derive(Clone)]
-pub struct Selection {
+pub(crate) struct Selection {
     pub rect: IRect,
     pub floating: Option<Pixels>,
 }
 
 #[derive(Clone, Debug)]
-pub struct TextEditor {
+pub(crate) struct TextEditor {
     pub text: String,
     pub pos: Point,
     pub size: f32,
@@ -489,7 +422,7 @@ pub struct TextEditor {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Dialog {
+pub(crate) enum Dialog {
     Resize(ResizeDialog),
     Properties,
     About,
@@ -498,14 +431,14 @@ pub enum Dialog {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ResizeDialog {
+pub(crate) struct ResizeDialog {
     pub width: String,
     pub height: String,
     pub focus: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ColorEditor {
+pub(crate) struct ColorEditor {
     pub r: f32,
     pub g: f32,
     pub b: f32,
@@ -514,14 +447,14 @@ pub struct ColorEditor {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SliderChannel {
+pub(crate) enum SliderChannel {
     R,
     G,
     B,
 }
 
 #[derive(Clone, Debug)]
-pub struct ViewOptions {
+pub(crate) struct ViewOptions {
     pub rulers: bool,
     pub grid: bool,
     pub status: bool,
@@ -541,8 +474,9 @@ impl Default for ViewOptions {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub enum Drag {
+pub(crate) enum Drag {
     None,
     Draw {
         last: Point,
@@ -582,7 +516,7 @@ pub enum Drag {
     DialogSlider(SliderChannel),
 }
 
-pub struct State {
+pub(crate) struct State {
     pub doc: Pixels,
     pub path: Option<PathBuf>,
     pub dirty: bool,
@@ -616,7 +550,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let palette = PALETTE_COLORS.to_vec();
         Self {
             doc: Pixels::filled(DEFAULT_DOC_W, DEFAULT_DOC_H, Color::WHITE),
@@ -652,16 +586,16 @@ impl State {
         }
     }
 
-    pub fn bump(&self) {
+    pub(crate) fn bump(&self) {
         self.rev.set(self.rev.get_untracked().wrapping_add(1));
     }
 
-    pub fn touch_doc(&mut self) {
+    pub(crate) fn touch_doc(&mut self) {
         self.dirty = true;
         self.bump();
     }
 
-    pub fn push_undo(&mut self) {
+    pub(crate) fn push_undo(&mut self) {
         self.undo.push(self.doc.clone());
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
@@ -669,7 +603,7 @@ impl State {
         self.redo.clear();
     }
 
-    pub fn undo(&mut self) {
+    pub(crate) fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
             let current = std::mem::replace(&mut self.doc, prev);
             self.redo.push(current);
@@ -683,7 +617,7 @@ impl State {
         }
     }
 
-    pub fn redo(&mut self) {
+    pub(crate) fn redo(&mut self) {
         if let Some(next) = self.redo.pop() {
             let current = std::mem::replace(&mut self.doc, next);
             self.undo.push(current);
@@ -697,19 +631,19 @@ impl State {
         }
     }
 
-    pub fn zoom(&self) -> f32 {
+    pub(crate) fn zoom(&self) -> f32 {
         ZOOMS[self.zoom_idx.min(ZOOMS.len() - 1)] / 100.0
     }
 
-    pub fn zoom_percent(&self) -> f32 {
+    pub(crate) fn zoom_percent(&self) -> f32 {
         ZOOMS[self.zoom_idx.min(ZOOMS.len() - 1)]
     }
 
-    pub fn width(&self) -> f32 {
+    pub(crate) fn width(&self) -> f32 {
         LINE_WIDTHS[self.width_idx.min(LINE_WIDTHS.len() - 1)]
     }
 
-    pub fn stroke_color(&self, button: PointerButton) -> Color {
+    pub(crate) fn stroke_color(&self, button: PointerButton) -> Color {
         if button == PointerButton::Right {
             self.color2
         } else {
@@ -717,16 +651,12 @@ impl State {
         }
     }
 
-    pub fn fill_color(&self) -> Color {
-        self.color2
-    }
-
-    pub fn set_status(&mut self, text: impl Into<String>) {
+    pub(crate) fn set_status(&mut self, text: impl Into<String>) {
         self.status = Some((text.into(), Instant::now()));
         self.bump();
     }
 
-    pub fn font_file_name(&self) -> String {
+    pub(crate) fn font_file_name(&self) -> String {
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
@@ -734,17 +664,17 @@ impl State {
             .unwrap_or_else(|| "Untitled".to_string())
     }
 
-    pub fn clear_selection_committing(&mut self) {
-        if let Some(sel) = self.selection.take() {
-            if let Some(pix) = sel.floating {
-                self.push_undo();
-                self.doc.blend_from(&pix, sel.rect.x, sel.rect.y);
-                self.touch_doc();
-            }
+    pub(crate) fn clear_selection_committing(&mut self) {
+        if let Some(sel) = self.selection.take()
+            && let Some(pix) = sel.floating
+        {
+            self.push_undo();
+            self.doc.blend_from(&pix, sel.rect.x, sel.rect.y);
+            self.touch_doc();
         }
     }
 
-    pub fn commit_floating(&mut self) {
+    pub(crate) fn commit_floating(&mut self) {
         let Some(sel) = self.selection.as_mut() else {
             return;
         };
@@ -753,15 +683,6 @@ impl State {
         };
         self.doc.blend_from(&pix, sel.rect.x, sel.rect.y);
         self.touch_doc();
-    }
-
-    pub fn selection_rect(&self) -> Option<IRect> {
-        self.selection.as_ref().map(|s| s.rect)
-    }
-
-    pub fn sync_zoom_scroll(&mut self) {
-        self.scroll = Vec2::ZERO;
-        self.bump();
     }
 }
 

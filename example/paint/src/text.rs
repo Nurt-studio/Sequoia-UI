@@ -2,29 +2,27 @@ use sequoia_ui::prelude::*;
 
 use crate::model::*;
 
-pub const HANDLE_DIST: f32 = 24.0;
-pub const HANDLE_RADIUS: f32 = 5.0;
-pub const HANDLE_HIT: f32 = 10.0;
+pub(crate) const HANDLE_DIST: f32 = 24.0;
+pub(crate) const HANDLE_RADIUS: f32 = 5.0;
+pub(crate) const HANDLE_HIT: f32 = 10.0;
 
 #[derive(Clone, Copy, Debug)]
-pub struct Metrics {
-    pub w: f32,
+pub(crate) struct Metrics {
     pub line_h: f32,
-    pub lines: usize,
     pub box_w: f32,
     pub box_h: f32,
 }
 
-pub struct Raster {
+pub(crate) struct Raster {
     pub pixels: Pixels,
     pub offset: Vec2,
 }
 
-pub fn line_height(size: f32) -> f32 {
+pub(crate) fn line_height(size: f32) -> f32 {
     size * 1.35
 }
 
-pub fn metrics(text: &str, size: f32) -> Metrics {
+pub(crate) fn metrics(text: &str, size: f32) -> Metrics {
     let size = size.clamp(4.0, 256.0);
     let mut ts = sequoia_ui::text::TextSystem::new();
     let mut w: f32 = 0.0;
@@ -37,36 +35,34 @@ pub fn metrics(text: &str, size: f32) -> Metrics {
     let w = w.max(2.0);
     let line_h = line_height(size);
     Metrics {
-        w,
         line_h,
-        lines,
         box_w: w + 8.0,
         box_h: line_h * lines as f32 + 4.0,
     }
 }
 
-pub fn box_rect(p: Point, m: &Metrics) -> Rect {
+pub(crate) fn box_rect(p: Point, m: &Metrics) -> Rect {
     Rect::from_xywh(p.x - 2.0, p.y - 2.0, m.box_w, m.box_h)
 }
 
-pub fn normalize_angle(deg: f32) -> f32 {
+pub(crate) fn normalize_angle(deg: f32) -> f32 {
     let d = deg.rem_euclid(360.0);
     if d > 180.0 { d - 360.0 } else { d }
 }
 
-pub fn handle_point(center: Point, box_h: f32, angle_deg: f32) -> Point {
+pub(crate) fn handle_point(center: Point, box_h: f32, angle_deg: f32) -> Point {
     let a = angle_deg.to_radians();
     let d = box_h * 0.5 + HANDLE_DIST;
     Point::new(center.x + d * a.sin(), center.y - d * a.cos())
 }
 
-pub fn root_point(center: Point, box_h: f32, angle_deg: f32) -> Point {
+pub(crate) fn root_point(center: Point, box_h: f32, angle_deg: f32) -> Point {
     let a = angle_deg.to_radians();
     let d = box_h * 0.5;
     Point::new(center.x + d * a.sin(), center.y - d * a.cos())
 }
 
-pub fn commit(state: &mut State) {
+pub(crate) fn commit(state: &mut State) {
     let Some(editor) = state.text.take() else {
         return;
     };
@@ -88,13 +84,7 @@ pub fn commit(state: &mut State) {
     state.set_status("Text added");
 }
 
-pub fn cancel(state: &mut State) {
-    if state.text.take().is_some() {
-        state.bump();
-    }
-}
-
-pub fn rasterize(text: &str, size: f32, color: Color, angle_deg: f32) -> Option<Raster> {
+pub(crate) fn rasterize(text: &str, size: f32, color: Color, angle_deg: f32) -> Option<Raster> {
     let size = size.clamp(4.0, 256.0);
     let m = metrics(text, size);
     let box_w = m.box_w.max(1.0);

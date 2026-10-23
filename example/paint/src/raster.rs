@@ -1,6 +1,6 @@
 use sequoia_ui::prelude::*;
 
-use crate::model::{BrushKind, FillMode, IRect, ShapeKind};
+use crate::model::{BrushKind, FillMode, ShapeKind};
 
 fn hash2(x: i32, y: i32, i: i32) -> u32 {
     let mut h = (x as u32).wrapping_mul(0x9E37_79B1)
@@ -87,7 +87,7 @@ fn stamp_ellipse_rot(
     }
 }
 
-pub fn stamp(px: &mut Pixels, cx: f32, cy: f32, width: f32, color: Color, brush: BrushKind) {
+pub(crate) fn stamp(px: &mut Pixels, cx: f32, cy: f32, width: f32, color: Color, brush: BrushKind) {
     let radius = (width * 0.5).max(0.5);
     match brush {
         BrushKind::Brush | BrushKind::NaturalPencil => {
@@ -161,7 +161,7 @@ pub fn stamp(px: &mut Pixels, cx: f32, cy: f32, width: f32, color: Color, brush:
     }
 }
 
-pub fn stroke_segment(
+pub(crate) fn stroke_segment(
     px: &mut Pixels,
     from: Point,
     to: Point,
@@ -180,7 +180,7 @@ pub fn stroke_segment(
     }
 }
 
-pub fn stroke_path(
+pub(crate) fn stroke_path(
     px: &mut Pixels,
     points: &[Point],
     width: f32,
@@ -206,7 +206,7 @@ pub fn stroke_path(
     }
 }
 
-pub fn fill_polygon(px: &mut Pixels, points: &[Point], color: Color) {
+pub(crate) fn fill_polygon(px: &mut Pixels, points: &[Point], color: Color) {
     if points.len() < 3 || color.a <= 0.0 {
         return;
     }
@@ -248,7 +248,7 @@ pub fn fill_polygon(px: &mut Pixels, points: &[Point], color: Color) {
     }
 }
 
-pub fn flood_fill(px: &mut Pixels, sx: i32, sy: i32, color: Color) {
+pub(crate) fn flood_fill(px: &mut Pixels, sx: i32, sy: i32, color: Color) {
     let Some(target) = px.get(sx, sy) else {
         return;
     };
@@ -288,10 +288,6 @@ fn close_color(a: Color, b: Color) -> bool {
         && (a.g - b.g).abs() <= 0.02
         && (a.b - b.b).abs() <= 0.02
         && (a.a - b.a).abs() <= 0.02
-}
-
-pub fn clear_rect(px: &mut Pixels, rect: IRect, color: Color) {
-    px.fill_rect(rect.as_rect(), color);
 }
 
 fn map_unit(points: &[(f32, f32)], r: Rect) -> Vec<Point> {
@@ -365,7 +361,7 @@ fn rounded_rect(r: Rect, radius: f32) -> Vec<Point> {
     out
 }
 
-pub fn shape_points(kind: ShapeKind, a: Point, b: Point) -> (Vec<Point>, bool) {
+pub(crate) fn shape_points(kind: ShapeKind, a: Point, b: Point) -> (Vec<Point>, bool) {
     let x0 = a.x.min(b.x);
     let x1 = a.x.max(b.x);
     let y0 = a.y.min(b.y);
@@ -549,7 +545,7 @@ pub fn shape_points(kind: ShapeKind, a: Point, b: Point) -> (Vec<Point>, bool) {
     }
 }
 
-pub fn raster_shape(
+pub(crate) fn raster_shape(
     px: &mut Pixels,
     kind: ShapeKind,
     a: Point,
@@ -578,7 +574,7 @@ pub fn raster_shape(
     }
 }
 
-pub fn rotate_90(src: &Pixels, clockwise: bool) -> Pixels {
+pub(crate) fn rotate_90(src: &Pixels, clockwise: bool) -> Pixels {
     let (w, h) = (src.width(), src.height());
     let mut out = Pixels::new(h, w);
     for y in 0..h as i32 {
@@ -596,7 +592,7 @@ pub fn rotate_90(src: &Pixels, clockwise: bool) -> Pixels {
     out
 }
 
-pub fn flip(src: &Pixels, horizontal: bool) -> Pixels {
+pub(crate) fn flip(src: &Pixels, horizontal: bool) -> Pixels {
     let (w, h) = (src.width(), src.height());
     let mut out = Pixels::new(w, h);
     for y in 0..h as i32 {
@@ -614,7 +610,7 @@ pub fn flip(src: &Pixels, horizontal: bool) -> Pixels {
     out
 }
 
-pub fn resize_canvas(src: &Pixels, width: u32, height: u32) -> Pixels {
+pub(crate) fn resize_canvas(src: &Pixels, width: u32, height: u32) -> Pixels {
     let mut out = Pixels::filled(width, height, Color::WHITE);
     out.blend_from(src, 0, 0);
     out

@@ -111,7 +111,7 @@ fn icons() -> &'static HashMap<&'static str, Entry> {
     ICONS.get_or_init(load_icons)
 }
 
-pub fn draw_named(g: &mut Painter, name: &str, rect: Rect) -> bool {
+pub(crate) fn draw_named(g: &mut Painter, name: &str, rect: Rect) -> bool {
     let Some(entry) = icons().get(name) else {
         return false;
     };
@@ -130,7 +130,7 @@ pub fn draw_named(g: &mut Painter, name: &str, rect: Rect) -> bool {
     true
 }
 
-pub fn draw(g: &mut Painter, icon: Icon, rect: Rect) -> bool {
+pub(crate) fn draw(g: &mut Painter, icon: Icon, rect: Rect) -> bool {
     let Some(name) = name_for(icon) else {
         return false;
     };

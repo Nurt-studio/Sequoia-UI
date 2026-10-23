@@ -68,7 +68,7 @@ fn arc(
     g.polyline(&pts, BrushStroke::round(w), color);
 }
 
-pub fn draw_icon(g: &mut Painter, icon: Icon, r: Rect, color: Color) {
+pub(crate) fn draw_icon(g: &mut Painter, icon: Icon, r: Rect, color: Color) {
     if crate::assets::draw(g, icon, r) {
         return;
     }

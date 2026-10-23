@@ -612,8 +612,8 @@ impl States {
             .as_ref()
             .map(|c| c.target_untracked())
             .unwrap_or(false);
-        if disabled && self.disabled.is_some() {
-            return vec![self.disabled.as_ref().unwrap()];
+        if disabled && let Some(d) = self.disabled.as_ref() {
+            return vec![d];
         }
 
         let selected = self

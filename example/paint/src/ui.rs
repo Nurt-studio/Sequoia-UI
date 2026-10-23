@@ -23,17 +23,7 @@ fn border(g: &mut Painter, r: Rect, color: Color) {
     );
 }
 
-fn tab_fill(g: &mut Painter, r: Rect) {
-    g.fill(r, Fill::solid(Color::WHITE));
-    g.line(
-        Point::new(r.left(), r.bottom() - 0.5),
-        Point::new(r.right(), r.bottom() - 0.5),
-        BrushStroke::new(2.0),
-        COL_ACCENT,
-    );
-}
-
-pub fn paint(g: &mut Painter, state: &State, l: &Layout, pointer: Point) {
+pub(crate) fn paint(g: &mut Painter, state: &State, l: &Layout, pointer: Point) {
     g.fill(l.size_rect(), Fill::solid(COL_BG));
 
     if !state.view.fullscreen {
@@ -555,23 +545,22 @@ fn paint_workspace(g: &mut Painter, state: &State, l: &Layout, pointer: Point) {
             11.0,
             Color::hex(0x555555),
         );
-        if let Some(tr) = l.thumb_image {
-            if let Some(thumb) = state
+        if let Some(tr) = l.thumb_image
+            && let Some(thumb) = state
                 .doc
                 .scaled_to_fit(tr.size.width.max(tr.size.height) as u32)
-            {
-                let w = thumb.width() as f32;
-                let h = thumb.height() as f32;
-                let scale = (tr.size.width / w).min(tr.size.height / h);
-                let r = Rect::from_xywh(
-                    tr.center().x - w * scale * 0.5,
-                    tr.center().y - h * scale * 0.5,
-                    w * scale,
-                    h * scale,
-                );
-                g.fill(r, Fill::solid(Color::WHITE));
-                g.pixels(r, &thumb);
-            }
+        {
+            let w = thumb.width() as f32;
+            let h = thumb.height() as f32;
+            let scale = (tr.size.width / w).min(tr.size.height / h);
+            let r = Rect::from_xywh(
+                tr.center().x - w * scale * 0.5,
+                tr.center().y - h * scale * 0.5,
+                w * scale,
+                h * scale,
+            );
+            g.fill(r, Fill::solid(Color::WHITE));
+            g.pixels(r, &thumb);
         }
     }
 }
@@ -725,9 +714,7 @@ fn paint_text_preview(g: &mut Painter, state: &State, l: &Layout) {
         .map(|line| g.text_width(line, size))
         .fold(2.0f32, f32::max);
     let m = text::Metrics {
-        w,
         line_h,
-        lines: lines.len(),
         box_w: w + 8.0,
         box_h: line_h * lines.len() as f32 + 4.0,
     };

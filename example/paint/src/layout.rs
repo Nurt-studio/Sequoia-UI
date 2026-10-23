@@ -3,33 +3,33 @@ use sequoia_ui::prelude::*;
 use crate::model::*;
 use crate::model::{Dialog, Icon};
 
-pub const QAT_H: f32 = 32.0;
-pub const TABS_H: f32 = 25.0;
-pub const RIBBON_H: f32 = 97.0;
-pub const STATUS_H: f32 = 26.0;
-pub const PAD: f32 = 12.0;
-pub const RULER: f32 = 18.0;
-pub const SCROLLBAR: f32 = 17.0;
-pub const THUMB_W: f32 = 168.0;
-pub const THUMB_H: f32 = 144.0;
+pub(crate) const QAT_H: f32 = 32.0;
+pub(crate) const TABS_H: f32 = 25.0;
+pub(crate) const RIBBON_H: f32 = 97.0;
+pub(crate) const STATUS_H: f32 = 26.0;
+pub(crate) const PAD: f32 = 12.0;
+pub(crate) const RULER: f32 = 18.0;
+pub(crate) const SCROLLBAR: f32 = 17.0;
+pub(crate) const THUMB_W: f32 = 168.0;
+pub(crate) const THUMB_H: f32 = 144.0;
 
 const BODY_H: f32 = 74.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScrollAxis {
+pub(crate) enum ScrollAxis {
     Horizontal,
     Vertical,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScrollMetrics {
+pub(crate) struct ScrollMetrics {
     pub content: f32,
     pub view: f32,
     pub offset: f32,
 }
 
 impl ScrollMetrics {
-    pub fn new(content: f32, view: f32, offset: f32) -> Self {
+    pub(crate) fn new(content: f32, view: f32, offset: f32) -> Self {
         Self {
             content: content.max(0.0),
             view: view.max(0.0),
@@ -37,11 +37,11 @@ impl ScrollMetrics {
         }
     }
 
-    pub fn max_offset(self) -> f32 {
+    pub(crate) fn max_offset(self) -> f32 {
         (self.content - self.view).max(0.0)
     }
 
-    pub fn thumb_len(self, bar_len: f32) -> f32 {
+    pub(crate) fn thumb_len(self, bar_len: f32) -> f32 {
         if self.content <= 0.0 {
             return bar_len;
         }
@@ -51,34 +51,34 @@ impl ScrollMetrics {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CanvasTransform {
+pub(crate) struct CanvasTransform {
     pub origin: Point,
     pub zoom: f32,
 }
 
 impl CanvasTransform {
-    pub fn new(layout: &Layout, state: &State) -> Self {
+    pub(crate) fn new(layout: &Layout, state: &State) -> Self {
         Self {
             origin: layout.canvas.origin,
             zoom: state.zoom(),
         }
     }
 
-    pub fn to_screen(self, p: Point) -> Point {
+    pub(crate) fn to_screen(self, p: Point) -> Point {
         Point::new(
             self.origin.x + p.x * self.zoom,
             self.origin.y + p.y * self.zoom,
         )
     }
 
-    pub fn to_doc(self, p: Point) -> Point {
+    pub(crate) fn to_doc(self, p: Point) -> Point {
         Point::new(
             (p.x - self.origin.x) / self.zoom,
             (p.y - self.origin.y) / self.zoom,
         )
     }
 
-    pub fn rect_to_screen(self, rect: Rect) -> Rect {
+    pub(crate) fn rect_to_screen(self, rect: Rect) -> Rect {
         Rect::from_xywh(
             self.origin.x + rect.origin.x * self.zoom,
             self.origin.y + rect.origin.y * self.zoom,
@@ -125,13 +125,13 @@ struct BackstageParts {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Group {
+pub(crate) struct Group {
     pub rect: Rect,
     pub label: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BackItem {
+pub(crate) struct BackItem {
     pub rect: Rect,
     pub action: Action,
     pub label: &'static str,
@@ -139,7 +139,7 @@ pub struct BackItem {
 }
 
 #[derive(Clone, Debug)]
-pub struct Layout {
+pub(crate) struct Layout {
     pub size: Size,
     pub qat: Rect,
     pub tabs: Rect,
@@ -176,7 +176,7 @@ pub struct Layout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Hit {
+pub(crate) enum Hit {
     None,
     CaptionClose,
     CaptionMinimize,
@@ -195,7 +195,7 @@ pub enum Hit {
 }
 
 impl Layout {
-    pub fn hit_at(&self, state: &State, p: Point) -> Hit {
+    pub(crate) fn hit_at(&self, state: &State, p: Point) -> Hit {
         if self.caption_close.contains(p) {
             return Hit::CaptionClose;
         }
@@ -257,7 +257,7 @@ impl Layout {
     }
 }
 
-pub fn content_size(state: &State) -> Size {
+pub(crate) fn content_size(state: &State) -> Size {
     let zoom = state.zoom();
     Size::new(
         state.doc.width() as f32 * zoom + PAD * 2.0,
@@ -281,7 +281,7 @@ fn scrollbars_needed(content: Size, base: Size) -> (bool, bool) {
     (vertical, horizontal)
 }
 
-pub fn scroll_metrics(state: &State, layout: &Layout, axis: ScrollAxis) -> ScrollMetrics {
+pub(crate) fn scroll_metrics(state: &State, layout: &Layout, axis: ScrollAxis) -> ScrollMetrics {
     let content = content_size(state);
     match axis {
         ScrollAxis::Horizontal => {
@@ -293,7 +293,7 @@ pub fn scroll_metrics(state: &State, layout: &Layout, axis: ScrollAxis) -> Scrol
     }
 }
 
-pub fn scroll_thumb(bar: Rect, axis: ScrollAxis, metrics: ScrollMetrics) -> Rect {
+pub(crate) fn scroll_thumb(bar: Rect, axis: ScrollAxis, metrics: ScrollMetrics) -> Rect {
     if metrics.content <= 0.0 {
         return bar;
     }
@@ -499,7 +499,7 @@ fn backstage_parts(state: &State, tabs: Rect, workspace: Rect) -> BackstageParts
     BackstageParts { rect, items, close }
 }
 
-pub fn compute(state: &State, size: Size) -> Layout {
+pub(crate) fn compute(state: &State, size: Size) -> Layout {
     let Bands {
         qat,
         tabs,
@@ -939,7 +939,7 @@ fn build_view(ribbon: Rect, state: &State, groups: &mut Vec<Group>, out: &mut Ve
 }
 
 #[derive(Clone, Debug)]
-pub struct DialogLayout {
+pub(crate) struct DialogLayout {
     pub card: Rect,
     pub ok: Rect,
     pub cancel: Rect,
@@ -953,7 +953,7 @@ pub struct DialogLayout {
 }
 
 impl DialogLayout {
-    pub fn hit_at(&self, state: &State, p: Point) -> Option<DialogHit> {
+    pub(crate) fn hit_at(&self, state: &State, p: Point) -> Option<DialogHit> {
         if self.close.contains(p) {
             return Some(DialogHit::Cancel);
         }
@@ -1020,7 +1020,7 @@ impl DialogLayout {
     }
 }
 
-pub fn dialog_layout(state: &State, size: Size) -> Option<DialogLayout> {
+pub(crate) fn dialog_layout(state: &State, size: Size) -> Option<DialogLayout> {
     let dialog = state.dialog.as_ref()?;
     let (w, h) = match dialog {
         Dialog::Resize(_) => (360.0, 262.0),
@@ -1114,12 +1114,12 @@ pub fn dialog_layout(state: &State, size: Size) -> Option<DialogLayout> {
     })
 }
 
-pub fn zoom_from_x(layout: &Layout, x: f32) -> usize {
+pub(crate) fn zoom_from_x(layout: &Layout, x: f32) -> usize {
     let t = ((x - layout.zoom_slider.left()) / layout.zoom_slider.size.width).clamp(0.0, 1.0);
     (t * (ZOOMS.len() - 1) as f32).round() as usize
 }
 
-pub fn zoom_handle_x(layout: &Layout, state: &State) -> f32 {
+pub(crate) fn zoom_handle_x(layout: &Layout, state: &State) -> f32 {
     let t = state.zoom_idx as f32 / (ZOOMS.len() - 1) as f32;
     layout.zoom_slider.left() + layout.zoom_slider.size.width * t
 }

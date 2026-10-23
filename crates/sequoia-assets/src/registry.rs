@@ -163,14 +163,14 @@ impl AssetRegistry {
             .cloned()
             .ok_or_else(|| AssetError::Unknown(name.into()))?;
         let sprite = Rc::new(rasterize(&icon, px));
-        if inner.rasters.len() >= RASTERS_MAX {
-            if let Some(victim) = inner.rasters.keys().next().cloned() {
-                inner.rasters.remove(&victim);
-                if let Some(sizes) = inner.raster_sizes.get_mut(&victim.0) {
-                    sizes.retain(|&s| s != victim.1);
-                    if sizes.is_empty() {
-                        inner.raster_sizes.remove(&victim.0);
-                    }
+        if inner.rasters.len() >= RASTERS_MAX
+            && let Some(victim) = inner.rasters.keys().next().cloned()
+        {
+            inner.rasters.remove(&victim);
+            if let Some(sizes) = inner.raster_sizes.get_mut(&victim.0) {
+                sizes.retain(|&s| s != victim.1);
+                if sizes.is_empty() {
+                    inner.raster_sizes.remove(&victim.0);
                 }
             }
         }

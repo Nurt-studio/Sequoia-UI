@@ -646,7 +646,7 @@ impl<'a> Eval<'a> {
                     _ => a >= b,
                 }))
             }
-            BinOp::And | BinOp::Or => Err(self.err(line, "`&&`/`||` on values ​​(use Bool)")),
+            BinOp::And | BinOp::Or => Err(self.err(line, "`&&`/`||` require Bool values")),
             BinOp::Add | BinOp::Sub | BinOp::Mul => unreachable!("handled in binary()"),
         }
     }

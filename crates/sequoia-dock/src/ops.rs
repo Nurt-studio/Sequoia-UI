@@ -125,13 +125,12 @@ impl DockModel {
             return false;
         }
         if moving {
-            let from_tree = self.take_from_tree(panel);
-            let from_float = {
+            let _from_tree = self.take_from_tree(panel);
+            let _from_float = {
                 let n = self.floating.len();
                 self.floating.retain(|f| f.panel != panel);
                 self.floating.len() != n
             };
-            if !from_tree && !from_float {}
 
             if self.root.is_none() {
                 self.root = Some(DockNode::Leaf(panel));

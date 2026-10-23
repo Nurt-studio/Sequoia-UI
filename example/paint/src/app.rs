@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use sequoia_ui::prelude::*;
@@ -13,21 +12,17 @@ use crate::raster;
 use crate::text;
 use crate::ui;
 
-pub struct PaintApp {
+pub(crate) struct PaintApp {
     state: Rc<RefCell<State>>,
 }
 
 impl PaintApp {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_state(Rc::new(RefCell::new(State::new())))
     }
 
-    pub fn with_state(state: Rc<RefCell<State>>) -> Self {
+    pub(crate) fn with_state(state: Rc<RefCell<State>>) -> Self {
         Self { state }
-    }
-
-    pub fn state(&self) -> Rc<RefCell<State>> {
-        self.state.clone()
     }
 }
 
@@ -524,12 +519,11 @@ impl PaintApp {
                 s.drag = Drag::ZoomSlider;
             }
             Drag::DialogSlider(ch) => {
-                let dl = layout::dialog_layout(&s, l.size);
-                if let Some(dl) = dl {
-                    if let Some((_, track)) = dl.sliders.iter().find(|(c, _)| *c == ch) {
-                        let v = ((local.x - track.left()) / track.size.width).clamp(0.0, 1.0);
-                        set_editor_channel(&mut s, ch, v);
-                    }
+                if let Some(dl) = layout::dialog_layout(&s, l.size)
+                    && let Some((_, track)) = dl.sliders.iter().find(|(c, _)| *c == ch)
+                {
+                    let v = ((local.x - track.left()) / track.size.width).clamp(0.0, 1.0);
+                    set_editor_channel(&mut s, ch, v);
                 }
                 s.drag = Drag::DialogSlider(ch);
             }
@@ -651,17 +645,17 @@ impl PaintApp {
                     Key::ENTER => accept = true,
                     Key::ESCAPE => close = true,
                     _ => {
-                        if let Some(c) = key.key.char() {
-                            if c.is_ascii_digit() {
-                                let field = if r.focus == 0 {
-                                    &mut r.width
-                                } else {
-                                    &mut r.height
-                                };
-                                if field.len() < 4 {
-                                    field.push(c);
-                                    changed = true;
-                                }
+                        if let Some(c) = key.key.char()
+                            && c.is_ascii_digit()
+                        {
+                            let field = if r.focus == 0 {
+                                &mut r.width
+                            } else {
+                                &mut r.height
+                            };
+                            if field.len() < 4 {
+                                field.push(c);
+                                changed = true;
                             }
                         }
                     }
@@ -740,11 +734,11 @@ impl PaintApp {
                         changed = true;
                     }
                     _ => {
-                        if let Some(c) = key.key.char() {
-                            if !c.is_control() {
-                                editor.text.push(c);
-                                changed = true;
-                            }
+                        if let Some(c) = key.key.char()
+                            && !c.is_control()
+                        {
+                            editor.text.push(c);
+                            changed = true;
                         }
                     }
                 }
@@ -832,10 +826,10 @@ impl PaintApp {
                     }
                     Some(Dialog::EditColors(e)) => {
                         let color = Color::rgb(e.r, e.g, e.b);
-                        if let Some(idx) = e.target {
-                            if idx < s.palette.len() {
-                                s.palette[idx] = color;
-                            }
+                        if let Some(idx) = e.target
+                            && idx < s.palette.len()
+                        {
+                            s.palette[idx] = color;
                         }
                         s.color1 = color;
                         s.dialog = None;
@@ -868,28 +862,28 @@ impl PaintApp {
                 }
             }
             DialogHit::Preset(i) => {
-                if let Some(Dialog::EditColors(e)) = s.dialog.as_mut() {
-                    if let Some(c) = CUSTOM_COLORS.get(i).copied() {
-                        e.r = c.r;
-                        e.g = c.g;
-                        e.b = c.b;
-                        s.bump();
-                    }
+                if let Some(Dialog::EditColors(e)) = s.dialog.as_mut()
+                    && let Some(c) = CUSTOM_COLORS.get(i).copied()
+                {
+                    e.r = c.r;
+                    e.g = c.g;
+                    e.b = c.b;
+                    s.bump();
                 }
             }
             DialogHit::Slider(ch) => {
-                if let Some(Dialog::EditColors(e)) = s.dialog.as_mut() {
-                    if let Some((_, track)) = dl.sliders.iter().find(|(c, _)| *c == ch) {
-                        let v = ((local.x - track.left()) / track.size.width).clamp(0.0, 1.0);
-                        match ch {
-                            SliderChannel::R => e.r = v,
-                            SliderChannel::G => e.g = v,
-                            SliderChannel::B => e.b = v,
-                        }
-                        e.slider = Some(ch);
-                        s.drag = Drag::DialogSlider(ch);
-                        s.bump();
+                if let Some(Dialog::EditColors(e)) = s.dialog.as_mut()
+                    && let Some((_, track)) = dl.sliders.iter().find(|(c, _)| *c == ch)
+                {
+                    let v = ((local.x - track.left()) / track.size.width).clamp(0.0, 1.0);
+                    match ch {
+                        SliderChannel::R => e.r = v,
+                        SliderChannel::G => e.g = v,
+                        SliderChannel::B => e.b = v,
                     }
+                    e.slider = Some(ch);
+                    s.drag = Drag::DialogSlider(ch);
+                    s.bump();
                 }
             }
             DialogHit::ConfirmSave => {
@@ -904,10 +898,8 @@ impl PaintApp {
     fn confirm_save_or_discard(&self, s: &mut State, save: bool) {
         let pending = s.pending.take();
         s.dialog = None;
-        if save {
-            if !files::save_current(s, false) {
-                return;
-            }
+        if save && !files::save_current(s, false) {
+            return;
         }
         if matches!(pending, Some(Action::New)) {
             new_document(s);
@@ -998,7 +990,7 @@ fn new_document(s: &mut State) {
     s.set_status("New image");
 }
 
-pub fn perform(state: &Rc<RefCell<State>>, action: Action, size: Size) {
+pub(crate) fn perform(state: &Rc<RefCell<State>>, action: Action, size: Size) {
     let mut s = state.borrow_mut();
     match action {
         Action::Save => {
@@ -1298,9 +1290,4 @@ fn flip(s: &mut State, horizontal: bool) {
     } else {
         "Flipped vertically"
     });
-}
-
-pub fn open_dropped(state: &Rc<RefCell<State>>, path: PathBuf) {
-    let mut s = state.borrow_mut();
-    files::open_into(&mut s, path);
 }

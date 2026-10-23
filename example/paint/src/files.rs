@@ -4,14 +4,14 @@ use sequoia_ui::prelude::*;
 
 use crate::model::*;
 
-pub fn choose_open() -> Option<PathBuf> {
+pub(crate) fn choose_open() -> Option<PathBuf> {
     NativeFileDialog::open_file("Open image")
         .filter("Images", &["png", "jpg", "jpeg"])
         .filter("All files", &["*"])
         .pick()
 }
 
-pub fn choose_save(suggested: Option<&str>) -> Option<PathBuf> {
+pub(crate) fn choose_save(suggested: Option<&str>) -> Option<PathBuf> {
     let mut dlg = NativeFileDialog::save_file("Save image")
         .filter("PNG image", &["png"])
         .filter("JPEG image", &["jpg", "jpeg"]);
@@ -21,12 +21,12 @@ pub fn choose_save(suggested: Option<&str>) -> Option<PathBuf> {
     dlg.save()
 }
 
-pub fn load(path: &Path) -> Result<Pixels, String> {
+pub(crate) fn load(path: &Path) -> Result<Pixels, String> {
     let s = path.to_string_lossy();
     sequoia_ui::assets::load_pixels(&s).map_err(|e| e.to_string())
 }
 
-pub fn save(path: &Path, doc: &Pixels) -> Result<(), String> {
+pub(crate) fn save(path: &Path, doc: &Pixels) -> Result<(), String> {
     let img = image::RgbaImage::from_raw(doc.width(), doc.height(), doc.data().to_vec())
         .ok_or_else(|| "Could not create image buffer".to_string())?;
     let ext = path
@@ -41,7 +41,7 @@ pub fn save(path: &Path, doc: &Pixels) -> Result<(), String> {
     result.map_err(|e| e.to_string())
 }
 
-pub fn open_into(state: &mut State, path: PathBuf) {
+pub(crate) fn open_into(state: &mut State, path: PathBuf) {
     match load(&path) {
         Ok(px) => {
             state.clear_selection_committing();
@@ -60,7 +60,7 @@ pub fn open_into(state: &mut State, path: PathBuf) {
     }
 }
 
-pub fn save_current(state: &mut State, save_as: bool) -> bool {
+pub(crate) fn save_current(state: &mut State, save_as: bool) -> bool {
     let path = if save_as || state.path.is_none() {
         let suggested = state
             .path
@@ -93,7 +93,7 @@ pub fn save_current(state: &mut State, save_as: bool) -> bool {
     }
 }
 
-pub fn push_recent(state: &mut State, path: PathBuf) {
+pub(crate) fn push_recent(state: &mut State, path: PathBuf) {
     state.recent.retain(|p| p != &path);
     state.recent.push(path);
     if state.recent.len() > 10 {

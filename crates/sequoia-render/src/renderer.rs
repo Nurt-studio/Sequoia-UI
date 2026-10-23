@@ -1253,34 +1253,32 @@ impl GpuRenderer {
                 pass.draw(0..4, 0..frame_quads.len() as u32);
             }
             drop(pass);
-            if split_depth {
-                if let Some((_, view, _)) = self.depth_tex.as_ref() {
-                    passes += 1;
-                    let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("sequoia-surface-depth-clear"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: scene_target,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
+            if split_depth && let Some((_, view, _)) = self.depth_tex.as_ref() {
+                passes += 1;
+                let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sequoia-surface-depth-clear"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: scene_target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
                         }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    drop(pass);
-                }
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                drop(pass);
             }
         }
 
