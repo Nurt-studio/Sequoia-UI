@@ -79,7 +79,7 @@ pub mod prelude {
     };
     pub use sequoia_layout::{
         Align, Axis, ContainerStyle, Dock, FlexItem, GridFlow, GridPlacement, GridStyle, Indents,
-        Inset, Justify, LayoutStyle, Overflow, Position, Track, WrapStyle,
+        Inset, Justify, LayoutStyle, MasonryStyle, Overflow, Position, Track, WrapStyle,
     };
     pub use sequoia_reactive::{
         DEFAULT_COALESCE_WINDOW, Effect, EffectHandle, EffectScope, History, I18n, Memo,
@@ -110,10 +110,10 @@ pub mod prelude {
         ENTER_SECS, EXIT_SECS, EdgeGhost, EdgeSide, EdgeSlab, EffectNode, ErrorBoundary, FilterExt,
         Filtered, FlatRow, FloatingPanel, FocusRing, FocusScope, Fragment, Grid, Icon, Image,
         InputMode, KeyBinding, Leaf, List, Live, LiveBackground, LiveExt, LiveOffset, LiveOpacity,
-        MemoLiveExt, Opacity, Orientation, OverlayEntry, OverlayLayer, Pad2D, Panel, PanelId,
-        PanelPayload, Placement, Popper, Portal, Presence, Prop, Pulse, Responsive, RichText, Row,
-        ScreenOrientation, ScrollAxis, ScrollView, ScrollbarVisibility, Sequence, Shake,
-        SignalLiveExt, SortDir, Spacer, SplitAxis, SplitPanel, SpringSpec, Stack, StackPos,
+        Masonry, MemoLiveExt, Opacity, Orientation, OverlayEntry, OverlayLayer, Pad2D, Panel,
+        PanelId, PanelPayload, Placement, Popper, Portal, Presence, Prop, Pulse, Responsive,
+        RichText, Row, ScreenOrientation, ScrollAxis, ScrollView, ScrollbarVisibility, Sequence,
+        Shake, SignalLiveExt, SortDir, Spacer, SplitAxis, SplitPanel, SpringSpec, Stack, StackPos,
         Styleable, Table, TableColumn, Text, ThumbnailCache, Track1D, Translate, TreeNode,
         TreeView, Unit, VirtualList, WithSize, Wrap, clamp_card_top_left, dock_decode, dock_encode,
         dock_preview_rect, draw_gradient_mask, drop_from_fraction, drop_from_fraction_or_float,

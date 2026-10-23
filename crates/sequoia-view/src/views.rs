@@ -1,7 +1,7 @@
 use sequoia_core::{Color, Constraints, Edges, Length, Rect, Size};
 use sequoia_layout::{
     Align, Axis, ContainerStyle, GridFlow, GridPlacement, GridStyle, Indents, Inset, Justify,
-    LayoutCtx, LayoutStyle, Overflow, Position, Track, WrapStyle,
+    LayoutCtx, LayoutStyle, MasonryStyle, Overflow, Position, Track, WrapStyle,
 };
 use sequoia_style::BoxStyle;
 use sequoia_text::{ElideMode, FontStyle, FontWeight, LetterSpacing, WrapMode};
@@ -2834,6 +2834,262 @@ impl View for Wrap {
     }
 }
 
+/// A waterfall layout with equal-width columns and variable item heights.
+///
+/// Items are appended to the shortest column, keeping their natural height.
+/// This is useful for card feeds and galleries where rows should not share a
+/// common height. Absolute children are excluded from the flow.
+pub struct Masonry {
+    children: Vec<AnyView>,
+    style: LayoutStyle,
+    masonry: MasonryStyle,
+    deco: BoxStyle,
+}
+
+impl Masonry {
+    /// Creates a masonry container with the given number of columns.
+    pub fn new(columns: usize) -> Self {
+        Self {
+            children: Vec::new(),
+            style: LayoutStyle {
+                width: Length::Fill(1.0),
+                height: Length::Fit,
+                ..LayoutStyle::default()
+            },
+            masonry: MasonryStyle::new(columns),
+            deco: BoxStyle::new(),
+        }
+    }
+
+    pub fn columns(mut self, columns: usize) -> Self {
+        self.masonry = self.masonry.columns(columns);
+        self
+    }
+
+    pub fn child<V: View + 'static>(mut self, child: V) -> Self {
+        self.children.push(AnyView::new(child));
+        self
+    }
+
+    pub fn children(mut self, children: impl IntoChildren) -> Self {
+        self.children.extend(children.into_children());
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.masonry = self.masonry.gap(gap);
+        self
+    }
+
+    pub fn column_gap(mut self, gap: f32) -> Self {
+        self.masonry = self.masonry.column_gap(gap);
+        self
+    }
+
+    pub fn row_gap(mut self, gap: f32) -> Self {
+        self.masonry = self.masonry.row_gap(gap);
+        self
+    }
+
+    pub fn align_items(mut self, align: Align) -> Self {
+        self.masonry = self.masonry.align_items(align);
+        self
+    }
+
+    pub fn padding(mut self, padding: impl Into<Edges>) -> Self {
+        self.style = self.style.padding(padding);
+        self
+    }
+
+    pub fn pad(self, padding: impl Into<Edges>) -> Self {
+        self.padding(padding)
+    }
+
+    pub fn padding_xy(mut self, x: f32, y: f32) -> Self {
+        self.style = self.style.padding_xy(x, y);
+        self
+    }
+
+    pub fn padding_x(mut self, x: f32) -> Self {
+        self.style = self.style.padding_x(x);
+        self
+    }
+
+    pub fn padding_y(mut self, y: f32) -> Self {
+        self.style = self.style.padding_y(y);
+        self
+    }
+
+    pub fn padding_left(mut self, v: f32) -> Self {
+        self.style = self.style.padding_left(v);
+        self
+    }
+
+    pub fn padding_right(mut self, v: f32) -> Self {
+        self.style = self.style.padding_right(v);
+        self
+    }
+
+    pub fn padding_top(mut self, v: f32) -> Self {
+        self.style = self.style.padding_top(v);
+        self
+    }
+
+    pub fn padding_bottom(mut self, v: f32) -> Self {
+        self.style = self.style.padding_bottom(v);
+        self
+    }
+
+    pub fn width(mut self, width: impl Into<Length>) -> Self {
+        self.style = self.style.width(width.into());
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Length>) -> Self {
+        self.style = self.style.height(height.into());
+        self
+    }
+
+    pub fn size(mut self, width: impl Into<Length>, height: impl Into<Length>) -> Self {
+        self.style = self.style.width(width.into()).height(height.into());
+        self
+    }
+
+    pub fn square(mut self, side: impl Into<Length>) -> Self {
+        let side = side.into();
+        self.style = self.style.width(side).height(side);
+        self
+    }
+
+    pub fn min_width(mut self, v: f32) -> Self {
+        self.style = self.style.min_width(v);
+        self
+    }
+
+    pub fn max_width(mut self, v: f32) -> Self {
+        self.style = self.style.max_width(v);
+        self
+    }
+
+    pub fn min_height(mut self, v: f32) -> Self {
+        self.style = self.style.min_height(v);
+        self
+    }
+
+    pub fn max_height(mut self, v: f32) -> Self {
+        self.style = self.style.max_height(v);
+        self
+    }
+
+    pub fn overflow(mut self, overflow: Overflow) -> Self {
+        self.style = self.style.overflow(overflow);
+        self
+    }
+
+    pub fn flex(mut self, weight: f32) -> Self {
+        self.style = self.style.flex(weight);
+        self
+    }
+
+    pub fn expand(self) -> Self {
+        self.flex(1.0)
+    }
+
+    pub fn fill_width(mut self) -> Self {
+        self.style = self.style.width(Length::Fill(1.0));
+        self
+    }
+
+    pub fn fill_height(mut self) -> Self {
+        self.style = self.style.height(Length::Fill(1.0));
+        self
+    }
+
+    pub fn fill_size(self) -> Self {
+        self.fill_width().fill_height()
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.deco = self.deco.background(color);
+        self
+    }
+
+    pub fn border(mut self, width: f32, color: Color) -> Self {
+        self.deco = self.deco.border(width, color);
+        self
+    }
+
+    pub fn border_left(mut self, width: f32, color: Color) -> Self {
+        self.deco = self.deco.border_left(width, color);
+        self
+    }
+
+    pub fn border_right(mut self, width: f32, color: Color) -> Self {
+        self.deco = self.deco.border_right(width, color);
+        self
+    }
+
+    pub fn border_top(mut self, width: f32, color: Color) -> Self {
+        self.deco = self.deco.border_top(width, color);
+        self
+    }
+
+    pub fn border_bottom(mut self, width: f32, color: Color) -> Self {
+        self.deco = self.deco.border_bottom(width, color);
+        self
+    }
+
+    pub fn border_x(mut self, width: f32, color: Color) -> Self {
+        self.deco = self.deco.border_x(width, color);
+        self
+    }
+
+    pub fn border_y(mut self, width: f32, color: Color) -> Self {
+        self.deco = self.deco.border_y(width, color);
+        self
+    }
+
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.deco = self.deco.radius(radius);
+        self
+    }
+
+    pub fn box_style(mut self, style: BoxStyle) -> Self {
+        self.deco = style;
+        self
+    }
+
+    pub fn style(self, style: BoxStyle) -> Self {
+        self.box_style(style)
+    }
+}
+
+impl Default for Masonry {
+    fn default() -> Self {
+        Self::new(2)
+    }
+}
+
+impl_style_extras!(Masonry);
+
+impl View for Masonry {
+    fn body(&self) -> impl View + 'static {
+        Unit
+    }
+    fn children_override(&self) -> Option<Vec<AnyView>> {
+        Some(self.children.clone())
+    }
+    fn layout_style(&self) -> LayoutStyle {
+        self.style
+    }
+    fn masonry(&self) -> Option<MasonryStyle> {
+        Some(self.masonry)
+    }
+    fn paint_self(&self, ctx: &mut PaintCtx) {
+        ctx.paint_box(self.deco);
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Panel {
     color: Option<Color>,
@@ -3191,6 +3447,7 @@ impl_child_helpers!(Column);
 impl_child_helpers!(Stack);
 impl_child_helpers!(Grid);
 impl_child_helpers!(Wrap);
+impl_child_helpers!(Masonry);
 
 impl View for Spacer {
     fn body(&self) -> impl View + 'static {

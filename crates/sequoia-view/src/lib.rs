@@ -128,8 +128,8 @@ pub use tree::{FlatRow, TreeNode, TreeView};
 pub use value::{Value, ValueExt, derived, spring_spec, value};
 pub use view::{CustomLayout, EventCtx, PaintCtx, TextMetrics, View};
 pub use views::{
-    AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Panel, Row, Spacer,
-    Stack, StackPos, Text, Unit, Wrap,
+    AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Masonry, Panel, Row,
+    Spacer, Stack, StackPos, Text, Unit, Wrap,
 };
 pub use virtual_list::VirtualList;
 
@@ -156,7 +156,7 @@ pub use sequoia_input::{
 };
 pub use sequoia_layout::{
     Align, Axis, ContainerStyle, Dock, DockStyle, FlexItem, GridFlow, GridPlacement, GridStyle,
-    Indents, Inset, Justify, LayoutCtx, LayoutStyle, Overflow, Track,
+    Indents, Inset, Justify, LayoutCtx, LayoutStyle, MasonryStyle, Overflow, Track,
 };
 pub use sequoia_style::{
     Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec, VisualState,
@@ -233,8 +233,8 @@ pub mod prelude {
     pub use crate::value::{Value, ValueExt, derived, spring_spec, value};
     pub use crate::view::{CustomLayout, EventCtx, PaintCtx, TextMetrics, View};
     pub use crate::views::{
-        AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Panel, Row,
-        Spacer, Stack, StackPos, Text, Unit, Wrap,
+        AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Masonry, Panel,
+        Row, Spacer, Stack, StackPos, Text, Unit, Wrap,
     };
     pub use crate::virtual_list::VirtualList;
     pub use sequoia_animation::Easing;
@@ -258,7 +258,7 @@ pub mod prelude {
     };
     pub use sequoia_layout::{
         Align, Axis, ContainerStyle, Dock, DockStyle, FlexItem, GridFlow, GridPlacement, GridStyle,
-        Indents, Inset, Justify, LayoutCtx, LayoutStyle, Overflow, Track, WrapStyle,
+        Indents, Inset, Justify, LayoutCtx, LayoutStyle, MasonryStyle, Overflow, Track, WrapStyle,
     };
     pub use sequoia_style::{Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec};
     pub use sequoia_text::{
