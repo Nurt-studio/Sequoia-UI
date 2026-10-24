@@ -369,12 +369,18 @@ fn vs_backdrop(
     return out;
 }
 
+// Binomial row n=6: a cheap Gaussian approximation with a wider support than
+// the previous 5-tap tent, so large blur radii no longer collapse to a small
+// kernel.
 fn backdrop_weight(d: i32) -> f32 {
     if (d == 0) {
-        return 6.0;
+        return 20.0;
     }
     if (d == 1 || d == -1) {
-        return 4.0;
+        return 15.0;
+    }
+    if (d == 2 || d == -2) {
+        return 6.0;
     }
     return 1.0;
 }
@@ -394,11 +400,11 @@ fn fs_backdrop(frag: VsBackdrop) -> @location(0) vec4<f32> {
     if (frag.blur < 0.5) {
         b = textureSample(blit_tex, blit_samp, uv);
     } else {
-        let step = clamp(frag.blur * 0.45, 1.0, 10.0) / screen.size.xy;
+        let step = clamp(frag.blur * 0.33, 1.0, 21.0) / screen.size.xy;
         var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        for (var oy = -2; oy <= 2; oy++) {
-            for (var ox = -2; ox <= 2; ox++) {
-                let w = backdrop_weight(ox) * backdrop_weight(oy) / 256.0;
+        for (var oy = -3; oy <= 3; oy++) {
+            for (var ox = -3; ox <= 3; ox++) {
+                let w = backdrop_weight(ox) * backdrop_weight(oy) / 4096.0;
                 acc += textureSample(blit_tex, blit_samp, uv + vec2<f32>(f32(ox), f32(oy)) * step) * w;
             }
         }

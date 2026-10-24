@@ -11,7 +11,7 @@ impl crate::renderer::GpuRenderer {
         if blur_px < 0.5 {
             1.0
         } else {
-            2.0 * (blur_px * 0.45).clamp(1.0, 10.0) + 1.0
+            3.0 * (blur_px * 0.33).clamp(1.0, 21.0) + 1.0
         }
     }
 

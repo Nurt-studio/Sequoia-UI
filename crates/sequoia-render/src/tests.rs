@@ -1011,8 +1011,8 @@ fn backdrop_copy_covers_marker_plus_kernel() {
         GpuRenderer::backdrop_copy_region([100.0, 100.0, 200.0, 120.0], 16.0, fb)
             .expect("marker na ekranie");
 
-    assert_eq!((origin.x, origin.y), (84, 84));
-    assert_eq!((extent.width, extent.height), (232, 152));
+    assert_eq!((origin.x, origin.y), (83, 83));
+    assert_eq!((extent.width, extent.height), (234, 154));
     assert!(extent.width < fb.0 && extent.height < fb.1);
 
     let (origin, extent) = GpuRenderer::backdrop_copy_region([100.0, 100.0, 200.0, 120.0], 0.0, fb)
@@ -1028,13 +1028,25 @@ fn backdrop_copy_clamps_and_skips_offscreen() {
     let (origin, extent) =
         GpuRenderer::backdrop_copy_region([700.0, 500.0, 200.0, 200.0], 16.0, fb)
             .expect("partially visible");
-    assert_eq!((origin.x, origin.y), (684, 484));
-    assert_eq!((extent.width, extent.height), (800 - 684, 600 - 484));
+    assert_eq!((origin.x, origin.y), (683, 483));
+    assert_eq!((extent.width, extent.height), (800 - 683, 600 - 483));
 
     assert!(GpuRenderer::backdrop_copy_region([2000.0, 2000.0, 100.0, 100.0], 16.0, fb).is_none());
     assert!(
         GpuRenderer::backdrop_copy_region([-500.0, -500.0, 100.0, 100.0], 64.0, fb).is_none(),
         "even max blur does not reach the screen"
+    );
+}
+
+#[test]
+fn backdrop_kernel_grows_with_blur_radius() {
+    assert_eq!(GpuRenderer::backdrop_kernel_reach(0.0), 1.0);
+    assert!((GpuRenderer::backdrop_kernel_reach(16.0) - 16.84).abs() < 0.001);
+    assert_eq!(GpuRenderer::backdrop_kernel_reach(64.0), 64.0);
+    assert_eq!(
+        GpuRenderer::backdrop_kernel_reach(256.0),
+        64.0,
+        "cap keeps the kernel bounded"
     );
 }
 
