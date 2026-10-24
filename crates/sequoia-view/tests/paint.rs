@@ -191,6 +191,60 @@ fn text_view_produces_text_item() {
 }
 
 #[test]
+fn text_style_applies_and_inline_overrides() {
+    let base = TextStyle::new()
+        .size(20.0)
+        .color(Color::RED)
+        .weight(700)
+        .underline(true);
+
+    let rt = Runtime::new();
+    rt.mount(Text::new("Sequoia").style(base.clone()));
+
+    let mut text = TextSystem::new();
+    if text.shape("Sequoia", 20.0).glyph_count() == 0 {
+        eprintln!("skip: no fonts in environment");
+        return;
+    }
+
+    rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 100.0), &mut text);
+    let mut list = RenderList::new();
+    rt.paint(&mut list, &mut text);
+
+    let Some(RenderItem::Text(draw)) = list
+        .items()
+        .iter()
+        .find(|i| matches!(i, RenderItem::Text(_)))
+    else {
+        panic!("expected RenderItem::Text");
+    };
+    assert_eq!(draw.color, Color::RED, "color from TextStyle");
+    assert_eq!(list.quads().count(), 1, "underline from TextStyle");
+
+    let rt = Runtime::new();
+    rt.mount(
+        Text::new("Sequoia")
+            .style(base)
+            .color(Color::BLUE)
+            .underline(false),
+    );
+    let mut text = TextSystem::new();
+    let mut list = RenderList::new();
+    rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 100.0), &mut text);
+    rt.paint(&mut list, &mut text);
+
+    let Some(RenderItem::Text(draw)) = list
+        .items()
+        .iter()
+        .find(|i| matches!(i, RenderItem::Text(_)))
+    else {
+        panic!("expected RenderItem::Text");
+    };
+    assert_eq!(draw.color, Color::BLUE, "inline color wins");
+    assert_eq!(list.quads().count(), 0, "inline underline(false) wins");
+}
+
+#[test]
 fn text_decoration_paints_a_line_under_the_text() {
     let rt = Runtime::new();
     rt.mount(Text::new("Sequoia").size(20.0).underline(true));

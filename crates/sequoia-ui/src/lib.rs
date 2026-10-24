@@ -96,8 +96,8 @@ pub mod prelude {
         DIALOG_DANGER, DialogStyle, DividerStyle, DrawerStyle, FORM_ERROR, Filter,
         FloatingMenuStyle, FocusRingStyle, FormStyle, GradientAlphas, KbdStyle, Mask, ModalStyle,
         RadioStyle, ShadowSpec, SheetStyle, SplitPanelStyle, Style, SwitchStyle, TableStyle,
-        TextAreaStyle, TextFieldStyle, Theme, ToastStyle, TreeStyle, VERTICAL, VisualState,
-        backdrop_blur, blur, gradient, gradient_angled, gradient_mask, resolve_accent,
+        TextAreaStyle, TextFieldStyle, TextStyle, Theme, ToastStyle, TreeStyle, VERTICAL,
+        VisualState, backdrop_blur, blur, gradient, gradient_angled, gradient_mask, resolve_accent,
     };
     pub use sequoia_text::{ElideMode, FontStyle, FontWeight, RichAlign, TextSpan, WrapMode};
     pub use sequoia_view::Position as OverlayPosition;

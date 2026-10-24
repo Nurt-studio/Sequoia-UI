@@ -159,7 +159,7 @@ pub use sequoia_layout::{
     Indents, Inset, Justify, LayoutCtx, LayoutStyle, MasonryStyle, Overflow, Track,
 };
 pub use sequoia_style::{
-    Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec, VisualState,
+    Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec, TextStyle, VisualState,
 };
 pub use sequoia_text::{
     ElideMode, FontStyle, FontWeight, LetterSpacing, RichAlign, RichCaret, RichHit, RichLine,
@@ -260,7 +260,9 @@ pub mod prelude {
         Align, Axis, ContainerStyle, Dock, DockStyle, FlexItem, GridFlow, GridPlacement, GridStyle,
         Indents, Inset, Justify, LayoutCtx, LayoutStyle, MasonryStyle, Overflow, Track, WrapStyle,
     };
-    pub use sequoia_style::{Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec};
+    pub use sequoia_style::{
+        Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec, TextStyle,
+    };
     pub use sequoia_text::{
         ElideMode, FontStyle, FontWeight, LetterSpacing, RichAlign, RichCaret, RichHit, RichLine,
         RichParagraph, RichRect, TextSpan, WrapMode,

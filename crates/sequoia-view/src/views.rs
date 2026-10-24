@@ -3,7 +3,7 @@ use sequoia_layout::{
     Align, Axis, ContainerStyle, GridFlow, GridPlacement, GridStyle, Indents, Inset, Justify,
     LayoutCtx, LayoutStyle, MasonryStyle, Overflow, Position, Track, WrapStyle,
 };
-use sequoia_style::BoxStyle;
+use sequoia_style::{BoxStyle, TextStyle};
 use sequoia_text::{ElideMode, FontStyle, FontWeight, LetterSpacing, WrapMode};
 
 use crate::any::AnyView;
@@ -452,6 +452,42 @@ impl Text {
 
     pub fn elide(mut self, mode: ElideMode) -> Self {
         self.elide_mode = mode;
+        self
+    }
+
+    pub fn style(mut self, style: TextStyle) -> Self {
+        if let Some(size) = style.size {
+            self.font_size = Some(size);
+        }
+        if let Some(color) = style.color {
+            self.color = Some(color);
+        }
+        if let Some(weight) = style.weight {
+            self.weight = Some(FontWeight::new(weight));
+        }
+        if let Some(family) = style.family {
+            self.family = if family.is_empty() {
+                None
+            } else {
+                Some(family)
+            };
+        }
+        if let Some(italic) = style.italic {
+            self.font_style = if italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            };
+        }
+        if let Some(spacing) = style.letter_spacing {
+            self.letter_spacing = if spacing.is_finite() { spacing } else { 0.0 };
+        }
+        if let Some(on) = style.underline {
+            self.underline = on;
+        }
+        if let Some(on) = style.strikethrough {
+            self.strikethrough = on;
+        }
         self
     }
 

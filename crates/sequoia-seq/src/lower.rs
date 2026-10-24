@@ -8,7 +8,7 @@ use sequoia_elements::{
 };
 use sequoia_input::{CursorIcon, PointerButton, PointerEvent};
 use sequoia_reactive::{Signal, effect};
-use sequoia_style::{BoxStyle, ButtonStyle, ShadowSpec, Theme};
+use sequoia_style::{BoxStyle, ButtonStyle, ShadowSpec, TextStyle, Theme};
 use sequoia_view::{
     Align, AnimSpec, AnimatedSize, AnyView, AsyncView, Axis, Canvas, Column, EventCtx, Grid,
     GridFlow, GridPlacement, Icon, Image, Indents, Justify, Live, LiveOffset, LiveOpacity,
@@ -472,14 +472,20 @@ pub enum TextWeight {
     Black,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SeqTextStyle {
-    pub size: Option<f32>,
-
-    pub color: Option<Color>,
-
-    pub weight: Option<TextWeight>,
+impl TextWeight {
+    pub const fn value(self) -> u16 {
+        match self {
+            Self::Bold => 700,
+            Self::Semi => 600,
+            Self::Medium => 500,
+            Self::Normal => 400,
+            Self::Light => 300,
+            Self::Black => 900,
+        }
+    }
 }
+
+pub type SeqTextStyle = TextStyle;
 
 #[derive(Clone, Debug, Default)]
 pub struct BuiltStyles {
@@ -502,7 +508,7 @@ impl BuiltStyles {
     }
 
     pub fn text_style(&self, name: &str) -> Option<SeqTextStyle> {
-        self.texts.get(name).copied()
+        self.texts.get(name).cloned()
     }
 }
 
@@ -564,23 +570,8 @@ fn text_style_of(
     })
 }
 
-fn apply_seq_text_style(mut v: Text, s: SeqTextStyle) -> Text {
-    if let Some(size) = s.size {
-        v = v.size(size);
-    }
-    if let Some(color) = s.color {
-        v = v.color(color);
-    }
-    match s.weight {
-        Some(TextWeight::Bold) => v = v.bold(),
-        Some(TextWeight::Semi) => v = v.semibold(),
-        Some(TextWeight::Medium) => v = v.medium(),
-        Some(TextWeight::Normal) => v = v.normal(),
-        Some(TextWeight::Light) => v = v.light(),
-        Some(TextWeight::Black) => v = v.black(),
-        None => {}
-    }
-    v
+fn apply_seq_text_style(v: Text, s: SeqTextStyle) -> Text {
+    v.style(s)
 }
 
 pub fn build_styles(
@@ -931,12 +922,12 @@ fn apply_text_args(
         match arg.name.as_str() {
             "size" => v.size = Some(num(file, arg, res, None)?),
             "color" => v.color = Some(color(file, theme, arg)?),
-            "bold" => v.weight = Some(TextWeight::Bold),
-            "semi" => v.weight = Some(TextWeight::Semi),
-            "medium" => v.weight = Some(TextWeight::Medium),
-            "normal" => v.weight = Some(TextWeight::Normal),
-            "light" => v.weight = Some(TextWeight::Light),
-            "black" => v.weight = Some(TextWeight::Black),
+            "bold" => v.weight = Some(TextWeight::Bold.value()),
+            "semi" => v.weight = Some(TextWeight::Semi.value()),
+            "medium" => v.weight = Some(TextWeight::Medium.value()),
+            "normal" => v.weight = Some(TextWeight::Normal.value()),
+            "light" => v.weight = Some(TextWeight::Light.value()),
+            "black" => v.weight = Some(TextWeight::Black.value()),
             _ => {
                 return Err(SeqError::new(
                     file,
@@ -8832,5 +8823,24 @@ fn button_style_of(
             }
             _ => Err(SeqError::new(file, arg.line, 1, "style: to nazwa stylu")),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_style_block_builds_text_style() {
+        let app = crate::parser::parse(
+            "S.seq",
+            "app A {\n  title: \"A\"\n  size: (400, 300)\n  style Title: Text {\n    size: 24\n    color: #FF0000\n    bold: true\n  }\n  window M {\n    Text(\"Hi\", style: Title)\n  }\n}\n",
+        )
+        .unwrap();
+        let styles = build_styles("S.seq", &Theme::dark(), &app.styles).unwrap();
+        let style = styles.text_style("Title").unwrap();
+        assert_eq!(style.size, Some(24.0));
+        assert_eq!(style.color, Some(Color::parse_hex("#FF0000").unwrap()));
+        assert_eq!(style.weight, Some(700));
     }
 }
