@@ -264,9 +264,7 @@ fn downsample_averages_in_linear_light() {
 
 #[test]
 fn downsample_weights_color_by_alpha() {
-    let data = [
-        255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ];
+    let data = [255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let (_, _, out) = downsample_rgba(2, 2, &data);
     // Transparent texels must not pull the color toward black.
     assert_eq!(&out[..3], &[255, 0, 0]);

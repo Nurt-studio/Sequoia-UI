@@ -813,8 +813,7 @@ impl<'a, 'b> Painter<'a, 'b> {
                     let [r, g, b, a] = stops.sample_linear((t0 + t1) * 0.5);
                     let color = Color { r, g, b, a }.from_linear();
                     let r1 = extent * t1;
-                    let band =
-                        Rect::from_xywh(center.x - r1, center.y - r1, r1 * 2.0, r1 * 2.0);
+                    let band = Rect::from_xywh(center.x - r1, center.y - r1, r1 * 2.0, r1 * 2.0);
                     self.ctx.list.push_quad(band, color, r1);
                 }
                 self.ctx.pop_clip();
