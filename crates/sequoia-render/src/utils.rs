@@ -79,6 +79,120 @@ pub(crate) fn decode_image(source: &ImageSource) -> Option<(u32, u32, Vec<u8>)> 
     }
 }
 
+/// Returns the number of mip levels for an image of `width` x `height`.
+pub(crate) fn mip_level_count(width: u32, height: u32) -> u32 {
+    let max = width.max(height).max(1);
+    u32::BITS - max.leading_zeros()
+}
+
+fn srgb_u8_to_linear(v: u8) -> f32 {
+    let c = v as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb_u8(v: f32) -> u8 {
+    let c = v.clamp(0.0, 1.0);
+    let s = if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (s * 255.0 + 0.5).clamp(0.0, 255.0) as u8
+}
+
+/// Box-filters RGBA8 by half in linear light with premultiplied alpha.
+///
+/// Straight-alpha averaging pulls edge colors toward transparent black; using
+/// alpha-weighted linear averages keeps glyph and sprite edges from darkening
+/// as they shrink.
+pub(crate) fn downsample_rgba(width: u32, height: u32, data: &[u8]) -> (u32, u32, Vec<u8>) {
+    let nw = (width / 2).max(1);
+    let nh = (height / 2).max(1);
+    let mut out = Vec::with_capacity((nw as usize) * (nh as usize) * 4);
+    for y in 0..nh {
+        let y0 = y * 2;
+        let y1 = (y0 + 1).min(height.saturating_sub(1));
+        for x in 0..nw {
+            let x0 = x * 2;
+            let x1 = (x0 + 1).min(width.saturating_sub(1));
+            let mut r = 0.0;
+            let mut g = 0.0;
+            let mut b = 0.0;
+            let mut a = 0.0;
+            for (sx, sy) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
+                let i = ((sy as usize) * (width as usize) + (sx as usize)) * 4;
+                let alpha = data[i + 3] as f32 / 255.0;
+                r += srgb_u8_to_linear(data[i]) * alpha;
+                g += srgb_u8_to_linear(data[i + 1]) * alpha;
+                b += srgb_u8_to_linear(data[i + 2]) * alpha;
+                a += alpha;
+            }
+            let a_out = a / 4.0;
+            let (r_out, g_out, b_out) = if a > 0.0 {
+                (r / a, g / a, b / a)
+            } else {
+                (0.0, 0.0, 0.0)
+            };
+            out.push(linear_to_srgb_u8(r_out));
+            out.push(linear_to_srgb_u8(g_out));
+            out.push(linear_to_srgb_u8(b_out));
+            out.push((a_out * 255.0 + 0.5).clamp(0.0, 255.0) as u8);
+        }
+    }
+    (nw, nh, out)
+}
+
+/// Uploads RGBA8 data and its complete mip chain.
+pub(crate) fn upload_rgba_levels(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    data: &[u8],
+) {
+    let levels = mip_level_count(width, height);
+    let mut w = width;
+    let mut h = height;
+    let mut current: Option<Vec<u8>> = None;
+
+    for level in 0..levels {
+        let src: &[u8] = if level == 0 {
+            data
+        } else {
+            current.as_deref().unwrap_or(data)
+        };
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: level,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            src,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        if level + 1 < levels {
+            let (nw, nh, next) = downsample_rgba(w, h, src);
+            current = Some(next);
+            w = nw;
+            h = nh;
+        }
+    }
+}
+
 pub(crate) fn image_dims_allowed(width: u32, height: u32) -> bool {
     if width == 0 || height == 0 || width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM {
         return false;

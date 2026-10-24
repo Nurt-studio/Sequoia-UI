@@ -236,6 +236,43 @@ fn decode_image_rejects_oversize_and_mismatched_buffers() {
     assert!(decode_image(&ImageSource::File("no/such/file.png".into())).is_none());
 }
 
+#[test]
+fn mip_level_count_covers_the_full_chain() {
+    assert_eq!(mip_level_count(1, 1), 1);
+    assert_eq!(mip_level_count(2, 2), 2);
+    assert_eq!(mip_level_count(4, 4), 3);
+    assert_eq!(mip_level_count(3, 3), 2);
+    assert_eq!(mip_level_count(100, 50), 7);
+}
+
+#[test]
+fn downsample_averages_in_linear_light() {
+    let data = [
+        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+    ];
+    let (w, h, out) = downsample_rgba(2, 2, &data);
+    assert_eq!((w, h), (1, 1));
+    // Linear red + green + blue + white averages to mid-grey, not sRGB 128.
+    for channel in &out[..3] {
+        assert!(
+            channel.abs_diff(188) <= 1,
+            "expected linear-light mid-grey, got {out:?}"
+        );
+    }
+    assert_eq!(out[3], 255);
+}
+
+#[test]
+fn downsample_weights_color_by_alpha() {
+    let data = [
+        255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let (_, _, out) = downsample_rgba(2, 2, &data);
+    // Transparent texels must not pull the color toward black.
+    assert_eq!(&out[..3], &[255, 0, 0]);
+    assert_eq!(out[3], 64);
+}
+
 struct Stub;
 impl WgpuRenderer for Stub {
     fn render(&mut self, _frame: &mut WgpuFrame) {}
