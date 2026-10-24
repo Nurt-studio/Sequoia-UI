@@ -375,7 +375,9 @@ fn add_span_coverage(coverage: &mut [f32], first_col: f32, cell: f32, x0: f32, x
 }
 
 fn quantize_alpha(a: f32) -> f32 {
-    const LEVELS: f32 = 32.0;
+    // 64 levels keep curved edges smooth without exploding the number of
+    // distinct span alphas (and therefore GPU instances) on large paths.
+    const LEVELS: f32 = 64.0;
     if a >= 1.0 {
         1.0
     } else if a <= 0.0 {
@@ -448,5 +450,18 @@ pub(crate) fn contains(contours: &[Contour], p: Point, rule: FillRule) -> bool {
     match rule {
         FillRule::NonZero => winding != 0,
         FillRule::EvenOdd => crossings % 2 == 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quantize_alpha;
+
+    #[test]
+    fn alpha_quantization_keeps_64_levels() {
+        assert_eq!(quantize_alpha(0.0), 0.0);
+        assert_eq!(quantize_alpha(1.0), 1.0);
+        assert!((quantize_alpha(0.51) - 33.0 / 64.0).abs() < f32::EPSILON);
+        assert!(quantize_alpha(0.01) > 0.0, "thin coverage must survive");
     }
 }
