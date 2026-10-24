@@ -168,7 +168,7 @@ impl crate::renderer::GpuRenderer {
             old.a_tex.destroy();
             old.b_tex.destroy();
         }
-        let format = self.config.format;
+        let format = self.render_format;
         let mk = |label: &'static str| {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -264,6 +264,7 @@ impl crate::renderer::GpuRenderer {
         sampler: &wgpu::Sampler,
         size: (u32, u32),
         samples: u32,
+        format: wgpu::TextureFormat,
     ) -> CachedSurface {
         let samples = sanitize_samples(samples);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -276,7 +277,7 @@ impl crate::renderer::GpuRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: CACHE_FORMAT,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
@@ -306,7 +307,7 @@ impl crate::renderer::GpuRenderer {
                 mip_level_count: 1,
                 sample_count: samples,
                 dimension: wgpu::TextureDimension::D2,
-                format: CACHE_FORMAT,
+                format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
@@ -321,6 +322,7 @@ impl crate::renderer::GpuRenderer {
             bind_group,
             size,
             samples,
+            format,
             msaa,
         }
     }

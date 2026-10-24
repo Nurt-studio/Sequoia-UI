@@ -43,7 +43,7 @@ pub use sequoia_assets::AssetRegistry as Assets;
 use sequoia_render::FrameSkip;
 pub use sequoia_render::{
     GpuBackend, PowerPreference as GpuPowerPreference, PresentMode as GpuPresentMode, Region,
-    WgpuFrame, WgpuRenderer, WgpuSurface,
+    WgpuFrame, WgpuRenderer, WgpuSurface, wgpu,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
@@ -374,6 +374,12 @@ impl App {
 
     pub fn power_preference(mut self, power: GpuPowerPreference) -> Self {
         self.primary_mut().settings.power_preference = power;
+        self
+    }
+
+    /// Requests a swapchain format for the primary window.
+    pub fn surface_format(mut self, format: sequoia_render::wgpu::TextureFormat) -> Self {
+        self.primary_mut().settings.surface_format = Some(format);
         self
     }
 
@@ -1019,15 +1025,17 @@ impl PlatformApp {
         }
 
         let size = window.inner_size();
-        let mut gpu = GpuRenderer::new_with_options(
-            window.clone(),
-            size.width,
-            size.height,
-            GpuOptions::with_backend(self.backend)
-                .present_mode(s.present_mode)
-                .power_preference(s.power_preference),
-        )
-        .map_err(|e| AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name())))?;
+        let mut options = GpuOptions::with_backend(self.backend)
+            .present_mode(s.present_mode)
+            .power_preference(s.power_preference);
+        if let Some(format) = s.surface_format {
+            options = options.surface_format(format);
+        }
+        let mut gpu =
+            GpuRenderer::new_with_options(window.clone(), size.width, size.height, options)
+                .map_err(|e| {
+                    AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
+                })?;
         gpu.set_clear_color(window_clear_color(self.theme, s.transparent));
 
         {
@@ -1780,6 +1788,15 @@ mod tests {
     }
 
     #[test]
+    fn surface_format_reaches_settings() {
+        let app = App::new().surface_format(sequoia_render::wgpu::TextureFormat::Bgra8Unorm);
+        assert_eq!(
+            app.windows[0].settings.surface_format,
+            Some(sequoia_render::wgpu::TextureFormat::Bgra8Unorm)
+        );
+    }
+
+    #[test]
     fn window_settings_default_to_system_behaviour() {
         let s = WindowSettings::default();
         assert!(
@@ -1793,6 +1810,7 @@ mod tests {
         assert!(s.min_size.is_none() && s.max_size.is_none() && s.position.is_none());
         assert_eq!(s.present_mode, GpuPresentMode::Vsync);
         assert_eq!(s.power_preference, GpuPowerPreference::HighPerformance);
+        assert!(s.surface_format.is_none());
     }
 
     #[test]

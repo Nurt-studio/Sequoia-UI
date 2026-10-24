@@ -22,6 +22,7 @@ pub struct WindowSettings {
     pub(crate) icon_tint: Option<sequoia_core::Color>,
     pub(crate) present_mode: PresentMode,
     pub(crate) power_preference: PowerPreference,
+    pub(crate) surface_format: Option<sequoia_render::wgpu::TextureFormat>,
     pub(crate) fps_limit: Option<u32>,
     pub(crate) show_fps: bool,
     pub(crate) scale_override: Option<f64>,
@@ -46,6 +47,7 @@ impl Default for WindowSettings {
             icon_tint: None,
             present_mode: PresentMode::Vsync,
             power_preference: PowerPreference::HighPerformance,
+            surface_format: None,
             fps_limit: None,
             show_fps: false,
             scale_override: None,
@@ -189,6 +191,16 @@ impl WindowSpec {
 
     pub fn power_preference(mut self, power: PowerPreference) -> Self {
         self.settings.power_preference = power;
+        self
+    }
+
+    /// Requests a specific swapchain format.
+    ///
+    /// sRGB formats render directly; non-sRGB 8-bit formats render through an
+    /// sRGB view so blending stays in linear light. Unsupported requests fall
+    /// back to the default sRGB format with a warning.
+    pub fn surface_format(mut self, format: sequoia_render::wgpu::TextureFormat) -> Self {
+        self.settings.surface_format = Some(format);
         self
     }
 
@@ -470,6 +482,7 @@ mod tests {
         assert_eq!(s.title, "T");
         assert_eq!((s.width, s.height), (1024.0, 768.0));
         assert!(s.root.is_some());
+        assert_eq!(s.settings.surface_format, None);
         assert!(s.settings.resizable && s.settings.decorations && s.settings.visible);
         let s2 = WindowSpec::new("T", Unit)
             .size(400.0, 300.0)
@@ -480,6 +493,12 @@ mod tests {
         assert!(!s2.settings.decorations);
         assert!(s2.settings.always_on_top);
         assert_eq!(s2.settings.fps_limit, Some(30));
+        let s3 = WindowSpec::new("T", Unit)
+            .surface_format(sequoia_render::wgpu::TextureFormat::Bgra8Unorm);
+        assert_eq!(
+            s3.settings.surface_format,
+            Some(sequoia_render::wgpu::TextureFormat::Bgra8Unorm)
+        );
     }
 
     #[test]

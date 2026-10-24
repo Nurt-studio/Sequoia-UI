@@ -347,8 +347,46 @@ pub(crate) fn create_blit_pipeline(
     format: wgpu::TextureFormat,
     blend: wgpu::BlendComponent,
 ) -> wgpu::RenderPipeline {
+    create_blit_pipeline_with(
+        device,
+        shader,
+        glyph_layout,
+        format,
+        blend,
+        "fs_blit",
+        "sequoia-blit-pipeline",
+    )
+}
+
+pub(crate) fn create_surface_blit_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    glyph_layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    blend: wgpu::BlendComponent,
+) -> wgpu::RenderPipeline {
+    create_blit_pipeline_with(
+        device,
+        shader,
+        glyph_layout,
+        format,
+        blend,
+        "fs_blit_linear",
+        "sequoia-surface-blit-pipeline",
+    )
+}
+
+fn create_blit_pipeline_with(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    glyph_layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    blend: wgpu::BlendComponent,
+    fragment_entry: &str,
+    label: &str,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("sequoia-blit-pipeline"),
+        label: Some(label),
         layout: Some(glyph_layout),
         vertex: wgpu::VertexState {
             module: shader,
@@ -393,7 +431,7 @@ pub(crate) fn create_blit_pipeline(
         },
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some("fs_blit"),
+            entry_point: Some(fragment_entry),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,

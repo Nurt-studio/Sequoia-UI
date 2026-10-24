@@ -100,6 +100,118 @@ pub(crate) fn pick_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::Textu
         .or_else(|| formats.first().copied())
 }
 
+fn is_linear_float(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Rgba16Float
+            | wgpu::TextureFormat::Rgba32Float
+            | wgpu::TextureFormat::Rgb9e5Ufloat
+    )
+}
+
+/// Chooses the swapchain configuration and the format used for rendering.
+///
+/// Non-sRGB 8-bit formats get an sRGB view so the scene keeps blending in
+/// linear light while the swapchain stores the requested format. Formats
+/// without an sRGB counterpart are only accepted when they are already linear
+/// (float targets); everything else falls back to the automatic sRGB pick.
+pub(crate) fn resolve_surface_format(
+    formats: &[wgpu::TextureFormat],
+    requested: Option<wgpu::TextureFormat>,
+) -> Option<ResolvedSurfaceFormat> {
+    let automatic = || {
+        pick_format(formats).map(|format| ResolvedSurfaceFormat {
+            config: format,
+            render: format,
+            view_formats: Vec::new(),
+        })
+    };
+
+    let Some(want) = requested else {
+        return automatic();
+    };
+    if !formats.contains(&want) {
+        log::warn!(
+            "sequoia-render: surface format {:?} is unavailable on this surface - using the default",
+            want
+        );
+        return automatic();
+    }
+    if want.is_srgb() {
+        return Some(ResolvedSurfaceFormat {
+            config: want,
+            render: want,
+            view_formats: Vec::new(),
+        });
+    }
+    let srgb = want.add_srgb_suffix();
+    if srgb != want {
+        return Some(ResolvedSurfaceFormat {
+            config: want,
+            render: srgb,
+            view_formats: vec![srgb],
+        });
+    }
+    if is_linear_float(want) {
+        return Some(ResolvedSurfaceFormat {
+            config: want,
+            render: want,
+            view_formats: Vec::new(),
+        });
+    }
+    log::warn!(
+        "sequoia-render: surface format {:?} has no safe sRGB view - using the default",
+        want
+    );
+    automatic()
+}
+
+/// Returns whether `format` can be used as a sampled render target.
+pub(crate) fn texture_format_usable(device: &wgpu::Device, format: wgpu::TextureFormat) -> bool {
+    if !format.has_color_aspect() || format.is_depth_stencil_format() || format.is_compressed() {
+        return false;
+    }
+    let required = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+    if !format
+        .guaranteed_format_features(device.features())
+        .allowed_usages
+        .contains(required)
+    {
+        return false;
+    }
+    matches!(
+        format.sample_type(None, Some(device.features())),
+        Some(wgpu::TextureSampleType::Float { filterable: true })
+    )
+}
+
+/// Returns the first usable offscreen surface format for `device`.
+pub(crate) fn default_surface_format(device: &wgpu::Device) -> wgpu::TextureFormat {
+    [
+        DEFAULT_SURFACE_FORMAT,
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        wgpu::TextureFormat::Bgra8Unorm,
+    ]
+    .into_iter()
+    .find(|format| texture_format_usable(device, *format))
+    .unwrap_or(DEFAULT_SURFACE_FORMAT)
+}
+
+/// Clamps a requested MSAA sample count to what `format` supports.
+pub(crate) fn supported_samples(format: wgpu::TextureFormat, samples: u32) -> u32 {
+    let samples = crate::surface::sanitize_samples(samples);
+    if format
+        .guaranteed_format_features(wgpu::Features::empty())
+        .flags
+        .sample_count_supported(samples)
+    {
+        samples
+    } else {
+        1
+    }
+}
+
 pub(crate) fn instance_ceiling(device: &wgpu::Device, item_bytes: usize) -> usize {
     ceiling_for(device.limits().max_buffer_size, item_bytes)
 }

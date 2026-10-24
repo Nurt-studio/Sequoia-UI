@@ -14,6 +14,11 @@ use sequoia_core::{Color, Edges, Length, Rect};
 use sequoia_view::{KeyEvent, LayoutStyle, PointerEvent, SurfaceInputBinding, Unit, View};
 
 /// State handed to a [`WgpuRenderer`] for one draw call.
+///
+/// `format` is the actual format of `target`; create pipelines for this format.
+/// sRGB targets expect linear color output and encode it in hardware. Non-sRGB
+/// targets store shader output as-is, so write values in that format's space
+/// (normally linear). Cached surface content uses straight alpha.
 pub struct WgpuFrame<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
@@ -35,6 +40,11 @@ impl WgpuFrame<'_> {
     /// Requests another frame from the host renderer.
     pub fn request_frame(&self) {
         self.redraw.set(true);
+    }
+
+    /// Returns the color space implied by the current target format.
+    pub fn color_space(&self) -> crate::color::ColorSpace {
+        crate::color::ColorSpace::of(self.format)
     }
 }
 
@@ -131,6 +141,7 @@ pub(crate) struct SurfaceBinding {
     pub(crate) key: usize,
     pub(crate) cached: bool,
     pub(crate) samples: u32,
+    pub(crate) format: Option<wgpu::TextureFormat>,
     pub(crate) check_dirty: Box<dyn Fn() -> bool>,
     pub(crate) mark_clean: RefCell<Box<dyn FnMut()>>,
 }
@@ -165,6 +176,7 @@ pub struct WgpuSurface<R> {
     pub(crate) padding: Edges,
     pub(crate) cached: bool,
     pub(crate) samples: u32,
+    pub(crate) format: Option<wgpu::TextureFormat>,
     pub(crate) on_pointer: Option<Rc<dyn Fn(&PointerEvent, Rect)>>,
     pub(crate) on_key: Option<Rc<dyn Fn(&KeyEvent)>>,
     pub(crate) click_through: bool,
@@ -183,6 +195,7 @@ impl<R> Clone for WgpuSurface<R> {
             padding: self.padding,
             cached: self.cached,
             samples: self.samples,
+            format: self.format,
             on_pointer: self.on_pointer.clone(),
             on_key: self.on_key.clone(),
             click_through: self.click_through,
@@ -208,6 +221,7 @@ impl<R: WgpuRenderer + 'static> WgpuSurface<R> {
             padding: Edges::ZERO,
             cached: false,
             samples: 1,
+            format: None,
             on_pointer: None,
             on_key: None,
             click_through: false,
@@ -326,6 +340,26 @@ impl<R: WgpuRenderer + 'static> WgpuSurface<R> {
         self
     }
 
+    /// Renders this surface offscreen into `format`.
+    ///
+    /// Offscreen surfaces default to `Rgba8UnormSrgb` when no format is set.
+    ///
+    /// The format must be a renderable, filterable color format. sRGB formats
+    /// decode to linear when composited; non-sRGB formats are treated as linear.
+    /// If the format differs from the window target, the surface always renders
+    /// offscreen even when [`Self::cached`] is not enabled. Unsupported formats
+    /// fall back to the default offscreen format; [`WgpuFrame::format`] reports
+    /// the actual value.
+    pub fn format(mut self, format: wgpu::TextureFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    /// Returns the requested offscreen format, if any.
+    pub fn requested_format(&self) -> Option<wgpu::TextureFormat> {
+        self.format
+    }
+
     pub fn on_pointer(mut self, f: impl Fn(&PointerEvent, Rect) + 'static) -> Self {
         self.on_pointer = Some(Rc::new(f));
         self
@@ -420,6 +454,7 @@ impl<R: WgpuRenderer + 'static> View for WgpuSurface<R> {
             key,
             cached: self.cached,
             samples: self.samples,
+            format: self.format,
             check_dirty: Box::new(move || rc_dirty.borrow().is_dirty()),
             mark_clean: RefCell::new(Box::new(move || rc_clean.borrow_mut().mark_clean())),
         });

@@ -281,6 +281,19 @@ fn fs_blit(frag: VsBlit) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb * a, a);
 }
 
+// Cached surfaces are already linear: the offscreen format performs any
+// sRGB encode/decode, and non-sRGB targets are treated as linear.
+@fragment
+fn fs_blit_linear(frag: VsBlit) -> @location(0) vec4<f32> {
+    let clip = rounded_clip_cover(frag.world, frag.clip_rect, frag.clip_radius);
+    if (clip <= 0.001) {
+        discard;
+    }
+    let t = textureSample(blit_tex, blit_samp, frag.uv);
+    let a = t.a * clip;
+    return vec4<f32>(t.rgb * a, a);
+}
+
 // Backdrop blur, dimming, noise, and masking.
 struct VsBackdrop {
     @builtin(position) pos: vec4<f32>,

@@ -5,6 +5,7 @@
 //! compositing cached surfaces, backdrops, and filters.
 //!
 //! - [`gpu`] — pipelines, buffers, textures, and shaders.
+//! - [`color`] — color-space helpers for surface and texture formats.
 //! - [`pass`] — backdrop, filter, and GUI render passes.
 //! - [`renderer`] — frame orchestration and the top-level renderer.
 //! - [`scene`] — instance conversion and composite planning.
@@ -14,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod color;
 pub mod gpu;
 pub mod pass;
 pub mod renderer;
@@ -25,9 +27,12 @@ pub mod utils;
 #[cfg(test)]
 mod tests;
 
+pub use color::{ColorSpace, linear_to_srgb, srgb_to_linear};
 pub use renderer::GpuRenderer;
 pub use surface::{PendingFrames, Revision, WgpuFrame, WgpuRenderer, WgpuSurface};
 pub use types::{
     FrameSkip, GpuBackend, GpuOptions, PowerPreference, PresentMode, Region, RenderError,
     RenderStats,
 };
+
+pub use wgpu;

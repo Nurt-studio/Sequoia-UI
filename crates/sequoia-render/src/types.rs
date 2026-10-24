@@ -130,6 +130,7 @@ pub(crate) struct CachedSurface {
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) size: (u32, u32),
     pub(crate) samples: u32,
+    pub(crate) format: wgpu::TextureFormat,
     pub(crate) msaa: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
@@ -180,9 +181,23 @@ pub(crate) const MAX_FRAME_QUADS: usize = 512;
 
 pub(crate) const MAX_BLITS: usize = 64;
 
-pub(crate) const CACHE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+pub(crate) const DEFAULT_SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 pub(crate) const SHARED_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+
+/// Surface formats selected for a window swapchain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedSurfaceFormat {
+    /// Format reported by [`wgpu::SurfaceConfiguration::format`].
+    pub(crate) config: wgpu::TextureFormat,
+    /// Format used by render pipelines and texture views.
+    ///
+    /// This is usually the same as `config`, except for non-sRGB 8-bit formats
+    /// where an sRGB view is used to keep blending in linear light.
+    pub(crate) render: wgpu::TextureFormat,
+    /// Additional view formats declared on the surface configuration.
+    pub(crate) view_formats: Vec<wgpu::TextureFormat>,
+}
 
 /// A contiguous range of instances sharing one pipeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -369,6 +384,8 @@ pub struct GpuOptions {
     pub backend: GpuBackend,
     pub present_mode: PresentMode,
     pub power_preference: PowerPreference,
+    /// Preferred swapchain format. `None` selects an sRGB format when available.
+    pub surface_format: Option<wgpu::TextureFormat>,
 }
 
 impl GpuOptions {
@@ -389,6 +406,15 @@ impl GpuOptions {
     /// Sets the adapter power preference.
     pub fn power_preference(mut self, power: PowerPreference) -> Self {
         self.power_preference = power;
+        self
+    }
+
+    /// Requests a specific swapchain format.
+    ///
+    /// Unsupported formats fall back to the default sRGB selection. Non-sRGB
+    /// 8-bit formats are rendered through an sRGB view so blending stays linear.
+    pub fn surface_format(mut self, format: wgpu::TextureFormat) -> Self {
+        self.surface_format = Some(format);
         self
     }
 }

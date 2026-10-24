@@ -14,6 +14,7 @@ pub use sequoia_export as export;
 pub use sequoia_input as input;
 pub use sequoia_layout as layout;
 pub use sequoia_platform as platform;
+pub use sequoia_platform::wgpu;
 pub use sequoia_platform::{
     Accelerator, AcceleratorCtx, App, CliArgs, DockLayoutStore, Executor, FileFilter,
     GlobalHotkeys, HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles,

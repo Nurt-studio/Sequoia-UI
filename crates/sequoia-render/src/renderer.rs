@@ -34,6 +34,7 @@ pub struct GpuRenderer {
     pub(crate) backend: GpuBackend,
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    pub(crate) render_format: wgpu::TextureFormat,
     pub(crate) quad_pipeline: wgpu::RenderPipeline,
     pub(crate) quad_pipeline_opaque: wgpu::RenderPipeline,
     pub(crate) glyph_pipeline: wgpu::RenderPipeline,
@@ -47,6 +48,7 @@ pub struct GpuRenderer {
     pub(crate) blit_buf: wgpu::Buffer,
     pub(crate) blit_cap: usize,
     pub(crate) blit_pipeline: wgpu::RenderPipeline,
+    pub(crate) surface_blit_pipeline: wgpu::RenderPipeline,
     pub(crate) blit_sampler: wgpu::Sampler,
     pub(crate) present_buf: wgpu::Buffer,
     pub(crate) present_cap: usize,
@@ -80,6 +82,7 @@ pub struct GpuRenderer {
     pub(crate) skipped: Cell<Option<FrameSkip>>,
     pub(crate) stats: RenderStats,
     pub(crate) warned_filter_combo: bool,
+    pub(crate) warned_cached_formats: Vec<wgpu::TextureFormat>,
     pub(crate) scratch_quads: Vec<GpuQuad>,
     pub(crate) scratch_glyphs: Vec<GpuGlyph>,
     pub(crate) scratch_runs: Vec<GuiRun>,
@@ -205,7 +208,20 @@ impl GpuRenderer {
         }));
 
         let caps = surface.get_capabilities(&adapter);
-        let format = pick_format(&caps.formats).ok_or(RenderError::NoAdapter)?;
+        let mut resolved = resolve_surface_format(&caps.formats, options.surface_format)
+            .ok_or(RenderError::NoAdapter)?;
+        if !resolved.view_formats.is_empty()
+            && !adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS)
+        {
+            log::warn!(
+                "sequoia-render: surface view formats are unavailable - using the default sRGB format"
+            );
+            resolved = resolve_surface_format(&caps.formats, None).ok_or(RenderError::NoAdapter)?;
+        }
+        let format = resolved.render;
         let present_mode = resolve_present_mode(&caps.present_modes, options.present_mode);
         if present_mode != options.present_mode.wgpu() {
             log::warn!(
@@ -216,12 +232,12 @@ impl GpuRenderer {
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
+            format: resolved.config,
             width: width.max(1),
             height: height.max(1),
             present_mode,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
+            view_formats: resolved.view_formats,
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
@@ -340,6 +356,9 @@ impl GpuRenderer {
 
         let blit_pipeline = create_blit_pipeline(&device, &shader, &glyph_layout, format, blend);
 
+        let surface_blit_pipeline =
+            create_surface_blit_pipeline(&device, &shader, &glyph_layout, format, blend);
+
         let backdrop_buf = vertex_buffer(
             &device,
             "sequoia-backdrops",
@@ -365,10 +384,12 @@ impl GpuRenderer {
             backend: options.backend,
             surface,
             config,
+            render_format: format,
             quad_pipeline,
             quad_pipeline_opaque,
             glyph_pipeline,
             blit_pipeline,
+            surface_blit_pipeline,
             blit_sampler,
             backdrop_buf,
             backdrop_cap: INITIAL_BACKDROP_CAPACITY,
@@ -411,6 +432,7 @@ impl GpuRenderer {
             skipped: Cell::new(None),
             stats: RenderStats::default(),
             warned_filter_combo: false,
+            warned_cached_formats: Vec::new(),
             scratch_quads: Vec::with_capacity(INITIAL_QUAD_CAPACITY),
             scratch_glyphs: Vec::with_capacity(INITIAL_GLYPH_CAPACITY),
             scratch_runs: Vec::new(),
@@ -438,6 +460,16 @@ impl GpuRenderer {
         self.backend
     }
 
+    /// Returns the swapchain format used by the window.
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
+    /// Returns the format used by render pipelines and offscreen targets.
+    pub fn render_format(&self) -> wgpu::TextureFormat {
+        self.render_format
+    }
+
     /// Consumes a pending redraw request made through [`WgpuFrame::request_frame`].
     pub fn take_redraw_request(&self) -> bool {
         self.redraw.take()
@@ -456,6 +488,24 @@ impl GpuRenderer {
     /// Returns the accumulated render statistics and resets the counters.
     pub fn take_stats(&mut self) -> RenderStats {
         std::mem::take(&mut self.stats)
+    }
+
+    fn cached_surface_format(
+        device: &wgpu::Device,
+        warned: &mut Vec<wgpu::TextureFormat>,
+        requested: wgpu::TextureFormat,
+    ) -> wgpu::TextureFormat {
+        if texture_format_usable(device, requested) {
+            return requested;
+        }
+        if !warned.contains(&requested) {
+            warned.push(requested);
+            log::warn!(
+                "sequoia-render: surface format {:?} cannot be used as an offscreen target - using the default",
+                requested
+            );
+        }
+        default_surface_format(device)
     }
 
     /// Sets the color used to clear the window and cached surfaces.
@@ -546,9 +596,10 @@ impl GpuRenderer {
                 }
             }
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: (self.render_format != self.config.format).then_some(self.render_format),
+            ..Default::default()
+        });
 
         let mut encoder = self
             .device
@@ -592,7 +643,9 @@ impl GpuRenderer {
                     (frame_quads.len() - before.max(MAX_FRAME_QUADS)) as u64;
                 log::debug!("sequoia-render: frame quad budget exceeded (max {MAX_FRAME_QUADS})");
             }
-            if binding.cached {
+            let offscreen =
+                binding.cached || binding.format.is_some_and(|f| f != self.render_format);
+            if offscreen {
                 if !seen.contains(&binding.key) {
                     seen.push(binding.key);
                 }
@@ -660,9 +713,15 @@ impl GpuRenderer {
         blit_quads.clear();
         blit_keys.clear();
         for job in cached.iter() {
-            let samples = job.binding.samples;
+            let requested = job.binding.format.unwrap_or(DEFAULT_SURFACE_FORMAT);
+            let format = Self::cached_surface_format(
+                &self.device,
+                &mut self.warned_cached_formats,
+                requested,
+            );
+            let samples = supported_samples(format, job.binding.samples);
             let recreate = match self.surface_tex.get(&job.binding.key) {
-                Some(e) => e.size != job.size || e.samples != samples,
+                Some(e) => e.size != job.size || e.samples != samples || e.format != format,
                 None => true,
             };
             if recreate {
@@ -680,13 +739,14 @@ impl GpuRenderer {
                         &self.blit_sampler,
                         job.size,
                         samples,
+                        format,
                     ),
                 );
             }
             if recreate || (job.binding.check_dirty)() {
                 let entry = &self.surface_tex[&job.binding.key];
 
-                let clear = clear_color_authored(self.clear_color);
+                let clear = clear_color_linear(self.clear_color);
                 let bg = job.binding.frame.background.map_or(clear, |c| wgpu::Color {
                     r: c[0] as f64,
                     g: c[1] as f64,
@@ -730,7 +790,7 @@ impl GpuRenderer {
                     encoder: &mut encoder,
                     target: app_target,
                     depth: None,
-                    format: CACHE_FORMAT,
+                    format: entry.format,
                     size: entry.size,
                     scale: s,
                     region: Region {
@@ -1290,7 +1350,7 @@ impl GpuRenderer {
                 encoder: &mut encoder,
                 target: scene_target,
                 depth: depth_view,
-                format: self.config.format,
+                format: self.render_format,
                 size: fb,
                 scale: s,
                 region: regions[0].0,
@@ -1333,7 +1393,7 @@ impl GpuRenderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_pipeline(&self.blit_pipeline);
+                pass.set_pipeline(&self.surface_blit_pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.set_vertex_buffer(0, self.blit_buf.slice(..));
                 for (i, key) in blit_keys.iter().enumerate() {
@@ -1662,7 +1722,7 @@ impl GpuRenderer {
                 });
 
                 if !blit_quads.is_empty() {
-                    pass.set_pipeline(&self.blit_pipeline);
+                    pass.set_pipeline(&self.surface_blit_pipeline);
                     pass.set_bind_group(0, &self.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.blit_buf.slice(..));
                     for (i, key) in blit_keys.iter().enumerate() {

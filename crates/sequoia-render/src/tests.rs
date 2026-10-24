@@ -3,6 +3,7 @@
 //! Rendering itself requires a GPU adapter, so most tests exercise the pure
 //! conversion and planning paths.
 
+use crate::color::{ColorSpace, linear_to_srgb, srgb_to_linear};
 use crate::gpu::shaders::SHADER;
 use crate::renderer::GpuRenderer;
 use crate::scene::grouping::*;
@@ -113,6 +114,14 @@ fn gpu_options_carry_present_mode_and_power() {
     let default = GpuOptions::default();
     assert_eq!(default.present_mode, PresentMode::Vsync);
     assert_eq!(default.power_preference, PowerPreference::HighPerformance);
+    assert_eq!(default.surface_format, None);
+}
+
+#[test]
+fn gpu_options_carry_surface_format() {
+    let opts = GpuOptions::with_backend(GpuBackend::Vulkan)
+        .surface_format(wgpu::TextureFormat::Bgra8Unorm);
+    assert_eq!(opts.surface_format, Some(wgpu::TextureFormat::Bgra8Unorm));
 }
 
 #[test]
@@ -1341,6 +1350,88 @@ fn samples_plumbing_reaches_binding() {
         4,
         "sanitize in builder"
     );
+}
+
+#[test]
+fn surface_format_plumbing_reaches_binding() {
+    use sequoia_text::TextSystem;
+    use sequoia_view::Runtime;
+    fn format_of(surface: WgpuSurface<Stub>) -> Option<wgpu::TextureFormat> {
+        let rt = Runtime::new();
+        rt.mount(surface);
+        let mut text = TextSystem::new();
+        let mut list = RenderList::new();
+        rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
+        rt.paint(&mut list, &mut text);
+        let draws = rt.take_surface_draws();
+        assert_eq!(draws.len(), 1);
+        draws[0]
+            .target
+            .clone()
+            .downcast::<SurfaceBinding>()
+            .map(|b| b.format)
+            .unwrap_or(None)
+    }
+    let surface = WgpuSurface::new(Stub).width(100.0).height(60.0);
+    assert_eq!(
+        format_of(surface),
+        None,
+        "default follows the window format"
+    );
+    let surface = WgpuSurface::new(Stub)
+        .format(wgpu::TextureFormat::Rgba16Float)
+        .width(100.0)
+        .height(60.0);
+    assert_eq!(
+        format_of(surface),
+        Some(wgpu::TextureFormat::Rgba16Float),
+        "builder reaches the binding"
+    );
+}
+
+#[test]
+fn resolves_requested_surface_formats() {
+    use wgpu::TextureFormat as F;
+    let srgb = resolve_surface_format(&[F::Bgra8Unorm, F::Bgra8UnormSrgb], Some(F::Bgra8UnormSrgb))
+        .unwrap();
+    assert_eq!(srgb.config, F::Bgra8UnormSrgb);
+    assert_eq!(srgb.render, F::Bgra8UnormSrgb);
+    assert!(srgb.view_formats.is_empty());
+
+    let unorm = resolve_surface_format(&[F::Bgra8Unorm], Some(F::Bgra8Unorm)).unwrap();
+    assert_eq!(unorm.config, F::Bgra8Unorm);
+    assert_eq!(unorm.render, F::Bgra8UnormSrgb);
+    assert_eq!(unorm.view_formats, vec![F::Bgra8UnormSrgb]);
+
+    let float = resolve_surface_format(&[F::Rgba16Float], Some(F::Rgba16Float)).unwrap();
+    assert_eq!(float.config, F::Rgba16Float);
+    assert_eq!(float.render, F::Rgba16Float);
+    assert!(float.view_formats.is_empty());
+
+    let fallback = resolve_surface_format(&[F::Rgba8UnormSrgb], Some(F::Rgba16Float)).unwrap();
+    assert_eq!(fallback.config, F::Rgba8UnormSrgb);
+    assert_eq!(fallback.render, F::Rgba8UnormSrgb);
+
+    let no_view =
+        resolve_surface_format(&[F::Rgb10a2Unorm, F::Bgra8UnormSrgb], Some(F::Rgb10a2Unorm))
+            .unwrap();
+    assert_eq!(no_view.config, F::Bgra8UnormSrgb);
+    assert_eq!(no_view.render, F::Bgra8UnormSrgb);
+    assert!(no_view.view_formats.is_empty());
+
+    let default = resolve_surface_format(&[F::Bgra8Unorm, F::Bgra8UnormSrgb], None).unwrap();
+    assert_eq!(default.config, F::Bgra8UnormSrgb);
+    assert_eq!(default.render, F::Bgra8UnormSrgb);
+}
+
+#[test]
+fn color_space_matches_format() {
+    use wgpu::TextureFormat as F;
+    assert_eq!(ColorSpace::of(F::Rgba8UnormSrgb), ColorSpace::Srgb);
+    assert_eq!(ColorSpace::of(F::Bgra8Unorm), ColorSpace::Linear);
+    assert_eq!(ColorSpace::of(F::Rgba16Float), ColorSpace::Linear);
+    assert!((srgb_to_linear(0.5) - 0.214).abs() < 0.005);
+    assert!((linear_to_srgb(0.214) - 0.5).abs() < 0.005);
 }
 
 fn pointer_tag(ev: &PointerEvent) -> &'static str {
