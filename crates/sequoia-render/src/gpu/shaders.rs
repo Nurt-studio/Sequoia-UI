@@ -142,15 +142,21 @@ fn fs_quad(frag: VsQuad) -> @location(0) vec4<f32> {
         inner = rounded_box_cover(p, frag.half_size - vec2<f32>(bw, bw), frag.radius - bw);
     }
     let ring = clamp(outer - inner, 0.0, 1.0);
-    let a_b = frag.border_color.a * ring;
-    let a_f = frag.color.a * inner;
-    var a_out = a_b + a_f * (1.0 - a_b);
-    a_out = a_out * clip;
+    // The fill covers the whole shape and the border sits on top of it. At the
+    // antialiased inner edge both cover the same pixel, so compositing the
+    // border over the *inner* fill leaves a translucent seam. Compose the
+    // border over the fill across `outer` instead: ring and inner partition the
+    // shape, and the fill under the ring is hidden only where the border is.
+    let fill_a = frag.color.a;
+    let border_a = frag.border_color.a;
+    let a_fill = fill_a * outer;
+    let a_border = border_a * ring;
+    let a_out = clamp(a_fill + a_border * (1.0 - fill_a), 0.0, 1.0) * clip;
     if (a_out <= 0.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
-    let rgb = (frag.border_color.rgb * a_b + frag.color.rgb * a_f * (1.0 - a_b)) / max(a_b + a_f * (1.0 - a_b), 0.0001);
-    return vec4<f32>(rgb * a_out, a_out);
+    let rgb = frag.color.rgb * a_fill + (frag.border_color.rgb - frag.color.rgb * fill_a) * a_border;
+    return vec4<f32>(rgb * clip, a_out);
 }
 
 // Glyph atlas sampling.
