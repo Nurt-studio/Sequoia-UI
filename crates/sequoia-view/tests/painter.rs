@@ -90,6 +90,51 @@ fn gradient_is_single_gpu_item() {
 }
 
 #[test]
+fn radial_gradient_fallback_draws_concentric_circles() {
+    struct RG;
+    impl View for RG {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn layout_style(&self) -> LayoutStyle {
+            LayoutStyle::default()
+                .width(Length::Px(100.0))
+                .height(Length::Px(100.0))
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            let mut g = Painter::new(ctx);
+            let stops = GradientStops::new(vec![
+                CoreGradientStop::new(0.0, Color::RED),
+                CoreGradientStop::new(0.25, Color::GREEN),
+                CoreGradientStop::new(0.5, Color::BLUE),
+                CoreGradientStop::new(0.75, Color::WHITE),
+                CoreGradientStop::new(1.0, Color::BLACK),
+            ]);
+            g.circle(Point::new(50.0, 50.0), 50.0, Fill::radial(stops));
+        }
+    }
+
+    let list = paint(RG, 100.0, 100.0);
+    assert_eq!(list.gradient_count(), 0, "fallback uses bands");
+    let quads: Vec<_> = list.quads().collect();
+    assert_eq!(quads.len(), 64);
+    for q in &quads {
+        let half = q.rect.size.width * 0.5;
+        assert!((q.rect.size.width - q.rect.size.height).abs() < 0.01);
+        assert!((q.radius - half).abs() < 0.01, "band must be a disc");
+        assert!((q.rect.left() + half - 50.0).abs() < 0.01);
+        assert!((q.rect.top() + half - 50.0).abs() < 0.01);
+    }
+    let outer = quads.first().expect("outer band");
+    let inner = quads.last().expect("inner band");
+    assert!((outer.rect.size.width - 100.0).abs() < 0.01);
+    assert!((inner.rect.size.width - 100.0 / 64.0).abs() < 0.01);
+}
+
+#[test]
 fn rounded_gradient_keeps_radius_and_corners() {
     struct RGrad;
     impl View for RGrad {

@@ -768,16 +768,17 @@ impl<'a, 'b> Painter<'a, 'b> {
             return rect;
         }
 
-        self.push_gradient_bands(rect, kind, stops)
+        self.push_gradient_bands(rect, radius, kind, stops)
     }
 
     fn push_gradient_bands(
         &mut self,
         rect: Rect,
+        shape_radius: f32,
         kind: GradientKind,
         stops: GradientStops,
     ) -> Rect {
-        const BANDS: usize = 48;
+        const RADIAL_BANDS: usize = 64;
         let vertical = match kind {
             GradientKind::Linear { angle_deg } => {
                 let (dx, dy) = GradientKind::Linear { angle_deg }.direction();
@@ -788,20 +789,36 @@ impl<'a, 'b> Painter<'a, 'b> {
         let global = self.to_global_rect(rect);
         let mut bounds = Rect::ZERO;
         match kind {
-            GradientKind::Radial { .. } => {
-                for i in (0..BANDS).rev() {
-                    let t0 = i as f32 / BANDS as f32;
-                    let t1 = (i + 1) as f32 / BANDS as f32;
+            GradientKind::Radial { radius } => {
+                let center = Point::new(
+                    global.left() + global.size.width * 0.5,
+                    global.top() + global.size.height * 0.5,
+                );
+                let extent = if radius > 0.0 {
+                    radius
+                } else {
+                    global.size.width.hypot(global.size.height) * 0.5
+                };
+                if extent <= 0.0 {
+                    return Rect::ZERO;
+                }
+                if shape_radius > 0.0 {
+                    self.ctx.push_rounded_clip(global, shape_radius);
+                } else {
+                    self.ctx.list.push_clip(global);
+                }
+                for i in (0..RADIAL_BANDS).rev() {
+                    let t0 = i as f32 / RADIAL_BANDS as f32;
+                    let t1 = (i + 1) as f32 / RADIAL_BANDS as f32;
                     let [r, g, b, a] = stops.sample_linear((t0 + t1) * 0.5);
                     let color = Color { r, g, b, a }.from_linear();
-                    let w = global.size.width * (t1 - t0);
-                    let cx = global.left() + global.size.width * t1 - w * 0.5;
-                    let cy = global.top() + global.size.height * 0.5;
-                    let h = global.size.height * (t1 - t0);
-                    let band = Rect::from_xywh(cx - w * 0.5, cy - h * 0.5, w, h);
-                    self.ctx.list.push_quad(band, color, 0.0);
-                    bounds = bounds.union(band);
+                    let r1 = extent * t1;
+                    let band =
+                        Rect::from_xywh(center.x - r1, center.y - r1, r1 * 2.0, r1 * 2.0);
+                    self.ctx.list.push_quad(band, color, r1);
                 }
+                self.ctx.pop_clip();
+                bounds = global;
             }
             GradientKind::Linear { .. } => {
                 let extent = if vertical {
