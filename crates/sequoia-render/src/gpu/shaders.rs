@@ -105,6 +105,12 @@ fn rounded_clip_cover(world: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) 
     return rounded_box_cover(p, half, max(clip_radius, 0.0));
 }
 
+fn hash12(p: vec2<f32>) -> f32 {
+    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
 @fragment
 fn fs_quad(frag: VsQuad) -> @location(0) vec4<f32> {
     let clip = rounded_clip_cover(frag.world, frag.clip_rect, frag.clip_radius);
@@ -118,16 +124,19 @@ fn fs_quad(frag: VsQuad) -> @location(0) vec4<f32> {
             let half = frag.half_size - vec2<f32>(frag.spread, frag.spread);
             d = sd_rounded_box(abs(frag.local - frag.shadow_offset), half, frag.radius);
             let shape = rounded_box_cover(abs(frag.local), frag.half_size, frag.radius + frag.spread);
-            t = clamp(0.5 + d / frag.softness, 0.0, 1.0) * shape;
+            t = smoothstep(0.0, 1.0, clamp(0.5 + d / frag.softness, 0.0, 1.0)) * shape;
         } else {
             d = sd_rounded_box(abs(frag.local), frag.half_size - vec2<f32>(frag.softness, frag.softness), frag.radius);
-            t = clamp(0.5 - d / frag.softness, 0.0, 1.0);
+            t = smoothstep(0.0, 1.0, clamp(0.5 - d / frag.softness, 0.0, 1.0));
         }
         let alpha = t * clip * frag.color.a;
         if (alpha <= 0.0) {
             discard;
         }
-        return vec4<f32>(frag.color.rgb * alpha, alpha);
+        // Quantize with a per-pixel hash so low-alpha falls band smoothly in
+        // 8-bit targets instead of showing concentric rings.
+        let alpha_q = floor(alpha * 255.0 + hash12(frag.world)) / 255.0;
+        return vec4<f32>(frag.color.rgb * alpha_q, alpha_q);
     }
     let p = abs(frag.local);
     let outer = rounded_box_cover(p, frag.half_size, frag.radius);
@@ -368,12 +377,6 @@ fn backdrop_weight(d: i32) -> f32 {
         return 4.0;
     }
     return 1.0;
-}
-
-fn hash12(p: vec2<f32>) -> f32 {
-    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
 }
 
 @fragment
