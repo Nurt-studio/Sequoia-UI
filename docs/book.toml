@@ -1,0 +1,16 @@
+[book]
+title = "Sequoia"
+description = "Native, reactive GUI framework for Rust built on wgpu"
+authors = ["Sequoia contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/Nurt-studio/Sequoia-UI"
+edit-url-template = "https://github.com/Nurt-studio/Sequoia-UI/edit/main/docs/{path}"
