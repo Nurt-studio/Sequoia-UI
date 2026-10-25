@@ -9,6 +9,11 @@
 - [Project structure](getting-started/project-structure.md)
 - [Examples](getting-started/examples.md)
 
+# Core concepts
+
+- [Reactivity](concepts/reactivity.md)
+- [Application lifecycle](concepts/app-lifecycle.md)
+
 # Contributing
 
 - [Documentation guide](contributing/documentation.md)

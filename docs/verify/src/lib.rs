@@ -12,4 +12,6 @@
 #![doc = include_str!("../../src/getting-started/first-app.md")]
 #![doc = include_str!("../../src/getting-started/project-structure.md")]
 #![doc = include_str!("../../src/getting-started/examples.md")]
+#![doc = include_str!("../../src/concepts/reactivity.md")]
+#![doc = include_str!("../../src/concepts/app-lifecycle.md")]
 #![doc = include_str!("../../src/contributing/documentation.md")]
