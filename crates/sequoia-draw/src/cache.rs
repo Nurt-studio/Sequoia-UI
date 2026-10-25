@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use sequoia_core::{Point, Rect};
+use sequoia_core::{Point, Rect, Vec2};
 
 use crate::path::{FillRule, Path};
 use crate::raster::{self, FillStyle, RasterOptions};
@@ -83,6 +83,7 @@ struct Key {
     fingerprint: u64,
     style: u64,
     opts: u64,
+    offset: u64,
 }
 
 #[derive(Debug)]
@@ -158,9 +159,30 @@ impl ShapeCache {
             fingerprint: path.fingerprint(),
             style: style.rule as u64,
             opts: opts_key(style.opts),
+            offset: 0,
         };
         self.get_or_build(key, |out| {
             raster::fill(path, style.rule, style.opts, out);
+        })
+    }
+
+    pub fn fill_offset(
+        &self,
+        path: &Path,
+        rule: FillRule,
+        opts: RasterOptions,
+        offset: Vec2,
+    ) -> Rc<Shape> {
+        let key = Key {
+            kind: 0,
+            fingerprint: path.fingerprint(),
+            style: rule as u64,
+            opts: opts_key(opts),
+            offset: offset_key(offset),
+        };
+        self.get_or_build(key, |out| {
+            let translated = path.translated(offset.x, offset.y);
+            raster::fill(&translated, rule, opts, out);
         })
     }
 
@@ -170,9 +192,30 @@ impl ShapeCache {
             fingerprint: path.fingerprint(),
             style: style.fingerprint(),
             opts: opts_key(opts),
+            offset: 0,
         };
         self.get_or_build(key, |out| {
             stroke::stroke_path(path, style, opts, out);
+        })
+    }
+
+    pub fn stroke_offset(
+        &self,
+        path: &Path,
+        style: &StrokeStyle,
+        opts: RasterOptions,
+        offset: Vec2,
+    ) -> Rc<Shape> {
+        let key = Key {
+            kind: 1,
+            fingerprint: path.fingerprint(),
+            style: style.fingerprint(),
+            opts: opts_key(opts),
+            offset: offset_key(offset),
+        };
+        self.get_or_build(key, |out| {
+            let translated = path.translated(offset.x, offset.y);
+            stroke::stroke_path(&translated, style, opts, out);
         })
     }
 
@@ -187,6 +230,7 @@ impl ShapeCache {
             fingerprint: contours_fingerprint(contours),
             style: rule as u64,
             opts: opts_key(opts),
+            offset: 0,
         };
         self.get_or_build(key, |out| {
             raster::fill_contours(contours, rule, opts, out);
@@ -259,6 +303,16 @@ impl ShapeCache {
         );
         shape
     }
+}
+
+fn offset_key(offset: Vec2) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for v in [offset.x, offset.y] {
+        let v = if v == 0.0 { 0.0 } else { v };
+        hash ^= u64::from(v.to_bits());
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 fn opts_key(opts: RasterOptions) -> u64 {

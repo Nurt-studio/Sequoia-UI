@@ -75,6 +75,29 @@ impl PaintCtx<'_> {
         RasterOptions::default().for_scale(self.scale_factor())
     }
 
+    fn subpixel_draw_offset(&self) -> (Vec2, Vec2) {
+        let scale = self.scale_factor();
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        let px = 1.0 / scale;
+        let step = px * 0.25;
+        let split = |v: f32| {
+            if !v.is_finite() {
+                return (0.0, 0.0);
+            }
+            let whole = (v / px).round() * px;
+            let sub = v - whole;
+            let sub = (sub / step).round() * step;
+            (whole, sub)
+        };
+        let (wx, sx) = split(self.draw_offset.x);
+        let (wy, sy) = split(self.draw_offset.y);
+        (Vec2::new(wx, wy), Vec2::new(sx, sy))
+    }
+
     pub fn translate(&mut self, dx: f32, dy: f32) {
         self.draw_offset.x += dx;
         self.draw_offset.y += dy;
@@ -232,14 +255,16 @@ impl PaintCtx<'_> {
 
     pub fn fill_rule(&mut self, path: &Path, rule: FillRule, color: Color) -> Rect {
         let opts = self.raster_options();
-        let shape = self.shapes.fill(path, rule, opts);
-        self.draw_shape(&shape, Point::ZERO, color)
+        let (whole, sub) = self.subpixel_draw_offset();
+        let shape = self.shapes.fill_offset(path, rule, opts, sub);
+        self.draw_shape_offset(&shape, whole, color)
     }
 
     pub fn stroke(&mut self, path: &Path, style: &StrokeStyle, color: Color) -> Rect {
         let opts = self.raster_options();
-        let shape = self.shapes.stroke(path, style, opts);
-        self.draw_shape(&shape, Point::ZERO, color)
+        let (whole, sub) = self.subpixel_draw_offset();
+        let shape = self.shapes.stroke_offset(path, style, opts, sub);
+        self.draw_shape_offset(&shape, whole, color)
     }
 
     pub fn shape(&mut self, shape: &Shape, color: Color) -> Rect {
@@ -248,6 +273,10 @@ impl PaintCtx<'_> {
 
     pub fn draw_shape(&mut self, shape: &Shape, at: Point, color: Color) -> Rect {
         let offset = Vec2::new(self.draw_offset.x + at.x, self.draw_offset.y + at.y);
+        self.draw_shape_offset(shape, offset, color)
+    }
+
+    fn draw_shape_offset(&mut self, shape: &Shape, offset: Vec2, color: Color) -> Rect {
         let mut bounds = Rect::ZERO;
         for span in shape.iter() {
             let rect = if offset.x == 0.0 && offset.y == 0.0 {
@@ -276,9 +305,11 @@ impl PaintCtx<'_> {
 
     pub fn fill_gradient_rule(&mut self, path: &Path, rule: FillRule, gradient: &Gradient) -> Rect {
         let opts = self.raster_options().analytic(false);
-        let shape = self.shapes.fill(path, rule, opts);
+        let (whole, sub) = self.subpixel_draw_offset();
+        let shape = self.shapes.fill_offset(path, rule, opts, sub);
         let band = self.band_px(GRADIENT_BAND_PX);
-        self.draw_shape_gradient(&shape, Point::ZERO, gradient, band)
+        let bands = self.shape_gradient_bands_offset(&shape, whole, gradient, band);
+        self.push_gradient_bands(&bands)
     }
 
     pub fn rounded_rect_gradient(&mut self, rect: Rect, radius: f32, gradient: &Gradient) -> Rect {
@@ -297,9 +328,11 @@ impl PaintCtx<'_> {
         gradient: &Gradient,
     ) -> Rect {
         let opts = self.raster_options().analytic(false);
-        let shape = self.shapes.stroke(path, style, opts);
+        let (whole, sub) = self.subpixel_draw_offset();
+        let shape = self.shapes.stroke_offset(path, style, opts, sub);
         let band = self.band_px(GRADIENT_BAND_PX);
-        self.draw_shape_gradient(&shape, Point::ZERO, gradient, band)
+        let bands = self.shape_gradient_bands_offset(&shape, whole, gradient, band);
+        self.push_gradient_bands(&bands)
     }
 
     pub fn shadow(
@@ -360,6 +393,16 @@ impl PaintCtx<'_> {
         band: f32,
     ) -> Vec<(Rect, Color, f32)> {
         let offset = Vec2::new(self.draw_offset.x + at.x, self.draw_offset.y + at.y);
+        self.shape_gradient_bands_offset(shape, offset, gradient, band)
+    }
+
+    fn shape_gradient_bands_offset(
+        &self,
+        shape: &Shape,
+        offset: Vec2,
+        gradient: &Gradient,
+        band: f32,
+    ) -> Vec<(Rect, Color, f32)> {
         let band = if band > 0.0 {
             band
         } else {

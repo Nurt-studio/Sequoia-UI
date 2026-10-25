@@ -88,6 +88,87 @@ fn paint_ctx_draws_paths_and_line() {
 }
 
 #[test]
+fn fractional_draw_offset_rasterizes_on_device_pixels() {
+    struct Triangle;
+    impl View for Triangle {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            let mut path = Path::new();
+            path.polygon(&[
+                Point::new(10.0, 10.0),
+                Point::new(70.0, 20.0),
+                Point::new(20.0, 70.0),
+            ]);
+            ctx.translate(0.3, 0.7);
+            ctx.fill(&path, Color::RED);
+        }
+    }
+
+    let quads = paint(Triangle, (100.0, 100.0));
+    let red: Vec<_> = quads
+        .iter()
+        .filter(|q| rgb(q.color) == rgb(Color::RED))
+        .collect();
+    assert!(!red.is_empty());
+    for q in red {
+        for v in [q.rect.left(), q.rect.top(), q.rect.right(), q.rect.bottom()] {
+            assert!((v - v.round()).abs() < 1e-3, "{:?}", q.rect);
+        }
+    }
+}
+
+#[test]
+fn subpixel_offset_reuses_rasterized_shape() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct Triangle {
+        offset: Rc<Cell<f32>>,
+    }
+    impl View for Triangle {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            let mut path = Path::new();
+            path.polygon(&[
+                Point::new(10.0, 10.0),
+                Point::new(70.0, 20.0),
+                Point::new(20.0, 70.0),
+            ]);
+            ctx.translate(self.offset.get(), 0.7);
+            ctx.fill(&path, Color::RED);
+        }
+    }
+
+    let offset = Rc::new(Cell::new(0.3));
+    let rt = Runtime::new();
+    rt.mount(Triangle {
+        offset: offset.clone(),
+    });
+    let mut text = TextSystem::new();
+    rt.layout(Rect::from_xywh(0.0, 0.0, 100.0, 100.0), &mut text);
+    let mut list = RenderList::new();
+    rt.paint(&mut list, &mut text);
+
+    offset.set(1.3);
+    let mut list2 = RenderList::new();
+    rt.paint(&mut list2, &mut text);
+
+    let stats = rt.shapes().stats();
+    assert_eq!(stats.misses, 1, "{stats:?}");
+    assert!(stats.hits >= 1, "{stats:?}");
+}
+
+#[test]
 fn draw_offset_moves_geometry_without_reuse_loss() {
     struct OffsetView;
     impl View for OffsetView {
