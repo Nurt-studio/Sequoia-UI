@@ -662,6 +662,76 @@ fn crisp_line_lands_on_a_pixel_boundary() {
 }
 
 #[test]
+fn plain_line_snaps_integer_hairlines() {
+    struct Hairline;
+    impl View for Hairline {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            ctx.line(
+                Point::new(0.0, 50.0),
+                Point::new(80.0, 50.0),
+                1.0,
+                Color::RED,
+            );
+        }
+    }
+
+    let quads = paint(Hairline, (100.0, 100.0));
+    let red: Vec<_> = quads
+        .iter()
+        .filter(|q| rgb(q.color) == rgb(Color::RED))
+        .collect();
+    assert_eq!(red.len(), 1, "{red:?}");
+    assert!((red[0].rect.top() - 50.0).abs() < 1e-3, "{:?}", red[0].rect);
+    assert!(
+        (red[0].rect.bottom() - 51.0).abs() < 1e-3,
+        "{:?}",
+        red[0].rect
+    );
+    assert!((red[0].color.a - 1.0).abs() < 1e-3, "{:?}", red[0].color);
+}
+
+#[test]
+fn crisp_line_preserves_half_pixel_hairline() {
+    struct Hairline;
+    impl View for Hairline {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            ctx.line_crisp(
+                Point::new(0.0, 50.5),
+                Point::new(80.0, 50.5),
+                1.0,
+                Color::RED,
+            );
+        }
+    }
+
+    let quads = paint(Hairline, (100.0, 100.0));
+    let red: Vec<_> = quads
+        .iter()
+        .filter(|q| rgb(q.color) == rgb(Color::RED))
+        .collect();
+    assert_eq!(red.len(), 1, "{red:?}");
+    assert!((red[0].rect.top() - 50.0).abs() < 1e-3, "{:?}", red[0].rect);
+    assert!(
+        (red[0].rect.bottom() - 51.0).abs() < 1e-3,
+        "{:?}",
+        red[0].rect
+    );
+    assert!((red[0].color.a - 1.0).abs() < 1e-3, "{:?}", red[0].color);
+}
+
+#[test]
 fn crisp_line_leaves_diagonals_alone() {
     struct Diagonal;
     impl View for Diagonal {

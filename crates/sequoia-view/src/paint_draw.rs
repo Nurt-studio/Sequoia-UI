@@ -953,6 +953,7 @@ impl PaintCtx<'_> {
     }
 
     pub fn line(&mut self, from: Point, to: Point, width: f32, color: Color) -> Rect {
+        let (from, to) = crisp_axis_line(from, to, width, self.scale_factor());
         self.line_styled(from, to, &line_style(width), color)
     }
 
@@ -1127,7 +1128,7 @@ fn shadow_radius(radius: f32, rect: Rect) -> f32 {
         .max(0.0)
 }
 
-fn crisp_axis_line(from: Point, to: Point, width: f32, scale: f32) -> (Point, Point) {
+pub(crate) fn crisp_axis_line(from: Point, to: Point, width: f32, scale: f32) -> (Point, Point) {
     let s = if scale.is_finite() && scale > 0.0 {
         scale
     } else {
@@ -1138,18 +1139,21 @@ fn crisp_axis_line(from: Point, to: Point, width: f32, scale: f32) -> (Point, Po
     if !width.is_finite() || width <= 0.0 || (width_px - width_px.round()).abs() > 0.01 {
         return (from, to);
     }
-    let half = if (width_px.round() as i64) % 2 != 0 {
-        px * 0.5
-    } else {
-        0.0
+    let odd = (width_px.round() as i64) % 2 != 0;
+    let snap = |v: f32| {
+        if odd {
+            ((v / px) - 0.5).round() * px + px * 0.5
+        } else {
+            (v / px).round() * px
+        }
     };
     let dx = (to.x - from.x).abs();
     let dy = (to.y - from.y).abs();
     if dy <= 1e-4 && dx > 1e-4 {
-        let y = (from.y / px).round() * px + half;
+        let y = snap(from.y);
         (Point::new(from.x, y), Point::new(to.x, y))
     } else if dx <= 1e-4 && dy > 1e-4 {
-        let x = (from.x / px).round() * px + half;
+        let x = snap(from.x);
         (Point::new(x, from.y), Point::new(x, to.y))
     } else {
         (from, to)

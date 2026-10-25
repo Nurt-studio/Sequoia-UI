@@ -60,6 +60,46 @@ fn local_rect_plus_origin_once() {
 }
 
 #[test]
+fn painter_line_snaps_integer_hairlines() {
+    struct Hairline;
+    impl View for Hairline {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn layout_style(&self) -> LayoutStyle {
+            LayoutStyle::default()
+                .width(Length::Px(100.0))
+                .height(Length::Px(100.0))
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            let mut g = Painter::new(ctx);
+            g.line(
+                Point::new(0.0, 50.0),
+                Point::new(80.0, 50.0),
+                BrushStroke::new(1.0),
+                Color::RED,
+            );
+        }
+    }
+
+    let list = paint(Hairline, 100.0, 100.0);
+    let red: Vec<_> = list
+        .quads()
+        .filter(|q| (q.color.r, q.color.g, q.color.b) == (1.0, 0.0, 0.0))
+        .collect();
+    assert_eq!(red.len(), 1, "{red:?}");
+    assert!((red[0].rect.top() - 50.0).abs() < 1e-3, "{:?}", red[0].rect);
+    assert!(
+        (red[0].rect.bottom() - 51.0).abs() < 1e-3,
+        "{:?}",
+        red[0].rect
+    );
+}
+
+#[test]
 fn gradient_is_single_gpu_item() {
     struct Grad;
     impl View for Grad {

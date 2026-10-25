@@ -6,6 +6,7 @@ use sequoia_core::{
 };
 use sequoia_text::FontWeight;
 
+use crate::paint_draw::crisp_axis_line;
 use crate::view::PaintCtx;
 
 pub struct Painter<'a, 'b> {
@@ -189,9 +190,16 @@ impl<'a, 'b> Painter<'a, 'b> {
             return Rect::ZERO;
         }
         let style = self.stroke_style(stroke);
+        let from = self.to_global_point(from);
+        let to = self.to_global_point(to);
+        let (from, to) = crisp_axis_line(
+            from,
+            to,
+            stroke.width * self.unit_scale(),
+            self.ctx.scale_factor(),
+        );
         let mut path = sequoia_draw::Path::new();
-        path.move_to(self.to_global_point(from))
-            .line_to(self.to_global_point(to));
+        path.move_to(from).line_to(to);
         let bounds = self.ctx.stroke(&path, &style, color);
         self.to_local_bounds(bounds)
     }
