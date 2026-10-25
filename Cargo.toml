@@ -24,6 +24,7 @@ members = [
     "crates/sequoia-ui",
     "crates/sequoia-export",
     "crates/sequoia-buffer",
+    "docs/verify",
     "example/paint",
 ]
 

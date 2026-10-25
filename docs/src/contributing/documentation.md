@@ -130,14 +130,18 @@ workspace:
 Run the checks from the workspace root after changing examples:
 
 ```text
-cargo build -p sequoia-ui
-mdbook test docs -L target/debug/deps
+mdbook build docs
+cargo test -p sequoia-docs-verify --doc
 cargo doc --workspace --no-deps
 ```
 
-The first command makes the facade crate available to the Rust code blocks.
-The last command catches broken intra-doc links and malformed documentation.
-When an example depends on an additional crate, add it to the test setup
+`sequoia-docs-verify` is a test-only crate. It includes the book pages with
+`#![doc = include_str!(...)]`, which lets Cargo compile every Rust block with
+the workspace dependencies and native library paths. When you add a page with
+Rust code, include it in `docs/verify/src/lib.rs`.
+
+`cargo doc` catches broken intra-doc links and malformed documentation. When
+an example depends on an additional crate, add it to the verification crate
 instead of marking the block as ignored.
 
 ## Images
