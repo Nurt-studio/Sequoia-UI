@@ -54,6 +54,7 @@ pub(crate) struct BlitQuad {
     pub(crate) transform_a: [f32; 4],
     pub(crate) transform_b: [f32; 2],
     pub(crate) opacity: f32,
+    pub(crate) nearest: f32,
 }
 
 /// Instance data for a gradient fill with up to four color stops.
@@ -160,7 +161,7 @@ pub(crate) const QUAD_BYTES: usize = 30 * 4;
 
 pub(crate) const GLYPH_BYTES: usize = 24 * 4;
 
-pub(crate) const BLIT_BYTES: usize = 20 * 4;
+pub(crate) const BLIT_BYTES: usize = 21 * 4;
 
 pub(crate) const BACKDROP_BYTES: usize = 20 * 4;
 

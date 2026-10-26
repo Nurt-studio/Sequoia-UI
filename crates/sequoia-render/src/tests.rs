@@ -615,7 +615,7 @@ fn runs_scale_instances() {
 
 #[test]
 fn runs_collect_images_in_paint_order() {
-    use sequoia_core::{ImageDraw, ImageSource};
+    use sequoia_core::{ImageDraw, ImageSampling, ImageSource};
     let img = |x: f32, id: u64| {
         RenderItem::Image(ImageDraw {
             rect: Rect::from_xywh(x, 0.0, 10.0, 10.0),
@@ -626,6 +626,7 @@ fn runs_collect_images_in_paint_order() {
                 height: 1,
                 data: std::sync::Arc::new(vec![0u8, 0, 0, 255]),
             },
+            sampling: ImageSampling::Linear,
         })
     };
     let items = vec![img(0.0, 7), img(10.0, 9)];
@@ -898,7 +899,9 @@ fn a_device_ceiling_counts_overflow_instead_of_hiding_it() {
 
 #[test]
 fn viewport_culls_offscreen_instances() {
-    use sequoia_core::{GlyphQuad, ImageDraw, ImageSource, Quad, Shadow, TextDraw, Vec2};
+    use sequoia_core::{
+        GlyphQuad, ImageDraw, ImageSampling, ImageSource, Quad, Shadow, TextDraw, Vec2,
+    };
     let vp = Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
     let quad = |x: f32, y: f32| {
         RenderItem::Quad(Quad {
@@ -936,6 +939,7 @@ fn viewport_culls_offscreen_instances() {
                 height: 1,
                 data: std::sync::Arc::new(vec![0u8, 0, 0, 255]),
             },
+            sampling: ImageSampling::Linear,
         }),
         RenderItem::Shadow(Shadow {
             rect: Rect::from_xywh(500.0, 500.0, 100.0, 60.0),

@@ -708,6 +708,15 @@ impl ImageSource {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ImageSampling {
+    #[default]
+    Linear,
+
+    Nearest,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageDraw {
     pub rect: Rect,
@@ -715,6 +724,8 @@ pub struct ImageDraw {
     pub uv: [f32; 4],
 
     pub source: ImageSource,
+
+    pub sampling: ImageSampling,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1372,6 +1383,16 @@ impl RenderList {
     }
 
     pub fn push_image(&mut self, rect: Rect, uv: [f32; 4], source: ImageSource) {
+        self.push_image_sampled(rect, uv, source, ImageSampling::Linear);
+    }
+
+    pub fn push_image_sampled(
+        &mut self,
+        rect: Rect,
+        uv: [f32; 4],
+        source: ImageSource,
+        sampling: ImageSampling,
+    ) {
         if !self.opacity_visible() {
             return;
         }
@@ -1386,8 +1407,12 @@ impl RenderList {
                 return;
             }
             let rounded = self.active_rounded_clip();
-            self.items
-                .push(RenderItem::Image(ImageDraw { rect, uv, source }));
+            self.items.push(RenderItem::Image(ImageDraw {
+                rect,
+                uv,
+                source,
+                sampling,
+            }));
             self.item_clips.push(rounded);
             self.item_transforms.push(t);
             return;
@@ -1404,6 +1429,7 @@ impl RenderList {
             rect: cr,
             uv,
             source,
+            sampling,
         }));
         self.item_clips.push(rounded);
         self.item_transforms.push(self.active_transform());

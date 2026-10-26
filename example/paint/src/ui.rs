@@ -512,7 +512,7 @@ fn paint_workspace(g: &mut Painter, state: &State, l: &Layout, pointer: Point) {
 
     g.clipped(l.viewport, |g| {
         g.fill(l.canvas, Fill::solid(Color::WHITE));
-        g.pixels(l.canvas, &state.doc);
+        g.pixels_nearest(l.canvas, &state.doc);
         if state.view.grid {
             paint_grid(g, state, l);
         }
@@ -610,7 +610,7 @@ fn paint_selection_and_preview(g: &mut Painter, state: &State, l: &Layout) {
     if let Some(sel) = &state.selection {
         let r = transform.rect_to_screen(sel.rect.as_rect());
         if let Some(pix) = &sel.floating {
-            g.pixels(r, pix);
+            g.pixels_nearest(r, pix);
         }
         ants(g, r);
     }
@@ -618,10 +618,16 @@ fn paint_selection_and_preview(g: &mut Painter, state: &State, l: &Layout) {
         let r = screen_rect_between(l, state, *start, state.pointer);
         ants(g, r);
     }
-    if let Drag::Shape { start, current, .. } = &state.drag {
+    if let Drag::Shape {
+        start,
+        current,
+        button,
+    } = &state.drag
+    {
         let (points, closed) = raster::shape_points(state.shape, *start, *current);
         let screen: Vec<Point> = points.iter().map(|p| doc_to_screen(l, state, *p)).collect();
         let width = (state.width() * zoom).max(1.0);
+        let outline = state.stroke_color(*button);
         if closed && state.fill != FillMode::Outline {
             g.polygon(&screen, state.color2);
         }
@@ -631,9 +637,9 @@ fn paint_selection_and_preview(g: &mut Painter, state: &State, l: &Layout) {
                 if let Some(first) = screen.first() {
                     all.push(*first);
                 }
-                g.polyline(&all, BrushStroke::round(width), state.color1);
+                g.polyline(&all, BrushStroke::round(width), outline);
             } else {
-                g.polyline(&screen, BrushStroke::round(width), state.color1);
+                g.polyline(&screen, BrushStroke::round(width), outline);
             }
         }
     }

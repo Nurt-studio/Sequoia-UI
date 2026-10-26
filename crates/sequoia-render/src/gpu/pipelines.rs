@@ -431,6 +431,11 @@ fn create_blit_pipeline_with(
                         offset: 76,
                         shader_location: 6,
                     },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32,
+                        offset: 80,
+                        shader_location: 7,
+                    },
                 ],
             }],
         },
@@ -579,6 +584,11 @@ pub(crate) fn create_present_pipeline(
                         format: wgpu::VertexFormat::Float32,
                         offset: 76,
                         shader_location: 6,
+                    },
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32,
+                        offset: 80,
+                        shader_location: 7,
                     },
                 ],
             }],

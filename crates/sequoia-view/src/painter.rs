@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 use sequoia_core::{
-    BrushStroke, Color, Fill, GradientKind, GradientStops, ImageSource, Pixels, Point, Rect, Size,
-    Transform, Vec2,
+    BrushStroke, Color, Fill, GradientKind, GradientStops, ImageSampling, ImageSource, Pixels,
+    Point, Rect, Size, Transform, Vec2,
 };
 use sequoia_text::FontWeight;
 
@@ -381,10 +381,25 @@ impl<'a, 'b> Painter<'a, 'b> {
 
     pub fn pixels(&mut self, rect: Rect, pixels: &Pixels) -> Rect {
         let full = Rect::from_xywh(0.0, 0.0, pixels.width() as f32, pixels.height() as f32);
-        self.pixels_region(rect, pixels, full)
+        self.pixels_region_sampled(rect, pixels, full, ImageSampling::Linear)
+    }
+
+    pub fn pixels_nearest(&mut self, rect: Rect, pixels: &Pixels) -> Rect {
+        let full = Rect::from_xywh(0.0, 0.0, pixels.width() as f32, pixels.height() as f32);
+        self.pixels_region_sampled(rect, pixels, full, ImageSampling::Nearest)
     }
 
     pub fn pixels_region(&mut self, dst: Rect, pixels: &Pixels, src: Rect) -> Rect {
+        self.pixels_region_sampled(dst, pixels, src, ImageSampling::Linear)
+    }
+
+    fn pixels_region_sampled(
+        &mut self,
+        dst: Rect,
+        pixels: &Pixels,
+        src: Rect,
+        sampling: ImageSampling,
+    ) -> Rect {
         if dst.is_empty() {
             return Rect::ZERO;
         }
@@ -392,7 +407,9 @@ impl<'a, 'b> Painter<'a, 'b> {
             return Rect::ZERO;
         };
         let global = self.to_global_rect(dst);
-        self.ctx.list.push_image(global, uv, pixels.to_source());
+        self.ctx
+            .list
+            .push_image_sampled(global, uv, pixels.to_source(), sampling);
         dst
     }
 

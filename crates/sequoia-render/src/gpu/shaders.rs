@@ -241,6 +241,7 @@ struct VsBlit {
     @location(2) clip_rect: vec4<f32>,
     @location(3) clip_radius: f32,
     @location(4) opacity: f32,
+    @location(5) nearest: f32,
 };
 
 @vertex
@@ -253,6 +254,7 @@ fn vs_blit(
     @location(4) transform_a: vec4<f32>,
     @location(5) transform_b: vec2<f32>,
     @location(6) opacity: f32,
+    @location(7) nearest: f32,
 ) -> VsBlit {
     let c = vec2<f32>(f32(vi & 1u), f32(vi >> 1u));
     var world = rect.xy + c * rect.zw;
@@ -272,6 +274,7 @@ fn vs_blit(
     out.clip_rect = clip_rect;
     out.clip_radius = clip_radius;
     out.opacity = opacity;
+    out.nearest = nearest;
     return out;
 }
 
@@ -289,7 +292,17 @@ fn fs_blit(frag: VsBlit) -> @location(0) vec4<f32> {
     if (clip <= 0.001) {
         discard;
     }
-    let t = textureSample(blit_tex, blit_samp, frag.uv);
+    var t = textureSample(blit_tex, blit_samp, frag.uv);
+    if (frag.nearest > 0.5) {
+        let size = textureDimensions(blit_tex);
+        let last = vec2<i32>(size) - vec2<i32>(1, 1);
+        let texel = clamp(
+            vec2<i32>(floor(frag.uv * vec2<f32>(size))),
+            vec2<i32>(0, 0),
+            last,
+        );
+        t = textureLoad(blit_tex, texel, 0);
+    }
     let rgb = vec3<f32>(
         srgb_to_linear(t.r),
         srgb_to_linear(t.g),

@@ -25,6 +25,7 @@ pub(crate) fn blit_instance(screen: Rect, full: Rect) -> BlitQuad {
         transform_a: [1.0, 0.0, 0.0, 1.0],
         transform_b: [0.0, 0.0],
         opacity: 1.0,
+        nearest: 0.0,
     }
 }
 

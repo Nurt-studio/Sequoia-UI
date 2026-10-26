@@ -219,13 +219,13 @@ fn outline_contours(contours: &[Contour], style: &StrokeStyle, tolerance: f32) -
     for contour in contours {
         let mut points: Vec<Point> = contour.points.clone();
 
-        if points.len() >= 2 && points[0] == points[points.len() - 1] {
+        let closed = contour.closed || points.len() >= 2 && points[0] == points[points.len() - 1];
+        if closed && points.len() >= 2 && points[0] == points[points.len() - 1] {
             points.pop();
         }
         if points.len() < 2 {
             continue;
         }
-        let closed = contour.closed;
         let pieces: Vec<Contour> = match &dash {
             Some((pattern, d)) => dash_contour(&points, closed, pattern, d),
             None => vec![Contour { points, closed }],

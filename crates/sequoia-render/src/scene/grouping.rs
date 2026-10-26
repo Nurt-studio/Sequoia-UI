@@ -3,7 +3,7 @@ use std::any::Any;
 
 use crate::types::*;
 use crate::utils::*;
-use sequoia_core::{Rect, RenderItem};
+use sequoia_core::{ImageSampling, Rect, RenderItem};
 
 /// Converts paint items into GPU instances and contiguous draw runs.
 ///
@@ -68,13 +68,7 @@ pub(crate) fn group_runs_with_opacity(
     gradients: &mut Vec<GpuGradient>,
     runs: &mut Vec<GuiRun>,
 ) -> (usize, usize, usize, usize, usize) {
-    let opacity = |index: usize| {
-        opacities
-            .get(index)
-            .copied()
-            .unwrap_or(1.0)
-            .clamp(0.0, 1.0)
-    };
+    let opacity = |index: usize| opacities.get(index).copied().unwrap_or(1.0).clamp(0.0, 1.0);
     quads.clear();
     glyphs.clear();
     images.clear();
@@ -272,6 +266,11 @@ pub(crate) fn group_runs_with_opacity(
                     transform_a,
                     transform_b,
                     opacity: opacity(index),
+                    nearest: if d.sampling == ImageSampling::Nearest {
+                        1.0
+                    } else {
+                        0.0
+                    },
                 });
                 image_keys.push(d.source.cache_key());
                 match runs.last_mut() {

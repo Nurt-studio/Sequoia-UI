@@ -161,6 +161,54 @@ pub(crate) fn stamp(px: &mut Pixels, cx: f32, cy: f32, width: f32, color: Color,
     }
 }
 
+fn plot_hairline(px: &mut Pixels, x: i32, y: i32, coverage: f32, color: Color, steep: bool) {
+    let coverage = coverage.clamp(0.0, 1.0);
+    if coverage <= 0.002 || color.a <= 0.0 {
+        return;
+    }
+    let (x, y) = if steep { (y, x) } else { (x, y) };
+    let color = Color {
+        a: color.a * coverage,
+        ..color
+    };
+    blend_set(px, x, y, color);
+}
+
+fn plot_hairline_column(px: &mut Pixels, x: i32, y: f32, color: Color, steep: bool) {
+    let base = y.floor();
+    let frac = y - base;
+    plot_hairline(px, x, base as i32, 1.0 - frac, color, steep);
+    plot_hairline(px, x, base as i32 + 1, frac, color, steep);
+}
+
+/// Rasterizes a 1px line with horizontal/vertical coverage, so diagonal and
+/// shallow strokes keep smooth edges instead of a hard staircase.
+fn stroke_hairline(px: &mut Pixels, from: Point, to: Point, color: Color) {
+    let (mut x0, mut y0) = (from.x - 0.5, from.y - 0.5);
+    let (mut x1, mut y1) = (to.x - 0.5, to.y - 0.5);
+    let steep = (y1 - y0).abs() > (x1 - x0).abs();
+    if steep {
+        std::mem::swap(&mut x0, &mut y0);
+        std::mem::swap(&mut x1, &mut y1);
+    }
+    if x0 > x1 {
+        std::mem::swap(&mut x0, &mut x1);
+        std::mem::swap(&mut y0, &mut y1);
+    }
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let start = x0.round() as i32;
+    let end = x1.round() as i32;
+    if start == end {
+        plot_hairline_column(px, start, y0, color, steep);
+        return;
+    }
+    for x in start..=end {
+        let t = ((x as f32 - x0) / dx).clamp(0.0, 1.0);
+        plot_hairline_column(px, x, y0 + dy * t, color, steep);
+    }
+}
+
 pub(crate) fn stroke_segment(
     px: &mut Pixels,
     from: Point,
@@ -169,6 +217,10 @@ pub(crate) fn stroke_segment(
     color: Color,
     brush: BrushKind,
 ) {
+    if width <= 1.0 && matches!(brush, BrushKind::Brush | BrushKind::NaturalPencil) {
+        stroke_hairline(px, from, to, color);
+        return;
+    }
     let dx = to.x - from.x;
     let dy = to.y - from.y;
     let dist = (dx * dx + dy * dy).sqrt();
@@ -484,16 +536,21 @@ pub(crate) fn shape_points(kind: ShapeKind, a: Point, b: Point) -> (Vec<Point>, 
         ),
         ShapeKind::Star6 => (star_points(cx, cy, rx, ry, 6, 0.0), true),
         ShapeKind::Callout => {
+            let bottom = y0 + r.size.height * 0.76;
             let mut pts = rounded_rect(
                 Rect::from_xywh(x0, y0, r.size.width, r.size.height * 0.76),
                 r.size.width.min(r.size.height) * 0.12,
             );
-            let tail_x = x0 + r.size.width * 0.22;
-            pts.push(Point::new(tail_x + r.size.width * 0.1, y1));
-            pts.push(Point::new(
-                tail_x + r.size.width * 0.2,
-                y0 + r.size.height * 0.75,
-            ));
+            let tail = [
+                Point::new(x0 + r.size.width * 0.40, bottom),
+                Point::new(x0 + r.size.width * 0.22, y1),
+                Point::new(x0 + r.size.width * 0.32, bottom),
+            ];
+            if let Some(i) = pts.windows(2).position(|w| {
+                (w[0].y - bottom).abs() < 0.01 && (w[1].y - bottom).abs() < 0.01 && w[0].x > w[1].x
+            }) {
+                pts.splice(i + 1..i + 1, tail);
+            }
             (pts, true)
         }
         ShapeKind::OvalCallout => {
@@ -505,11 +562,11 @@ pub(crate) fn shape_points(kind: ShapeKind, a: Point, b: Point) -> (Vec<Point>, 
                 48,
                 -std::f32::consts::FRAC_PI_2,
             );
-            pts.push(Point::new(x0 + r.size.width * 0.32, y1));
-            pts.push(Point::new(
-                x0 + r.size.width * 0.46,
-                y0 + r.size.height * 0.72,
-            ));
+            let base = pts.len() / 2;
+            let end = (base + 4).min(pts.len() - 1);
+            if end > base + 1 {
+                pts.splice(base + 1..end, [Point::new(x0 + r.size.width * 0.26, y1)]);
+            }
             (pts, true)
         }
         ShapeKind::Heart => {
@@ -614,4 +671,136 @@ pub(crate) fn resize_canvas(src: &Pixels, width: u32, height: u32) -> Pixels {
     let mut out = Pixels::filled(width, height, Color::WHITE);
     out.blend_from(src, 0, 0);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn painted(px: &Pixels) -> usize {
+        let mut count = 0;
+        for y in 0..px.height() as i32 {
+            for x in 0..px.width() as i32 {
+                if px.get(x, y) == Some(Color::BLACK) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    fn ink(px: &Pixels) -> (f32, usize) {
+        let mut total = 0.0;
+        let mut partial = 0;
+        for y in 0..px.height() as i32 {
+            for x in 0..px.width() as i32 {
+                if let Some(c) = px.get(x, y) {
+                    let coverage = 1.0 - c.r;
+                    if coverage > 0.01 {
+                        total += coverage;
+                        if coverage < 0.95 {
+                            partial += 1;
+                        }
+                    }
+                }
+            }
+        }
+        (total, partial)
+    }
+
+    #[test]
+    fn hairline_blends_edges_instead_of_stepping() {
+        let mut px = Pixels::filled(200, 130, Color::WHITE);
+        stroke_segment(
+            &mut px,
+            Point::new(2.5, 2.5),
+            Point::new(158.0, 112.0),
+            1.0,
+            Color::BLACK,
+            BrushKind::Brush,
+        );
+        let (total, partial) = ink(&px);
+        assert!((total - 157.0).abs() < 5.0, "suma krycia: {total}");
+        assert!(partial > 20, "krawędzie są wygładzone: {partial}");
+    }
+
+    #[test]
+    fn hairline_handles_steep_lines() {
+        let mut px = Pixels::filled(40, 60, Color::WHITE);
+        stroke_segment(
+            &mut px,
+            Point::new(4.5, 4.5),
+            Point::new(14.5, 34.5),
+            1.0,
+            Color::BLACK,
+            BrushKind::Brush,
+        );
+        let (total, partial) = ink(&px);
+        assert!((total - 31.0).abs() < 3.0, "suma krycia: {total}");
+        assert!(partial > 20, "krawędzie są wygładzone: {partial}");
+    }
+
+    #[test]
+    fn hairline_keeps_aligned_diagonals_solid() {
+        let mut px = Pixels::filled(40, 40, Color::WHITE);
+        stroke_segment(
+            &mut px,
+            Point::new(4.5, 4.5),
+            Point::new(24.5, 24.5),
+            1.0,
+            Color::BLACK,
+            BrushKind::Brush,
+        );
+        assert_eq!(painted(&px), 21, "pełne piksele bez rozmycia");
+        let (total, partial) = ink(&px);
+        assert!((total - 21.0).abs() < 0.01, "{total}");
+        assert_eq!(partial, 0);
+    }
+
+    #[test]
+    fn hairline_click_stamps_a_single_pixel() {
+        let mut px = Pixels::filled(10, 10, Color::WHITE);
+        stamp(&mut px, 4.8, 5.2, 1.0, Color::BLACK, BrushKind::Brush);
+        assert_eq!(painted(&px), 1);
+        assert_eq!(px.get(4, 5), Some(Color::BLACK));
+    }
+
+    #[test]
+    fn callout_tail_is_inserted_into_the_bottom_edge() {
+        let (points, closed) = shape_points(
+            ShapeKind::Callout,
+            Point::new(0.0, 0.0),
+            Point::new(100.0, 80.0),
+        );
+        assert!(closed);
+        let bottom = 80.0 * 0.76;
+        let tip = points
+            .iter()
+            .position(|p| (p.y - 80.0).abs() < 0.01)
+            .expect("tail tip");
+        assert!(tip > 0 && tip + 1 < points.len());
+        for neighbor in [points[tip - 1], points[tip + 1]] {
+            assert!((neighbor.y - bottom).abs() < 1.0, "{neighbor:?}");
+        }
+        assert!((points.last().unwrap().x - 0.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn oval_callout_tail_is_inserted_into_the_bottom_arc() {
+        let (points, closed) = shape_points(
+            ShapeKind::OvalCallout,
+            Point::new(0.0, 0.0),
+            Point::new(100.0, 80.0),
+        );
+        assert!(closed);
+        let tip = points
+            .iter()
+            .position(|p| (p.y - 80.0).abs() < 0.01)
+            .expect("tail tip");
+        assert!(tip > 0 && tip + 1 < points.len());
+        for neighbor in [points[tip - 1], points[tip + 1]] {
+            assert!(neighbor.y > 54.0, "{neighbor:?}");
+        }
+        assert!(points.last().unwrap().y < 20.0);
+    }
 }

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use sequoia_core::{Point, Rect};
 use sequoia_draw::{
-    Dash, FillRule, LineCap, LineJoin, Path, RasterOptions, ShapeCache, Span, StrokeStyle,
+    Contour, Dash, FillRule, LineCap, LineJoin, Path, RasterOptions, ShapeCache, Span, StrokeStyle,
     TOLERANCE, fill, stroke, stroke_path,
 };
 
@@ -200,6 +200,28 @@ fn stroke_line_has_exact_extent() {
     assert!((bounds.bottom() - 52.0).abs() < 0.51, "{bounds:?}");
     assert!((bounds.left() - 0.0).abs() < 0.51, "{bounds:?}");
     assert!((bounds.right() - 100.0).abs() < 0.51, "{bounds:?}");
+}
+
+#[test]
+fn returning_to_the_first_point_closes_the_stroke() {
+    let square = Contour {
+        points: vec![
+            Point::new(0.0, 0.0),
+            Point::new(100.0, 0.0),
+            Point::new(100.0, 100.0),
+            Point::new(0.0, 100.0),
+            Point::new(0.0, 0.0),
+        ],
+        closed: false,
+    };
+
+    let mut spans = Vec::new();
+    stroke(&[square], &StrokeStyle::new(4.0), opts(), &mut spans);
+    let area = sum_area(&spans);
+    assert!(
+        (area - 1_600.0).abs() < 1.0,
+        "the closing edge is stroked once: {area}"
+    );
 }
 
 #[test]

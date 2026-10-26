@@ -25,6 +25,25 @@ fn canvas_paints_pixel_buffer_as_image() {
     assert_eq!(images[0].source.extent(), Some((4, 4)));
     assert_eq!(images[0].uv, [0.0, 0.0, 1.0, 1.0]);
     assert_eq!(images[0].rect, Rect::from_xywh(0.0, 0.0, 100.0, 100.0));
+    assert_eq!(images[0].sampling, ImageSampling::Linear);
+}
+
+#[test]
+fn canvas_can_request_nearest_pixel_sampling() {
+    let pixels = Pixels::filled(2, 2, Color::RED);
+
+    let rt = Runtime::new();
+    rt.mount(Canvas::new().on_draw(move |g: &mut Painter| {
+        g.pixels_nearest(g.rect(), &pixels);
+    }));
+    let mut text = TextSystem::new();
+    rt.layout(Rect::from_xywh(0.0, 0.0, 100.0, 100.0), &mut text);
+    let mut list = RenderList::new();
+    rt.paint(&mut list, &mut text);
+
+    let images: Vec<_> = list.images().collect();
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].sampling, ImageSampling::Nearest);
 }
 
 #[test]

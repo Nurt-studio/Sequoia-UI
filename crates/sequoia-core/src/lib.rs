@@ -20,8 +20,8 @@ pub use crate::geometry::{
 };
 pub use crate::paint::{
     BackdropDraw, BackdropSpan, Color, FilterDraw, FilterSpan, GlyphQuad, GradientDraw, ImageDraw,
-    ImageSource, MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad, RenderItem, RenderList,
-    RoundedClip, Shadow, SpanMask, TextDraw, WaveformDraw,
+    ImageSampling, ImageSource, MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad, RenderItem,
+    RenderList, RoundedClip, Shadow, SpanMask, TextDraw, WaveformDraw,
 };
 pub use crate::pixel::Pixels;
 pub use crate::window::WindowId;
@@ -35,8 +35,8 @@ pub mod prelude {
     };
     pub use crate::paint::{
         BackdropDraw, BackdropSpan, Color, FilterDraw, FilterSpan, GlyphQuad, GradientDraw,
-        ImageDraw, ImageSource, MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad, RenderItem,
-        RenderList, RoundedClip, Shadow, SpanMask, TextDraw, WaveformDraw,
+        ImageDraw, ImageSampling, ImageSource, MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad,
+        RenderItem, RenderList, RoundedClip, Shadow, SpanMask, TextDraw, WaveformDraw,
     };
     pub use crate::pixel::Pixels;
     pub use crate::time::DurationExt;
