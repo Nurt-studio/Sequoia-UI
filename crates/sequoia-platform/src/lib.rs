@@ -1370,6 +1370,9 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             let Some(ws) = self.live.get_mut(&wid) else {
                 return;
             };
+            if !ws.continuous_paced && is_input_event(&event) {
+                ws.gate.borrow_mut().request();
+            }
             match event {
                 WindowEvent::Resized(size) => {
                     ws.gpu.resize(size.width, size.height);
@@ -1642,6 +1645,24 @@ impl ApplicationHandler<JobWake> for PlatformApp {
         }
         self.update_control_flow(event_loop);
     }
+}
+
+fn is_input_event(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::KeyboardInput { .. }
+            | WindowEvent::Ime(_)
+            | WindowEvent::Touch(_)
+            | WindowEvent::PinchGesture { .. }
+            | WindowEvent::PanGesture { .. }
+            | WindowEvent::DroppedFile(_)
+            | WindowEvent::HoveredFile(_)
+            | WindowEvent::HoveredFileCancelled
+            | WindowEvent::AxisMotion { .. }
+    )
 }
 
 fn frame_deadline(fps: u32) -> Instant {
