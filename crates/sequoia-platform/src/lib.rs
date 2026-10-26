@@ -657,7 +657,19 @@ impl WindowState {
         let layout_ms = t.elapsed().as_secs_f64() * 1000.0;
         t = Instant::now();
         self.list.clear();
+        let mut epoch = self.text.atlas().epoch();
+        let mut passes = 1;
         self.rt.paint(&mut self.list, &mut self.text);
+        // The glyph atlas can grow, repack or clear while we paint. Entries
+        // pushed before that carry UVs for the previous atlas layout, so those
+        // glyphs would sample the wrong pixels. Repaint until the atlas is
+        // stable, exactly like offscreen export does.
+        while self.text.atlas().epoch() != epoch && passes < ATLAS_REPAINT_LIMIT {
+            epoch = self.text.atlas().epoch();
+            self.list.clear();
+            self.rt.paint(&mut self.list, &mut self.text);
+            passes += 1;
+        }
         let surfaces = self.rt.take_surface_draws();
         let paint_ms = t.elapsed().as_secs_f64() * 1000.0;
         t = Instant::now();
@@ -692,6 +704,10 @@ impl WindowState {
         }
     }
 }
+
+/// Upper bound on paint passes per frame; one extra pass is normally enough
+/// to re-emit glyphs after the atlas grew mid-paint.
+const ATLAS_REPAINT_LIMIT: usize = 8;
 
 const FPS_WINDOW: Duration = Duration::from_millis(1000);
 
