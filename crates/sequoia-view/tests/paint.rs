@@ -91,12 +91,19 @@ fn opacity_wrapper_modulates_child_alpha() {
     rt.paint(&mut list, &mut text);
 
     let q = list.quads().next().expect("dziecko maluje quad");
+    assert_eq!(q.color, Color::RED, "item alpha stays untouched");
     assert!(
-        (q.color.a - 0.5).abs() < 1e-6,
-        "alfa po Opacity(0.5): {}",
-        q.color.a
+        (list.opacity_at(0) - 0.5).abs() < 1e-6,
+        "group alpha po Opacity(0.5): {}",
+        list.opacity_at(0)
     );
-    assert_eq!(q.color.r, 1.0);
+    assert_eq!(
+        list.opacity_plan(),
+        vec![OpacityNode::Group {
+            opacity: 0.5,
+            children: vec![OpacityNode::Segment { start: 0, end: 1 }],
+        }]
+    );
 }
 
 #[test]
@@ -116,7 +123,13 @@ fn opacity_wrappers_nest_multiplicatively() {
     rt.paint(&mut list, &mut text);
 
     let q = list.quads().next().expect("quad");
-    assert!((q.color.a - 0.25).abs() < 1e-6, "0.5 * 0.5: {}", q.color.a);
+    assert_eq!(q.color, Color::RED);
+    assert!(
+        (list.opacity_at(0) - 0.25).abs() < 1e-6,
+        "0.5 * 0.5: {}",
+        list.opacity_at(0)
+    );
+    assert_eq!(list.opacity_spans().len(), 2);
 }
 
 #[test]

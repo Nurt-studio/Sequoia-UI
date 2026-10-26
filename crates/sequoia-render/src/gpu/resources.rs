@@ -122,6 +122,65 @@ impl crate::renderer::GpuRenderer {
         Some(bg)
     }
 
+    /// Ensures at least `count` full-frame group layers for `size`.
+    pub(crate) fn ensure_group_layers(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        format: wgpu::TextureFormat,
+        layers: &mut Vec<GroupLayer>,
+        size: (u32, u32),
+        count: usize,
+    ) {
+        let size = (size.0.max(1), size.1.max(1));
+        let count = count.max(1);
+        if layers.len() >= count && layers.iter().take(count).all(|l| l.size == size) {
+            return;
+        }
+        for layer in layers.drain(..) {
+            layer.texture.destroy();
+        }
+        for i in 0..count {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("sequoia-opacity-layer"),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sequoia-opacity-layer-bg"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            });
+            log::trace!("sequoia-render: opacity layer {i} {}x{}", size.0, size.1);
+            layers.push(GroupLayer {
+                texture,
+                view,
+                bg,
+                size,
+            });
+        }
+    }
+
     /// Recreates the backdrop ping-pong textures when the size changes.
     pub(crate) fn ensure_backdrop_buffers(&mut self, size: (u32, u32)) {
         let size = (size.0.max(1), size.1.max(1));

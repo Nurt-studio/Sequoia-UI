@@ -25,10 +25,11 @@ fn opacity_modifier_modulates_alpha() {
             .opacity(0.5),
     );
     let q = list.quads().next().expect("panel maluje quad");
+    assert_eq!(q.color, Color::RED, "item alpha stays untouched");
     assert!(
-        (q.color.a - 0.5).abs() < 1e-6,
-        "alfa po .opacity(0.5): {}",
-        q.color.a
+        (list.opacity_at(0) - 0.5).abs() < 1e-6,
+        "group alpha po .opacity(0.5): {}",
+        list.opacity_at(0)
     );
 }
 

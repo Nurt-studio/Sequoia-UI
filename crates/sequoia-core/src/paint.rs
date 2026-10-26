@@ -824,6 +824,35 @@ pub struct FilterSpan {
     pub clip: Option<RoundedClip>,
 }
 
+/// A contiguous range of paint items that share one group opacity.
+///
+/// Items keep their own alpha; the compositor applies `opacity` to the
+/// already-composited range so overlapping children do not accumulate alpha.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OpacitySpan {
+    pub start: usize,
+
+    pub end: usize,
+
+    pub opacity: f32,
+
+    pub depth: usize,
+}
+
+/// A flattened opacity-group tree derived from [`RenderList::opacity_plan`].
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum OpacityNode {
+    /// A range of paint items drawn directly into the current target.
+    Segment { start: usize, end: usize },
+
+    /// A range that is composited into an offscreen layer at `opacity`.
+    Group {
+        opacity: f32,
+        children: Vec<OpacityNode>,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GradientDraw {
     pub rect: Rect,
@@ -906,11 +935,71 @@ impl RoundedClip {
     }
 }
 
+fn push_opacity_segment(nodes: &mut Vec<OpacityNode>, start: usize, end: usize) {
+    if start >= end {
+        return;
+    }
+    if let Some(OpacityNode::Segment { end: prev_end, .. }) = nodes.last_mut()
+        && *prev_end == start
+    {
+        *prev_end = end;
+        return;
+    }
+    nodes.push(OpacityNode::Segment { start, end });
+}
+
+fn build_opacity_nodes(
+    spans: &[&OpacitySpan],
+    mut index: usize,
+    lo: usize,
+    hi: usize,
+) -> (Vec<OpacityNode>, usize) {
+    let mut nodes = Vec::new();
+    let mut cursor = lo;
+    while index < spans.len() {
+        let span = spans[index];
+        if span.start >= hi {
+            break;
+        }
+        if span.start < cursor || span.end > hi || span.end <= span.start {
+            index += 1;
+            continue;
+        }
+        if span.start > cursor {
+            push_opacity_segment(&mut nodes, cursor, span.start);
+        }
+        let (children, next) = build_opacity_nodes(spans, index + 1, span.start, span.end);
+        nodes.push(OpacityNode::Group {
+            opacity: span.opacity,
+            children,
+        });
+        cursor = span.end;
+        index = next;
+        if cursor >= hi {
+            break;
+        }
+    }
+    if cursor < hi {
+        push_opacity_segment(&mut nodes, cursor, hi);
+    }
+    (nodes, index)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct OpacityEntry {
+    opacity: f32,
+
+    start: usize,
+
+    depth: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RenderList {
     items: Vec<RenderItem>,
     clip_stack: Vec<ClipEntry>,
-    opacity_stack: Vec<f32>,
+    opacity_stack: Vec<OpacityEntry>,
+    opacity_spans: Vec<OpacitySpan>,
     transform_stack: Vec<Transform>,
 
     item_clips: Vec<Option<RoundedClip>>,
@@ -930,6 +1019,7 @@ impl RenderList {
         self.items.clear();
         self.clip_stack.clear();
         self.opacity_stack.clear();
+        self.opacity_spans.clear();
         self.transform_stack.clear();
         self.item_clips.clear();
         self.item_transforms.clear();
@@ -943,11 +1033,29 @@ impl RenderList {
         } else {
             1.0
         };
-        self.opacity_stack.push(o);
+        self.opacity_stack.push(OpacityEntry {
+            opacity: o,
+            start: self.items.len(),
+            depth: self.opacity_stack.len(),
+        });
+    }
+
+    fn close_opacity(&mut self) {
+        let Some(entry) = self.opacity_stack.pop() else {
+            return;
+        };
+        if entry.opacity < 1.0 - f32::EPSILON && entry.start < self.items.len() {
+            self.opacity_spans.push(OpacitySpan {
+                start: entry.start,
+                end: self.items.len(),
+                opacity: entry.opacity,
+                depth: entry.depth,
+            });
+        }
     }
 
     pub fn pop_opacity(&mut self) {
-        self.opacity_stack.pop();
+        self.close_opacity();
     }
 
     pub fn opacity_depth(&self) -> usize {
@@ -956,12 +1064,61 @@ impl RenderList {
 
     pub fn truncate_opacity(&mut self, depth: usize) {
         while self.opacity_stack.len() > depth {
-            self.opacity_stack.pop();
+            self.close_opacity();
         }
     }
 
     pub fn active_opacity(&self) -> f32 {
-        self.opacity_stack.iter().copied().fold(1.0, |a, b| a * b)
+        self.opacity_stack
+            .iter()
+            .map(|e| e.opacity)
+            .fold(1.0, |a, b| a * b)
+    }
+
+    fn opacity_visible(&self) -> bool {
+        self.active_opacity() > 0.0
+    }
+
+    pub fn opacity_spans(&self) -> &[OpacitySpan] {
+        &self.opacity_spans
+    }
+
+    pub fn has_opacity_groups(&self) -> bool {
+        !self.opacity_spans.is_empty()
+    }
+
+    /// Returns the product of all group opacities covering `index`.
+    ///
+    /// Includes groups that are still open, so it is usable while painting.
+    pub fn opacity_at(&self, index: usize) -> f32 {
+        let mut opacity = self
+            .opacity_spans
+            .iter()
+            .filter(|span| span.start <= index && index < span.end)
+            .map(|span| span.opacity)
+            .fold(1.0, |a, b| a * b);
+        for entry in &self.opacity_stack {
+            if entry.start <= index {
+                opacity *= entry.opacity;
+            }
+        }
+        opacity
+    }
+
+    /// Builds a nested plan of item segments and opacity groups.
+    ///
+    /// Spans are emitted when a group closes, so they arrive inner-first.
+    /// Sorting by range and stack depth reconstructs the original nesting.
+    pub fn opacity_plan(&self) -> Vec<OpacityNode> {
+        let mut spans: Vec<&OpacitySpan> = self.opacity_spans.iter().collect();
+        spans.sort_by(|a, b| {
+            a.start
+                .cmp(&b.start)
+                .then_with(|| b.end.cmp(&a.end))
+                .then_with(|| a.depth.cmp(&b.depth))
+        });
+        let (nodes, _) = build_opacity_nodes(&spans, 0, 0, self.items.len());
+        nodes
     }
 
     pub fn push_transform(&mut self, t: Transform) {
@@ -993,18 +1150,6 @@ impl RenderList {
 
     pub fn item_transforms(&self) -> &[Transform] {
         &self.item_transforms
-    }
-
-    fn modulated(&self, color: Color) -> Color {
-        let o = self.active_opacity();
-        if o >= 1.0 {
-            color
-        } else {
-            Color {
-                a: color.a * o,
-                ..color
-            }
-        }
     }
 
     pub fn push_clip(&mut self, rect: Rect) {
@@ -1096,6 +1241,9 @@ impl RenderList {
         border_width: f32,
         border_color: Color,
     ) {
+        if !self.opacity_visible() {
+            return;
+        }
         let t = self.active_transform();
 
         if !t.is_identity() {
@@ -1104,8 +1252,6 @@ impl RenderList {
             {
                 return;
             }
-            let color = self.modulated(color);
-            let border_color = self.modulated(border_color);
             let has_border = border_width > 0.0 && border_color.a > 0.0;
             if rect.is_empty() || (color.a <= 0.0 && !has_border) {
                 return;
@@ -1125,8 +1271,6 @@ impl RenderList {
         let Some(rect) = self.clip_rect(rect) else {
             return;
         };
-        let color = self.modulated(color);
-        let border_color = self.modulated(border_color);
         let has_border = border_width > 0.0 && border_color.a > 0.0;
         if rect.is_empty() || (color.a <= 0.0 && !has_border) {
             return;
@@ -1144,11 +1288,10 @@ impl RenderList {
     }
 
     pub fn push_shadow(&mut self, shadow: Shadow) {
+        if !self.opacity_visible() {
+            return;
+        }
         let t = self.active_transform();
-        let shadow = Shadow {
-            color: self.modulated(shadow.color),
-            ..shadow
-        };
         if !shadow.is_visible() {
             return;
         }
@@ -1189,8 +1332,10 @@ impl RenderList {
     }
 
     pub fn push_text(&mut self, mut draw: TextDraw) {
+        if !self.opacity_visible() {
+            return;
+        }
         let t = self.active_transform();
-        draw.color = self.modulated(draw.color);
         if draw.color.a <= 0.0 {
             return;
         }
@@ -1227,6 +1372,9 @@ impl RenderList {
     }
 
     pub fn push_image(&mut self, rect: Rect, uv: [f32; 4], source: ImageSource) {
+        if !self.opacity_visible() {
+            return;
+        }
         let t = self.active_transform();
         if !t.is_identity() {
             if let Some(local) = self.active_clip_for(t)
@@ -1262,8 +1410,10 @@ impl RenderList {
     }
 
     pub fn push_waveform(&mut self, bars: &[Rect], color: Color) {
+        if !self.opacity_visible() {
+            return;
+        }
         let t = self.active_transform();
-        let color = self.modulated(color);
         if bars.is_empty() || color.a <= 0.0 {
             return;
         }
@@ -1332,31 +1482,13 @@ impl RenderList {
         kind: crate::brush::GradientKind,
         stops: crate::brush::GradientStops,
     ) {
-        use crate::brush::GradientStop;
+        if !self.opacity_visible() {
+            return;
+        }
         if rect.is_empty() || stops.is_empty() {
             return;
         }
         let t = self.active_transform();
-
-        let opacity = self.active_opacity();
-        let stops = if opacity >= 1.0 {
-            stops
-        } else {
-            let modulated: Vec<GradientStop> = stops
-                .stops()
-                .iter()
-                .map(|s| {
-                    GradientStop::new(
-                        s.at,
-                        Color {
-                            a: s.color.a * opacity,
-                            ..s.color
-                        },
-                    )
-                })
-                .collect();
-            crate::brush::GradientStops::new(modulated)
-        };
 
         if !t.is_identity() {
             if let Some(local) = self.active_clip_for(t)
@@ -1419,6 +1551,9 @@ impl RenderList {
         noise: f32,
         mask: SpanMask,
     ) {
+        if !self.opacity_visible() {
+            return;
+        }
         let blur = if blur.is_finite() { blur.max(0.0) } else { 0.0 };
         let noise = if noise.is_finite() {
             noise.clamp(0.0, 1.0)
@@ -1477,6 +1612,9 @@ impl RenderList {
         blur: f32,
         mask: SpanMask,
     ) -> Option<usize> {
+        if !self.opacity_visible() {
+            return None;
+        }
         let blur = if blur.is_finite() { blur.max(0.0) } else { 0.0 };
         if !(blur > 0.0) {
             return None;
@@ -1714,7 +1852,7 @@ mod tests {
     }
 
     #[test]
-    fn opacity_stack_modulates_quad_alpha() {
+    fn opacity_stack_tracks_group_alpha() {
         let mut list = RenderList::new();
         assert_eq!(list.active_opacity(), 1.0);
         list.push_opacity(0.5);
@@ -1722,16 +1860,11 @@ mod tests {
         assert_eq!(list.active_opacity(), 0.25, "nestings multiply");
         list.push_quad(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
         let q = list.quads().next().expect("quad po push");
-        assert!(
-            (q.color.a - 0.25).abs() < 1e-6,
-            "alfa 1 * 0.5 * 0.5: {}",
-            q.color.a
-        );
-        assert_eq!(q.color.r, 1.0, "rgb untouched");
+        assert_eq!(q.color.a, 1.0, "items keep their own alpha");
+        assert!((list.opacity_at(0) - 0.25).abs() < 1e-6);
         list.pop_opacity();
         list.push_quad(Rect::from_xywh(20.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
-        let qs: Vec<_> = list.quads().collect();
-        assert!((qs[1].color.a - 0.5).abs() < 1e-6);
+        assert_eq!(list.opacity_at(1), 0.5);
 
         list.push_opacity(0.0);
         list.push_quad(Rect::from_xywh(40.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
@@ -1739,13 +1872,58 @@ mod tests {
         list.truncate_opacity(0);
         assert_eq!(list.opacity_depth(), 0);
         assert_eq!(list.active_opacity(), 1.0);
+        assert_eq!(list.opacity_spans().len(), 2, "outer and inner span");
+        assert_eq!(list.opacity_at(0), 0.25);
+        assert_eq!(list.opacity_at(1), 0.5);
+        assert_eq!(list.opacity_at(2), 1.0, "poza grupami");
 
         list.push_opacity(f32::NAN);
         list.push_quad(Rect::from_xywh(60.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
         let qs: Vec<_> = list.quads().collect();
         assert_eq!(qs[2].color.a, 1.0);
+        assert_eq!(list.opacity_at(2), 1.0);
         list.clear();
         assert_eq!(list.opacity_depth(), 0, "clear also resets opacity");
+        assert!(list.opacity_spans().is_empty());
+    }
+
+    #[test]
+    fn opacity_plan_nests_groups_and_merges_segments() {
+        let mut list = RenderList::new();
+        list.push_quad(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        list.push_opacity(0.5);
+        list.push_quad(Rect::from_xywh(10.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        list.push_opacity(0.5);
+        list.push_quad(Rect::from_xywh(20.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        list.pop_opacity();
+        list.push_quad(Rect::from_xywh(30.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        list.pop_opacity();
+        list.push_quad(Rect::from_xywh(40.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+
+        assert_eq!(list.opacity_at(0), 1.0);
+        assert_eq!(list.opacity_at(1), 0.5);
+        assert_eq!(list.opacity_at(2), 0.25);
+        assert_eq!(list.opacity_at(3), 0.5);
+        assert_eq!(list.opacity_at(4), 1.0);
+
+        let plan = list.opacity_plan();
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[0], OpacityNode::Segment { start: 0, end: 1 });
+        assert_eq!(plan[2], OpacityNode::Segment { start: 4, end: 5 });
+        let OpacityNode::Group { opacity, children } = &plan[1] else {
+            panic!("expected outer group, got {:?}", plan[1]);
+        };
+        assert_eq!(*opacity, 0.5);
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0], OpacityNode::Segment { start: 1, end: 2 });
+        assert_eq!(
+            children[1],
+            OpacityNode::Group {
+                opacity: 0.5,
+                children: vec![OpacityNode::Segment { start: 2, end: 3 }],
+            }
+        );
+        assert_eq!(children[2], OpacityNode::Segment { start: 3, end: 4 });
     }
 
     #[test]

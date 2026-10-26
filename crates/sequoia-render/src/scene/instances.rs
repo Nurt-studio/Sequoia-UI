@@ -24,6 +24,19 @@ pub(crate) fn blit_instance(screen: Rect, full: Rect) -> BlitQuad {
         clip_radius: 0.0,
         transform_a: [1.0, 0.0, 0.0, 1.0],
         transform_b: [0.0, 0.0],
+        opacity: 1.0,
+    }
+}
+
+/// Builds a full-screen backdrop instance that samples a group layer and
+/// multiplies its premultiplied alpha by `opacity`.
+pub(crate) fn opacity_composite_instance(fb: (u32, u32), opacity: f32) -> GpuBackdrop {
+    GpuBackdrop {
+        rect: [0.0, 0.0, fb.0.max(1) as f32, fb.1.max(1) as f32],
+        dim: [0.0; 4],
+        params: [0.0; 4],
+        clip_rect: [0.0; 4],
+        mask: [2.0, opacity.clamp(0.0, 1.0), 0.0, 0.0],
     }
 }
 

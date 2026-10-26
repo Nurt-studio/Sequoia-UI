@@ -112,6 +112,7 @@ impl crate::renderer::GpuRenderer {
             clip_radius: 0.0,
             transform_a: [1.0, 0.0, 0.0, 1.0],
             transform_b: [0.0, 0.0],
+            opacity: 1.0,
         };
         Self::ensure_capacity(device, present_buf, present_cap, 1, BLIT_BYTES);
         queue.write_buffer(present_buf, 0, bytemuck::cast_slice(&[quad]));

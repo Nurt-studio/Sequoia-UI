@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use image::RgbaImage;
 use sequoia_assets::AssetRegistry;
 use sequoia_core::{
-    Color, GradientDraw, GradientKind, ImageDraw, ImageSource, Point, Quad, Rect, RenderItem,
-    RenderList, RoundedClip, Shadow, TextDraw, Transform,
+    Color, GradientDraw, GradientKind, ImageDraw, ImageSource, OpacityNode, Point, Quad, Rect,
+    RenderItem, RenderList, RoundedClip, Shadow, TextDraw, Transform,
 };
 use sequoia_reactive::Environment;
 use sequoia_style::Theme;
@@ -206,20 +206,61 @@ fn rasterize(
     let mut img = RgbaImage::new(pw, ph);
     fill_solid(&mut img, bg);
 
+    let plan = list.opacity_plan();
+    draw_opacity_nodes(&mut img, &plan, list, atlas, scale);
+    let _ = (pw, ph);
+    img
+}
+
+/// Draws an opacity plan, rendering each group into a transparent layer and
+/// compositing it once at the group opacity.
+fn draw_opacity_nodes(
+    img: &mut RgbaImage,
+    nodes: &[OpacityNode],
+    list: &RenderList,
+    atlas: &GlyphAtlas,
+    scale: f32,
+) {
+    for node in nodes {
+        match node {
+            OpacityNode::Segment { start, end } => {
+                draw_item_range(img, list, *start, *end, atlas, scale);
+            }
+            OpacityNode::Group { opacity, children } => {
+                let mut layer = RgbaImage::new(img.width(), img.height());
+                draw_opacity_nodes(&mut layer, children, list, atlas, scale);
+                composite_layer(img, &layer, *opacity);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn draw_item_range(
+    img: &mut RgbaImage,
+    list: &RenderList,
+    start: usize,
+    end: usize,
+    atlas: &GlyphAtlas,
+    scale: f32,
+) {
     let clips = list.item_clips();
     let transforms = list.item_transforms();
-    for (i, item) in list.items().iter().enumerate() {
+    let items = list.items();
+    let start = start.min(items.len());
+    let end = end.min(items.len());
+    for i in start..end {
         let clip = clips.get(i).copied().flatten();
         let transform = transforms.get(i).copied().unwrap_or_default();
-        match item {
-            RenderItem::Quad(q) => draw_quad(&mut img, *q, clip, scale),
-            RenderItem::Text(t) => draw_text(&mut img, t, atlas, clip, scale, transform),
-            RenderItem::Image(d) => draw_image(&mut img, d, clip, scale),
-            RenderItem::Shadow(s) => draw_shadow(&mut img, *s, clip, scale),
+        match &items[i] {
+            RenderItem::Quad(q) => draw_quad(img, *q, clip, scale),
+            RenderItem::Text(t) => draw_text(img, t, atlas, clip, scale, transform),
+            RenderItem::Image(d) => draw_image(img, d, clip, scale),
+            RenderItem::Shadow(s) => draw_shadow(img, *s, clip, scale),
             RenderItem::Waveform(w) => {
                 for bar in &w.bars {
                     draw_quad(
-                        &mut img,
+                        img,
                         Quad {
                             rect: *bar,
                             color: w.color,
@@ -232,13 +273,41 @@ fn rasterize(
                     );
                 }
             }
-            RenderItem::Gradient(g) => draw_gradient(&mut img, g, clip, scale),
-
+            RenderItem::Gradient(g) => draw_gradient(img, g, clip, scale),
             _ => {}
         }
     }
-    let _ = (pw, ph);
-    img
+}
+
+/// Composites a premultiplied layer over a premultiplied destination.
+fn composite_layer(dst: &mut RgbaImage, src: &RgbaImage, opacity: f32) {
+    let o = if opacity.is_finite() {
+        opacity.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    if o <= 0.0 {
+        return;
+    }
+    for (dp, sp) in dst.pixels_mut().zip(src.pixels()) {
+        let s = sp.0;
+        let sa = s[3] as f32 / 255.0;
+        if sa <= 0.0 {
+            continue;
+        }
+        let a = sa * o;
+        let d = dp.0;
+        let dr = d[0] as f32 / 255.0;
+        let dg = d[1] as f32 / 255.0;
+        let db = d[2] as f32 / 255.0;
+        let da = d[3] as f32 / 255.0;
+        dp.0 = [
+            q(s[0] as f32 / 255.0 * o + dr * (1.0 - a)),
+            q(s[1] as f32 / 255.0 * o + dg * (1.0 - a)),
+            q(s[2] as f32 / 255.0 * o + db * (1.0 - a)),
+            q(a + da * (1.0 - a)),
+        ];
+    }
 }
 
 fn blend_pixel(img: &mut RgbaImage, x: u32, y: u32, r: f32, g: f32, b: f32, alpha: f32) {
@@ -907,6 +976,40 @@ mod tests {
         assert!(
             center[0] > 200 && center[1] < 60 && center[2] < 60,
             "{center:?}"
+        );
+    }
+
+    #[test]
+    fn opacity_group_composites_overlapping_children_once() {
+        let opts = ExportOptions::new(40.0, 40.0)
+            .scale(SCALE_1X)
+            .background(Color::BLACK);
+        let layered = Stack::new()
+            .fill_size()
+            .child(Panel::new().background(Color::RED).fill_size())
+            .child(Panel::new().background(Color::RED).fill_size());
+        let img = render_to_image(Opacity::new(layered, 0.5), &opts).unwrap();
+        let center = img.get_pixel(20, 20).0;
+        assert!(
+            (110..=140).contains(&center[0]) && center[1] < 10 && center[2] < 10,
+            "group alpha should be applied once, got {center:?}"
+        );
+    }
+
+    #[test]
+    fn nested_opacity_groups_multiply() {
+        let opts = ExportOptions::new(40.0, 40.0)
+            .scale(SCALE_1X)
+            .background(Color::BLACK);
+        let panel = Panel::new()
+            .background(Color::RED)
+            .width(Length::px(40.0))
+            .height(Length::px(40.0));
+        let img = render_to_image(Opacity::new(Opacity::new(panel, 0.5), 0.5), &opts).unwrap();
+        let center = img.get_pixel(20, 20).0;
+        assert!(
+            (50..=80).contains(&center[0]) && center[1] < 10 && center[2] < 10,
+            "nested opacity should multiply, got {center:?}"
         );
     }
 

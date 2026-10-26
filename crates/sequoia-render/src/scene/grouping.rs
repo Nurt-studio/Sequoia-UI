@@ -26,6 +26,55 @@ pub(crate) fn group_runs(
     gradients: &mut Vec<GpuGradient>,
     runs: &mut Vec<GuiRun>,
 ) -> (usize, usize, usize, usize, usize) {
+    group_runs_with_opacity(
+        items,
+        clips,
+        transforms,
+        &[],
+        scale,
+        viewport,
+        quad_ceiling,
+        glyph_ceiling,
+        image_ceiling,
+        gradient_ceiling,
+        quads,
+        glyphs,
+        images,
+        image_keys,
+        gradients,
+        runs,
+    )
+}
+
+/// Converts paint items with per-item alpha from an opacity span fallback.
+///
+/// `opacities[i]` scales the alpha of item `i`; missing entries mean `1.0`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn group_runs_with_opacity(
+    items: &[RenderItem],
+    clips: &[Option<sequoia_core::RoundedClip>],
+    transforms: &[sequoia_core::Transform],
+    opacities: &[f32],
+    scale: f32,
+    viewport: Option<Rect>,
+    quad_ceiling: usize,
+    glyph_ceiling: usize,
+    image_ceiling: usize,
+    gradient_ceiling: usize,
+    quads: &mut Vec<GpuQuad>,
+    glyphs: &mut Vec<GpuGlyph>,
+    images: &mut Vec<BlitQuad>,
+    image_keys: &mut Vec<u64>,
+    gradients: &mut Vec<GpuGradient>,
+    runs: &mut Vec<GuiRun>,
+) -> (usize, usize, usize, usize, usize) {
+    let opacity = |index: usize| {
+        opacities
+            .get(index)
+            .copied()
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0)
+    };
     quads.clear();
     glyphs.clear();
     images.clear();
@@ -90,6 +139,11 @@ pub(crate) fn group_runs(
                 }
                 let (clip_rect, clip_radius) = gpu_clip(index);
                 let (transform_a, transform_b) = gpu_transform(index);
+                let o = opacity(index);
+                let mut color = linear_rgba(q.color);
+                color[3] *= o;
+                let mut border_color = linear_rgba(q.border_color);
+                border_color[3] *= o;
                 quads.push(GpuQuad {
                     rect: [
                         q.rect.left() * scale,
@@ -97,9 +151,9 @@ pub(crate) fn group_runs(
                         q.rect.size.width * scale,
                         q.rect.size.height * scale,
                     ],
-                    color: linear_rgba(q.color),
+                    color,
                     radius: q.radius * scale,
-                    border_color: linear_rgba(q.border_color),
+                    border_color,
                     border_width: q.border_width * scale,
                     clip_rect,
                     clip_radius,
@@ -127,6 +181,8 @@ pub(crate) fn group_runs(
                 }
                 let (clip_rect, clip_radius) = gpu_clip(index);
                 let (transform_a, transform_b) = gpu_transform(index);
+                let mut color = linear_rgba(s.color);
+                color[3] *= opacity(index);
                 quads.push(GpuQuad {
                     rect: [
                         s.rect.left() * scale,
@@ -134,7 +190,7 @@ pub(crate) fn group_runs(
                         s.rect.size.width * scale,
                         s.rect.size.height * scale,
                     ],
-                    color: linear_rgba(s.color),
+                    color,
                     radius: s.radius * scale,
                     border_color: [0.0; 4],
                     border_width: 0.0,
@@ -156,6 +212,8 @@ pub(crate) fn group_runs(
                 let start = glyphs.len() as u32;
                 let (clip_rect, clip_radius) = gpu_clip(index);
                 let (transform_a, transform_b) = gpu_transform(index);
+                let mut color = linear_rgba(t.color);
+                color[3] *= opacity(index);
                 for g in &t.glyphs {
                     if cull_rect_t(g.rect, index) {
                         culled += 1;
@@ -173,7 +231,7 @@ pub(crate) fn group_runs(
                             g.rect.size.height * scale,
                         ],
                         uv: g.uv,
-                        color: linear_rgba(t.color),
+                        color,
                         color_glyph: if g.color_glyph { 1.0 } else { 0.0 },
                         clip_rect,
                         clip_radius,
@@ -213,6 +271,7 @@ pub(crate) fn group_runs(
                     clip_radius,
                     transform_a,
                     transform_b,
+                    opacity: opacity(index),
                 });
                 image_keys.push(d.source.cache_key());
                 match runs.last_mut() {
@@ -223,7 +282,8 @@ pub(crate) fn group_runs(
             RenderItem::Waveform(w) => {
                 let (clip_rect, clip_radius) = gpu_clip(index);
                 let (transform_a, transform_b) = gpu_transform(index);
-                let color = linear_rgba(w.color);
+                let mut color = linear_rgba(w.color);
+                color[3] *= opacity(index);
                 let start = quads.len() as u32;
                 for bar in &w.bars {
                     if cull_rect_t(*bar, index) {
@@ -269,10 +329,16 @@ pub(crate) fn group_runs(
                     culled += 1;
                     continue;
                 }
-                let Some((colors, pos, count)) = g.stops.for_gpu() else {
+                let Some((mut colors, pos, count)) = g.stops.for_gpu() else {
                     dropped_gradients += 1;
                     continue;
                 };
+                let o = opacity(index);
+                if o < 1.0 {
+                    for c in &mut colors {
+                        c[3] *= o;
+                    }
+                }
                 if gradients.len() >= gradient_ceiling {
                     dropped_gradients += 1;
                     continue;

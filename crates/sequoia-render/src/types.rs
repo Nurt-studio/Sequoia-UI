@@ -53,6 +53,7 @@ pub(crate) struct BlitQuad {
     pub(crate) clip_radius: f32,
     pub(crate) transform_a: [f32; 4],
     pub(crate) transform_b: [f32; 2],
+    pub(crate) opacity: f32,
 }
 
 /// Instance data for a gradient fill with up to four color stops.
@@ -82,6 +83,14 @@ pub(crate) struct GpuBackdrop {
     pub(crate) params: [f32; 4],
     pub(crate) clip_rect: [f32; 4],
     pub(crate) mask: [f32; 4],
+}
+
+/// Offscreen texture used while compositing one opacity group.
+pub(crate) struct GroupLayer {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+    pub(crate) bg: wgpu::BindGroup,
+    pub(crate) size: (u32, u32),
 }
 
 /// Ping-pong textures used while sampling and compositing the backdrop.
@@ -151,7 +160,7 @@ pub(crate) const QUAD_BYTES: usize = 30 * 4;
 
 pub(crate) const GLYPH_BYTES: usize = 24 * 4;
 
-pub(crate) const BLIT_BYTES: usize = 19 * 4;
+pub(crate) const BLIT_BYTES: usize = 20 * 4;
 
 pub(crate) const BACKDROP_BYTES: usize = 20 * 4;
 
@@ -180,6 +189,10 @@ pub(crate) const IMAGE_FAILURES_MAX: usize = 1024;
 pub(crate) const MAX_FRAME_QUADS: usize = 512;
 
 pub(crate) const MAX_BLITS: usize = 64;
+
+/// Maximum nesting depth of opacity groups rendered with offscreen layers.
+/// Deeper plans fall back to per-item alpha modulation.
+pub(crate) const MAX_GROUP_DEPTH: usize = 4;
 
 pub(crate) const DEFAULT_SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 

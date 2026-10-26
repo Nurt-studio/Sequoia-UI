@@ -17,6 +17,7 @@ use winit::window::Window;
 
 use crate::gpu::pipelines::*;
 use crate::gpu::resources::vertex_buffer;
+use crate::pass::opacity::*;
 use crate::scene::grouping::*;
 use crate::scene::instances::*;
 use crate::scene::planning::*;
@@ -92,6 +93,8 @@ pub struct GpuRenderer {
     pub(crate) scratch_images: Vec<BlitQuad>,
     pub(crate) scratch_image_keys: Vec<u64>,
     pub(crate) scratch_gradients: Vec<GpuGradient>,
+    pub(crate) scratch_opacities: Vec<f32>,
+    pub(crate) group_layers: Vec<GroupLayer>,
     pub(crate) scratch_image_draws: Vec<(u32, wgpu::BindGroup)>,
     pub(crate) scratch_seen: Vec<usize>,
     pub(crate) scratch_cached: Vec<CachedJob>,
@@ -443,6 +446,8 @@ impl GpuRenderer {
             scratch_images: Vec::with_capacity(INITIAL_IMAGE_CAPACITY),
             scratch_image_keys: Vec::with_capacity(INITIAL_IMAGE_CAPACITY),
             scratch_gradients: Vec::with_capacity(INITIAL_GRADIENT_CAPACITY),
+            scratch_opacities: Vec::new(),
+            group_layers: Vec::new(),
             scratch_image_draws: Vec::with_capacity(INITIAL_IMAGE_CAPACITY),
             scratch_seen: Vec::new(),
             scratch_cached: Vec::new(),
@@ -861,6 +866,44 @@ impl GpuRenderer {
         // Convert paint items into instanced runs, splitting the scene around
         // backdrop markers and filter ranges.
         let viewport = Rect::from_xywh(0.0, 0.0, fb.0 as f32 / s, fb.1 as f32 / s);
+        let opacity_plan = list.has_opacity_groups().then(|| list.opacity_plan());
+        let opacity_depth = opacity_plan
+            .as_ref()
+            .map(|plan| opacity_plan_depth(plan))
+            .unwrap_or(0);
+        let use_opacity_layers = !has_backdrops
+            && !has_filters
+            && opacity_depth > 0
+            && opacity_depth <= MAX_GROUP_DEPTH
+            && blit_quads.is_empty()
+            && frame_quads.is_empty()
+            && regions.is_empty();
+        if use_opacity_layers {
+            Self::ensure_group_layers(
+                &self.device,
+                &self.atlas_bgl,
+                &self.blit_sampler,
+                self.render_format,
+                &mut self.group_layers,
+                fb,
+                opacity_depth,
+            );
+        }
+
+        let item_opacities = &mut self.scratch_opacities;
+        item_opacities.clear();
+        if list.has_opacity_groups() {
+            let len = list.items().len();
+            item_opacities.resize(len, 1.0);
+            for span in list.opacity_spans() {
+                let start = span.start.min(len);
+                let end = span.end.min(len);
+                for o in &mut item_opacities[start..end] {
+                    *o *= span.opacity;
+                }
+            }
+        }
+
         let quads = &mut self.scratch_quads;
         let glyphs = &mut self.scratch_glyphs;
         let images = &mut self.scratch_images;
@@ -870,39 +913,75 @@ impl GpuRenderer {
         let mut backdrop_plans: Vec<BackdropSegPlan> = Vec::new();
         let mut backdrop_insts: Vec<GpuBackdrop> = Vec::new();
         let mut comp_plans: Vec<CompPlan> = Vec::new();
+        let mut opacity_draws: Option<Vec<OpacityDraw>> = None;
+        let mut group_composites: Vec<GpuBackdrop> = Vec::new();
         if !has_backdrops && !has_filters {
-            let (dq, dg, di, dgrad, culled) = group_runs(
-                list.items(),
-                list.item_clips(),
-                list.item_transforms(),
-                s,
-                Some(viewport),
-                self.quad_ceiling,
-                self.glyph_ceiling,
-                self.image_ceiling,
-                self.gradient_ceiling,
-                quads,
-                glyphs,
-                images,
-                image_keys,
-                gradients,
-                runs,
-            );
-            self.stats.dropped_quads += dq as u64;
-            self.stats.dropped_glyphs += dg as u64;
-            self.stats.dropped_images += di as u64;
-            self.stats.dropped_gradients += dgrad as u64;
-            self.stats.culled += culled as u64;
-            self.stats.frames += 1;
-            if dq + dg + di + dgrad > 0 {
-                log::error!(
-                    "sequoia-render: frame exceeds the device vertex-buffer limit — \
-                 dropped quads={dq} glyphs={dg} images={di} gradients={dgrad} \
-                 (paint items={}, quad ceiling={}, glyph ceiling={})",
-                    list.items().len(),
+            if use_opacity_layers {
+                let draws = build_opacity_draws(
+                    opacity_plan.as_ref().expect("opacity plan"),
+                    list.items(),
+                    list.item_clips(),
+                    list.item_transforms(),
+                    s,
+                    Some(viewport),
+                    (
+                        self.quad_ceiling,
+                        self.glyph_ceiling,
+                        self.image_ceiling,
+                        self.gradient_ceiling,
+                    ),
+                    quads,
+                    glyphs,
+                    images,
+                    image_keys,
+                    gradients,
+                    &mut self.stats,
+                    fb,
+                    &mut group_composites,
+                );
+                if !draws.is_empty() {
+                    opacity_draws = Some(draws);
+                } else {
+                    group_composites.clear();
+                }
+            }
+            if opacity_draws.is_none() {
+                let (dq, dg, di, dgrad, culled) = group_runs_with_opacity(
+                    list.items(),
+                    list.item_clips(),
+                    list.item_transforms(),
+                    item_opacities.as_slice(),
+                    s,
+                    Some(viewport),
                     self.quad_ceiling,
                     self.glyph_ceiling,
+                    self.image_ceiling,
+                    self.gradient_ceiling,
+                    quads,
+                    glyphs,
+                    images,
+                    image_keys,
+                    gradients,
+                    runs,
                 );
+                self.stats.dropped_quads += dq as u64;
+                self.stats.dropped_glyphs += dg as u64;
+                self.stats.dropped_images += di as u64;
+                self.stats.dropped_gradients += dgrad as u64;
+                self.stats.culled += culled as u64;
+                self.stats.frames += 1;
+                if dq + dg + di + dgrad > 0 {
+                    log::error!(
+                        "sequoia-render: frame exceeds the device vertex-buffer limit — \
+                     dropped quads={dq} glyphs={dg} images={di} gradients={dgrad} \
+                     (paint items={}, quad ceiling={}, glyph ceiling={})",
+                        list.items().len(),
+                        self.quad_ceiling,
+                        self.glyph_ceiling,
+                    );
+                }
+            } else {
+                self.stats.frames += 1;
             }
         } else {
             quads.clear();
@@ -937,10 +1016,11 @@ impl GpuRenderer {
                  gradients: &mut Vec<GpuGradient>,
                  stats: &mut RenderStats,
                  plan: &mut BackdropSegPlan| {
-                    let (dq, dg, di, dgrad, culled) = group_runs(
+                    let (dq, dg, di, dgrad, culled) = group_runs_with_opacity(
                         &items[from..to],
                         &clips[from..to],
                         &transforms[from..to],
+                        item_opacities.get(from..to).unwrap_or(&[]),
                         s,
                         Some(viewport),
                         ceil.0,
@@ -1256,6 +1336,21 @@ impl GpuRenderer {
                     bytemuck::cast_slice(&backdrop_insts),
                 );
             }
+        }
+
+        if !group_composites.is_empty() {
+            Self::ensure_capacity(
+                &self.device,
+                &mut self.backdrop_buf,
+                &mut self.backdrop_cap,
+                group_composites.len(),
+                BACKDROP_BYTES,
+            );
+            self.queue.write_buffer(
+                &self.backdrop_buf,
+                0,
+                bytemuck::cast_slice(&group_composites),
+            );
         }
 
         // Record the concrete passes.
@@ -1694,6 +1789,54 @@ impl GpuRenderer {
                     &view,
                 );
             }
+        } else if let Some(nodes) = &opacity_draws {
+            passes += 1;
+            {
+                let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sequoia-opacity-clear"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear_color_linear(self.clear_color)),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                drop(pass);
+            }
+            let ctx = OpacityDrawContext {
+                group_layers: &self.group_layers,
+                quad_pipeline: &self.quad_pipeline,
+                quad_pipeline_opaque: &self.quad_pipeline_opaque,
+                glyph_pipeline: &self.glyph_pipeline,
+                blit_pipeline: &self.blit_pipeline,
+                gradient_pipeline: &self.gradient_pipeline,
+                backdrop_pipeline: &self.backdrop_pipeline,
+                bind_group: &self.bind_group,
+                atlas_bg: self.atlas_tex.as_ref().map(|(_, bg)| bg),
+                quad_buf: &self.quad_buf,
+                glyph_buf: &self.glyph_buf,
+                image_buf: &self.image_buf,
+                gradient_buf: &self.gradient_buf,
+                backdrop_buf: &self.backdrop_buf,
+            };
+            draw_opacity_draws(
+                nodes,
+                &view,
+                0,
+                quads,
+                image_draws,
+                &mut encoder,
+                &mut passes,
+                &mut draws,
+                &ctx,
+            );
         } else {
             let all_opaque = gradients.is_empty() && quads.iter().all(quad_is_opaque);
 
