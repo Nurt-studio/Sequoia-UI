@@ -232,9 +232,8 @@ impl Container {
         self
     }
 
-    pub fn size(mut self, width: impl Into<Length>, height: impl Into<Length>) -> Self {
-        self.style = self.style.width(width.into()).height(height.into());
-        self
+    pub fn size(mut self, side: impl Into<Length>) -> Self {
+        self.square(side)
     }
 
     pub fn square(mut self, side: impl Into<Length>) -> Self {

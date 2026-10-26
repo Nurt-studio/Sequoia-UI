@@ -348,13 +348,13 @@ fn demo_stack() -> Stack {
                     ),
                 ),
         )
-        .child(boxed("centered", GREEN).size(150.0, 76.0))
+        .child(boxed("centered", GREEN).width(150.0).height(76.0))
         .child_at(
-            boxed("top-right", AMBER).size(84.0, 26.0),
+            boxed("top-right", AMBER).width(84.0).height(26.0),
             StackPos::top_right().offset(-10.0, 10.0),
         )
         .child_at(
-            boxed("bottom-left", PINK).size(88.0, 26.0),
+            boxed("bottom-left", PINK).width(88.0).height(26.0),
             StackPos::bottom_left().offset(10.0, -10.0),
         )
 }
@@ -372,7 +372,7 @@ fn demo_wrap() -> Wrap {
         ("seven", BLUE),
         ("eight", GREEN),
     ] {
-        wrap = wrap.child(boxed(label, color).size(92.0, 38.0));
+        wrap = wrap.child(boxed(label, color).width(92.0).height(38.0));
     }
     wrap
 }
