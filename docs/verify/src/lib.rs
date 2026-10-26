@@ -14,4 +14,8 @@
 #![doc = include_str!("../../src/getting-started/examples.md")]
 #![doc = include_str!("../../src/concepts/reactivity.md")]
 #![doc = include_str!("../../src/concepts/app-lifecycle.md")]
+#![doc = include_str!("../../src/concepts/view-tree.md")]
+#![doc = include_str!("../../src/concepts/layout.md")]
+#![doc = include_str!("../../src/concepts/events.md")]
+#![doc = include_str!("../../src/guides/custom-views.md")]
 #![doc = include_str!("../../src/contributing/documentation.md")]

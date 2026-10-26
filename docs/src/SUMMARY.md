@@ -13,6 +13,13 @@
 
 - [Reactivity](concepts/reactivity.md)
 - [Application lifecycle](concepts/app-lifecycle.md)
+- [View tree](concepts/view-tree.md)
+- [Layout](concepts/layout.md)
+- [Events](concepts/events.md)
+
+# Guides
+
+- [Custom views](guides/custom-views.md)
 
 # Contributing
 
