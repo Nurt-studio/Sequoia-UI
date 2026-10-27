@@ -4,7 +4,7 @@ use cosmic_text::CacheKey;
 use sequoia_buffer::{SpanAttr, StyledSpan};
 use sequoia_core::{Color, Rect, Size};
 
-use crate::{FontStyle, FontWeight};
+use crate::{FontStyle, FontWeight, LineHeight};
 
 pub(crate) const RICH_CACHE_MAX: usize = 128;
 
@@ -31,6 +31,7 @@ pub(crate) struct RichKey {
     wrap: u8,
     spacing: i32,
     align: u8,
+    line_height: u32,
 }
 
 impl RichKey {
@@ -41,6 +42,7 @@ impl RichKey {
         wrap: u8,
         spacing: f32,
         align: RichAlign,
+        line_height: LineHeight,
     ) -> Self {
         fn bits(color: &Color) -> [u32; 4] {
             [
@@ -74,7 +76,39 @@ impl RichKey {
             wrap,
             spacing: crate::spacing_key(spacing),
             align: align.key(),
+            line_height: line_height.key(),
         }
+    }
+}
+
+/// Returns a prefix of `spans` containing at most `max_chars` characters.
+pub(crate) fn truncate_spans(spans: &[TextSpan], max_chars: usize) -> Vec<TextSpan> {
+    let mut out = Vec::new();
+    let mut left = max_chars;
+    for span in spans {
+        if left == 0 {
+            break;
+        }
+        let count = span.text.chars().count();
+        if count <= left {
+            out.push(span.clone());
+            left -= count;
+        } else {
+            let mut truncated = span.clone();
+            truncated.text = span.text.chars().take(left).collect();
+            out.push(truncated);
+            left = 0;
+        }
+    }
+    out
+}
+
+/// Appends an ellipsis to the last span, preserving its style.
+pub(crate) fn append_ellipsis(spans: &mut Vec<TextSpan>) {
+    if let Some(last) = spans.last_mut() {
+        last.text.push(crate::ELLIPSIS);
+    } else {
+        spans.push(TextSpan::new(crate::ELLIPSIS.to_string()));
     }
 }
 

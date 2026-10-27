@@ -130,10 +130,62 @@ pub enum ElideMode {
 
 pub const ELLIPSIS: char = '…';
 
+/// How a line box height is derived from the font size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineHeight {
+    /// A multiplier of the font size (CSS-like unitless line height).
+    Factor(f32),
+    /// An absolute logical-pixel height.
+    Absolute(f32),
+}
+
+impl Default for LineHeight {
+    fn default() -> Self {
+        Self::Factor(1.35)
+    }
+}
+
+impl LineHeight {
+    /// Resolves the line box height for a font size.
+    pub fn resolve(self, size: f32) -> f32 {
+        let size = if size.is_finite() { size.max(0.0) } else { 0.0 };
+        let px = match self {
+            Self::Factor(factor) => size * factor,
+            Self::Absolute(px) => px,
+        };
+        if px.is_finite() {
+            px.max(0.0)
+        } else {
+            size * 1.35
+        }
+    }
+
+    pub(crate) fn key(self) -> u32 {
+        match self {
+            Self::Factor(factor) => ((factor.max(0.0) * 4.0).round() as u32).max(1),
+            Self::Absolute(px) => (px.max(0.0) * 4.0).round() as u32,
+        }
+    }
+}
+
+/// Vertical placement of the text block inside its content box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TextVAlign {
+    #[default]
+    Top,
+    Center,
+    Bottom,
+    /// Aligns the first text baseline with the top of the content box.
+    Baseline,
+}
+
 pub struct ShapedText {
     glyphs: Vec<ShapedGlyph>,
+    rows: Vec<LineRow>,
     width: f32,
     height: f32,
+    line_height: f32,
 }
 
 impl ShapedText {
@@ -147,6 +199,30 @@ impl ShapedText {
 
     pub fn glyph_count(&self) -> usize {
         self.glyphs.len()
+    }
+
+    /// Number of laid-out lines. Empty text has zero lines.
+    pub fn line_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Distance from the top of the first line box to its baseline.
+    pub fn first_baseline(&self) -> f32 {
+        self.rows.first().map(|row| row.baseline).unwrap_or(0.0)
+    }
+
+    /// Resolved line box height (the first row, or the configured height for empty text).
+    pub fn line_height(&self) -> f32 {
+        self.line_height
+    }
+
+    /// Per-line metrics relative to the top of the text block.
+    pub fn rows(&self) -> &[LineRow] {
+        &self.rows
+    }
+
+    pub fn row(&self, index: usize) -> Option<&LineRow> {
+        self.rows.get(index)
     }
 }
 
@@ -693,7 +769,7 @@ const DEFAULT_FAMILY: &str = "Inter";
 
 const BUNDLED_WEIGHTS: [u16; 4] = [400, 500, 600, 700];
 
-type ShapeKey = (String, u32, u16, String, u8, u32, u8, i32);
+type ShapeKey = (String, u32, u16, String, u8, u32, u8, i32, u32);
 type CaretKey = (String, u32, u16, String, u8, u32, i32);
 
 #[derive(Clone)]
@@ -706,6 +782,7 @@ struct MruShape {
     width_q: u32,
     mode_k: u8,
     spacing_k: i32,
+    line_height_k: u32,
     key: ShapeKey,
     shaped: Rc<ShapedText>,
 }
@@ -1036,6 +1113,7 @@ impl TextSystem {
         self.shape_wrapped_styled_spaced(text, size, weight, width, mode, 0.0, family, style)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn mru_hit(
         &mut self,
         text: &str,
@@ -1046,6 +1124,7 @@ impl TextSystem {
         width_q: u32,
         mode_k: u8,
         spacing_k: i32,
+        line_height_k: u32,
     ) -> Option<Rc<ShapedText>> {
         let (key, shaped) = match self.mru.as_ref() {
             Some(mru)
@@ -1056,7 +1135,8 @@ impl TextSystem {
                     && mru.style_k == style_k
                     && mru.width_q == width_q
                     && mru.mode_k == mode_k
-                    && mru.spacing_k == spacing_k =>
+                    && mru.spacing_k == spacing_k
+                    && mru.line_height_k == line_height_k =>
             {
                 (mru.key.clone(), mru.shaped.clone())
             }
@@ -1082,10 +1162,37 @@ impl TextSystem {
         family: Option<&str>,
         style: FontStyle,
     ) -> Rc<ShapedText> {
+        self.shape_wrapped_styled_spaced_lh(
+            text,
+            size,
+            weight,
+            width,
+            mode,
+            spacing,
+            family,
+            style,
+            LineHeight::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn shape_wrapped_styled_spaced_lh(
+        &mut self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+        width: f32,
+        mode: WrapMode,
+        spacing: LetterSpacing,
+        family: Option<&str>,
+        style: FontStyle,
+        line_height: LineHeight,
+    ) -> Rc<ShapedText> {
         let size_q = (size * 4.0).round() as u32;
         let width_q = (width.max(0.0) * 4.0).round() as u32;
         let spacing = sanitize_spacing(spacing);
         let spacing_k = spacing_key(spacing);
+        let line_height_k = line_height.key();
 
         let weight_raw_v = weight.value();
         if let Some(hit) = self.mru_hit(
@@ -1097,6 +1204,7 @@ impl TextSystem {
             width_q,
             mode.key(),
             spacing_k,
+            line_height_k,
         ) {
             return hit;
         }
@@ -1111,6 +1219,7 @@ impl TextSystem {
             width_q,
             mode.key(),
             spacing_k,
+            line_height_k,
         );
         if let Some(rc) = self.shaped.get(&key) {
             if let Some(pos) = self.shaping_order.iter().position(|k| k == &key) {
@@ -1127,6 +1236,7 @@ impl TextSystem {
                 width_q,
                 mode_k: mode.key(),
                 spacing_k,
+                line_height_k,
                 key,
                 shaped: shaped.clone(),
             });
@@ -1141,6 +1251,7 @@ impl TextSystem {
             width,
             mode,
             spacing,
+            line_height,
         );
         self.shaped.insert(key.clone(), shaped.clone());
         self.shaping_order.push_front(key.clone());
@@ -1160,6 +1271,7 @@ impl TextSystem {
             width_q,
             mode_k: mode.key(),
             spacing_k,
+            line_height_k,
             key,
             shaped: shaped.clone(),
         });
@@ -2148,6 +2260,105 @@ impl TextSystem {
         }
     }
 
+    /// Returns the width of the longest unbreakable unit for the wrap mode.
+    ///
+    /// For word wrapping this is the longest whitespace-separated word; for
+    /// character wrapping it is the widest single character.
+    #[allow(clippy::too_many_arguments)]
+    pub fn min_content_width_styled_spaced(
+        &mut self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+        spacing: LetterSpacing,
+        family: Option<&str>,
+        style: FontStyle,
+        mode: WrapMode,
+    ) -> f32 {
+        match mode {
+            WrapMode::Character => text
+                .chars()
+                .map(|ch| {
+                    let mut buf = [0u8; 4];
+                    self.measure_width_styled_spaced(
+                        ch.encode_utf8(&mut buf),
+                        size,
+                        weight,
+                        spacing,
+                        family,
+                        style,
+                    )
+                })
+                .fold(0.0_f32, f32::max),
+            _ => text
+                .split_whitespace()
+                .map(|word| {
+                    self.measure_width_styled_spaced(word, size, weight, spacing, family, style)
+                })
+                .fold(0.0_f32, f32::max),
+        }
+    }
+
+    /// Elides wrapped text to at most `max_lines`, appending an ellipsis to the
+    /// last visible line when content is cut.
+    #[allow(clippy::too_many_arguments)]
+    pub fn elide_lines_styled_spaced(
+        &mut self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+        width: f32,
+        mode: WrapMode,
+        spacing: LetterSpacing,
+        family: Option<&str>,
+        style: FontStyle,
+        line_height: LineHeight,
+        max_lines: usize,
+    ) -> String {
+        if text.is_empty() || max_lines == 0 || width <= 0.0 {
+            return String::new();
+        }
+        let full = self.shape_wrapped_styled_spaced_lh(
+            text,
+            size,
+            weight,
+            width,
+            mode,
+            spacing,
+            family,
+            style,
+            line_height,
+        );
+        if full.line_count() <= max_lines {
+            return text.to_owned();
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let ell = ELLIPSIS.to_string();
+        let mut lo = 0usize;
+        let mut hi = chars.len();
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            let candidate: String = chars[..mid].iter().collect::<String>() + &ell;
+            let shaped = self.shape_wrapped_styled_spaced_lh(
+                &candidate,
+                size,
+                weight,
+                width,
+                mode,
+                spacing,
+                family,
+                style,
+                line_height,
+            );
+            if shaped.line_count() <= max_lines {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        chars[..lo].iter().collect::<String>() + &ell
+    }
+
     fn measure_width_styled_spaced(
         &mut self,
         text: &str,
@@ -2182,6 +2393,7 @@ impl TextSystem {
             / scale
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn shape_uncached_styled(
         &mut self,
         text: &str,
@@ -2192,11 +2404,13 @@ impl TextSystem {
         wrap_width: f32,
         wrap_mode: WrapMode,
         spacing: f32,
+        line_height: LineHeight,
     ) -> Rc<ShapedText> {
         let spacing = sanitize_spacing(spacing);
         let scale = self.scale;
         let px = size * scale;
-        let line_h_px = px * 1.35;
+        let line_h = line_height.resolve(size).max(1.0);
+        let line_h_px = line_h * scale;
         let mut buffer = self
             .shape_scratch
             .take()
@@ -2222,14 +2436,23 @@ impl TextSystem {
 
         let sp_px = spacing * scale;
         let mut glyphs = Vec::new();
+        let mut rows = Vec::new();
         let mut width_px = 0.0_f32;
         let mut height_px = line_h_px;
 
+        let mut first_line_top: Option<f32> = None;
         let mut first_line_y: Option<f32> = None;
         for run in buffer.layout_runs() {
+            let base_top = *first_line_top.get_or_insert(run.line_top);
             let extra = sp_px * run.glyphs.len().saturating_sub(1) as f32;
             width_px = width_px.max(run.line_w + extra);
-            height_px = height_px.max(run.line_top + run.line_height);
+            height_px = height_px.max(run.line_top - base_top + run.line_height);
+            rows.push(LineRow {
+                top: (run.line_top - base_top) / scale,
+                height: run.line_height / scale,
+                baseline: (run.line_y - base_top) / scale,
+                width: (run.line_w + extra) / scale,
+            });
             let dy_base = run.line_y - *first_line_y.get_or_insert(run.line_y);
             for (j, g) in run.glyphs.iter().enumerate() {
                 let p = g.physical((0.0, 0.0), 1.0);
@@ -2245,8 +2468,10 @@ impl TextSystem {
         }
         let out = Rc::new(ShapedText {
             glyphs,
+            rows,
             width: width_px / scale,
             height: height_px / scale,
+            line_height: line_h,
         });
         self.shape_scratch = Some(buffer);
         out
@@ -2405,8 +2630,30 @@ impl TextSystem {
         spacing: f32,
         align: rich::RichAlign,
     ) -> Rc<rich::RichParagraph> {
+        self.shape_rich_full_lh(
+            spans,
+            size,
+            width,
+            mode,
+            spacing,
+            align,
+            LineHeight::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn shape_rich_full_lh(
+        &mut self,
+        spans: &[rich::TextSpan],
+        size: f32,
+        width: f32,
+        mode: WrapMode,
+        spacing: f32,
+        align: rich::RichAlign,
+        line_height: LineHeight,
+    ) -> Rc<rich::RichParagraph> {
         let spacing = sanitize_spacing(spacing);
-        let key = rich::RichKey::new(spans, size, width, mode.key(), spacing, align);
+        let key = rich::RichKey::new(spans, size, width, mode.key(), spacing, align, line_height);
         if let Some(rc) = self.rich.get(&key) {
             if let Some(pos) = self.rich_order.iter().position(|k| k == &key) {
                 self.rich_order.remove(pos);
@@ -2414,7 +2661,8 @@ impl TextSystem {
             self.rich_order.push_front(key);
             return rc.clone();
         }
-        let shaped = self.shape_rich_uncached(spans, size, width, mode, spacing, align);
+        let shaped =
+            self.shape_rich_uncached(spans, size, width, mode, spacing, align, line_height);
         self.rich.insert(key.clone(), shaped.clone());
         self.rich_order.push_front(key);
         while self.rich.len() > rich::RICH_CACHE_MAX {
@@ -2427,6 +2675,47 @@ impl TextSystem {
         shaped
     }
 
+    /// Elides rich text to at most `max_lines`, appending an ellipsis to the
+    /// last visible line when content is cut.
+    #[allow(clippy::too_many_arguments)]
+    pub fn elide_rich_lines(
+        &mut self,
+        spans: &[rich::TextSpan],
+        size: f32,
+        width: f32,
+        mode: WrapMode,
+        spacing: f32,
+        align: rich::RichAlign,
+        line_height: LineHeight,
+        max_lines: usize,
+    ) -> Vec<rich::TextSpan> {
+        if max_lines == 0 || width <= 0.0 || spans.iter().all(|s| s.text.is_empty()) {
+            return Vec::new();
+        }
+        let full = self.shape_rich_full_lh(spans, size, width, mode, spacing, align, line_height);
+        if full.line_count() <= max_lines {
+            return spans.to_vec();
+        }
+        let char_count = full.len_chars();
+        let mut lo = 0usize;
+        let mut hi = char_count;
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            let mut candidate = rich::truncate_spans(spans, mid);
+            rich::append_ellipsis(&mut candidate);
+            let shaped =
+                self.shape_rich_full_lh(&candidate, size, width, mode, spacing, align, line_height);
+            if shaped.line_count() <= max_lines {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        let mut out = rich::truncate_spans(spans, lo);
+        rich::append_ellipsis(&mut out);
+        out
+    }
+
     fn shape_rich_uncached(
         &mut self,
         spans: &[rich::TextSpan],
@@ -2435,14 +2724,15 @@ impl TextSystem {
         mode: WrapMode,
         spacing: f32,
         align: rich::RichAlign,
+        line_height: LineHeight,
     ) -> Rc<rich::RichParagraph> {
         use std::ops::Range;
 
         let spacing = sanitize_spacing(spacing);
         let scale = self.scale;
         let px = size * scale;
-        let line_h_px = px * 1.35;
-        let line_h = line_h_px / scale;
+        let line_h = line_height.resolve(size).max(1.0);
+        let line_h_px = line_h * scale;
 
         let mut full = String::new();
         let mut span_bytes: Vec<Range<usize>> = Vec::with_capacity(spans.len());
@@ -2525,8 +2815,10 @@ impl TextSystem {
                 0.0
             };
             if delta != 0.0 {
-                let px_i = ((size + delta).max(1.0)) * scale;
-                attrs = attrs.metrics(Metrics::new(px_i, px_i * 1.35));
+                let span_size = (size + delta).max(1.0);
+                let px_i = span_size * scale;
+                let span_line_h = line_height.resolve(span_size).max(1.0) * scale;
+                attrs = attrs.metrics(Metrics::new(px_i, span_line_h));
             }
             attrs_list.push((&full[span_bytes[i].clone()], attrs));
         }
@@ -3071,6 +3363,152 @@ mod tests {
     }
 
     #[test]
+    fn line_height_sets_row_geometry() {
+        let mut text = TextSystem::new();
+        let shaped = text.shape_wrapped_styled_spaced_lh(
+            "aaa\nbbb",
+            16.0,
+            FontWeight::NORMAL,
+            0.0,
+            WrapMode::Word,
+            0.0,
+            None,
+            FontStyle::Normal,
+            LineHeight::Absolute(40.0),
+        );
+        assert_eq!(shaped.line_count(), 2);
+        assert!((shaped.rows()[1].top - 40.0).abs() < 0.5);
+        assert!(shaped.height() >= 80.0);
+        assert!(shaped.first_baseline() > 0.0);
+        assert!(shaped.first_baseline() < 40.0);
+    }
+
+    #[test]
+    fn line_height_is_part_of_cache_key() {
+        let mut text = TextSystem::new();
+        let a = text.shape_wrapped_styled_spaced_lh(
+            "aaa bbb",
+            16.0,
+            FontWeight::NORMAL,
+            80.0,
+            WrapMode::Word,
+            0.0,
+            None,
+            FontStyle::Normal,
+            LineHeight::Factor(1.0),
+        );
+        let b = text.shape_wrapped_styled_spaced_lh(
+            "aaa bbb",
+            16.0,
+            FontWeight::NORMAL,
+            80.0,
+            WrapMode::Word,
+            0.0,
+            None,
+            FontStyle::Normal,
+            LineHeight::Factor(2.0),
+        );
+        assert!(!Rc::ptr_eq(&a, &b));
+        assert!(b.height() > a.height());
+    }
+
+    #[test]
+    fn multiline_elision_stops_at_max_lines() {
+        let mut text = TextSystem::new();
+        let content = "one two three four five six seven eight nine ten";
+        let shown = text.elide_lines_styled_spaced(
+            content,
+            16.0,
+            FontWeight::NORMAL,
+            70.0,
+            WrapMode::Word,
+            0.0,
+            None,
+            FontStyle::Normal,
+            LineHeight::default(),
+            2,
+        );
+        assert!(shown.ends_with('…'), "ellipsis appended: {shown:?}");
+        assert!(shown.chars().count() < content.chars().count());
+        let shaped = text.shape_wrapped_styled_spaced_lh(
+            &shown,
+            16.0,
+            FontWeight::NORMAL,
+            70.0,
+            WrapMode::Word,
+            0.0,
+            None,
+            FontStyle::Normal,
+            LineHeight::default(),
+        );
+        assert!(shaped.line_count() <= 2, "lines: {}", shaped.line_count());
+    }
+
+    #[test]
+    fn min_content_width_uses_longest_word_or_char() {
+        let mut text = TextSystem::new();
+        let content = "a enormouslylongword b";
+        let word = text.text_width_styled_spaced(
+            "enormouslylongword",
+            16.0,
+            FontWeight::NORMAL,
+            0.0,
+            None,
+            FontStyle::Normal,
+        );
+        let min_word = text.min_content_width_styled_spaced(
+            content,
+            16.0,
+            FontWeight::NORMAL,
+            0.0,
+            None,
+            FontStyle::Normal,
+            WrapMode::Word,
+        );
+        assert!((min_word - word).abs() < 0.5, "{min_word} vs {word}");
+        let min_char = text.min_content_width_styled_spaced(
+            content,
+            16.0,
+            FontWeight::NORMAL,
+            0.0,
+            None,
+            FontStyle::Normal,
+            WrapMode::Character,
+        );
+        assert!(min_char < min_word);
+    }
+
+    #[test]
+    fn rich_elision_stops_at_max_lines() {
+        let mut text = TextSystem::new();
+        let spans = [rich::TextSpan::new(
+            "one two three four five six seven eight nine ten",
+        )];
+        let shown = text.elide_rich_lines(
+            &spans,
+            16.0,
+            70.0,
+            WrapMode::Word,
+            0.0,
+            rich::RichAlign::Left,
+            LineHeight::default(),
+            2,
+        );
+        let joined: String = shown.iter().map(|s| s.text.as_str()).collect();
+        assert!(joined.ends_with('…'), "ellipsis appended: {joined:?}");
+        let shaped = text.shape_rich_full_lh(
+            &shown,
+            16.0,
+            70.0,
+            WrapMode::Word,
+            0.0,
+            rich::RichAlign::Left,
+            LineHeight::default(),
+        );
+        assert!(shaped.line_count() <= 2);
+    }
+
+    #[test]
     fn truncate_cuts_and_fits() {
         let mut text = TextSystem::new();
         assert_eq!(
@@ -3290,6 +3728,7 @@ mod tests {
             0,
             WrapMode::Word.key(),
             0,
+            LineHeight::default().key(),
         );
         assert!(
             !text.shaped.contains_key(&old_key),

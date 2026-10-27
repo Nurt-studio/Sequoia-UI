@@ -14,6 +14,9 @@ pub struct TextStyle {
 
     pub letter_spacing: Option<f32>,
 
+    /// Line height as a multiple of the font size.
+    pub line_height: Option<f32>,
+
     pub underline: Option<bool>,
 
     pub strikethrough: Option<bool>,
@@ -28,6 +31,7 @@ impl TextStyle {
             family: None,
             italic: None,
             letter_spacing: None,
+            line_height: None,
             underline: None,
             strikethrough: None,
         }
@@ -60,6 +64,11 @@ impl TextStyle {
 
     pub const fn letter_spacing(mut self, spacing: f32) -> Self {
         self.letter_spacing = Some(spacing);
+        self
+    }
+
+    pub const fn line_height(mut self, factor: f32) -> Self {
+        self.line_height = Some(factor);
         self
     }
 
