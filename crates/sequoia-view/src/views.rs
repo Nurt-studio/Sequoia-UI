@@ -4,11 +4,25 @@ use sequoia_layout::{
     LayoutCtx, LayoutStyle, MasonryStyle, Overflow, Position, Track, WrapStyle,
 };
 use sequoia_style::{BoxStyle, TextStyle};
-use sequoia_text::{ElideMode, FontStyle, FontWeight, LetterSpacing, WrapMode};
+use sequoia_text::{
+    ElideMode, FontStyle, FontWeight, LetterSpacing, LineHeight, TextVAlign, WrapMode,
+};
 
 use crate::any::AnyView;
 use crate::runtime::{ElementId, Runtime};
 use crate::view::{PaintCtx, View};
+
+pub(crate) fn text_wrap_limit(style: LayoutStyle, available: f32) -> Option<f32> {
+    let outer = match style.width {
+        Length::Px(px) => px,
+        Length::Percent(percent) if available.is_finite() => available * percent / 100.0,
+        Length::Fill(_) if available.is_finite() => available,
+        _ => f32::INFINITY,
+    };
+    let limit =
+        outer.min(style.max_width).max(style.min_width).max(0.0) - style.padding.horizontal_sum();
+    (limit.is_finite() && limit > 0.0).then_some(limit)
+}
 
 macro_rules! impl_style_extras {
     ($name:ident) => {
@@ -259,6 +273,11 @@ pub struct Text {
 
     truncate_fill: bool,
     elide_mode: ElideMode,
+    line_height: LineHeight,
+    align_y: TextVAlign,
+    max_lines: Option<usize>,
+    font_scale: f32,
+    auto_wrap: bool,
     underline: bool,
     strikethrough: bool,
     style: LayoutStyle,
@@ -280,6 +299,11 @@ impl Text {
             truncate_width: None,
             truncate_fill: false,
             elide_mode: ElideMode::default(),
+            line_height: LineHeight::default(),
+            align_y: TextVAlign::Top,
+            max_lines: None,
+            font_scale: 1.0,
+            auto_wrap: false,
             underline: false,
             strikethrough: false,
             style: LayoutStyle {
@@ -304,6 +328,11 @@ impl Text {
             truncate_width: None,
             truncate_fill: false,
             elide_mode: ElideMode::default(),
+            line_height: LineHeight::default(),
+            align_y: TextVAlign::Top,
+            max_lines: None,
+            font_scale: 1.0,
+            auto_wrap: false,
             underline: false,
             strikethrough: false,
             style: LayoutStyle {
@@ -436,6 +465,48 @@ impl Text {
         self
     }
 
+    /// Enables wrapping at the width available from the parent container.
+    pub fn wrap(mut self) -> Self {
+        self.auto_wrap = true;
+        self
+    }
+
+    /// Sets the line height as a multiple of the font size.
+    pub fn line_height(mut self, factor: f32) -> Self {
+        if factor.is_finite() && factor > 0.0 {
+            self.line_height = LineHeight::Factor(factor);
+        }
+        self
+    }
+
+    /// Sets an absolute line height in logical pixels.
+    pub fn line_height_px(mut self, px: f32) -> Self {
+        if px.is_finite() && px > 0.0 {
+            self.line_height = LineHeight::Absolute(px);
+        }
+        self
+    }
+
+    /// Sets vertical alignment within the text box.
+    pub fn align_y(mut self, align: TextVAlign) -> Self {
+        self.align_y = align;
+        self
+    }
+
+    /// Limits visible wrapped text to `lines`, appending an ellipsis.
+    pub fn max_lines(mut self, lines: usize) -> Self {
+        self.max_lines = if lines == 0 { None } else { Some(lines) };
+        self
+    }
+
+    /// Scales the resolved font size without changing layout styles.
+    pub fn font_scale(mut self, scale: f32) -> Self {
+        if scale.is_finite() && scale > 0.0 {
+            self.font_scale = scale;
+        }
+        self
+    }
+
     pub fn truncate(mut self, max_width: f32) -> Self {
         self.truncate_width = if max_width > 0.0 {
             Some(max_width)
@@ -481,6 +552,12 @@ impl Text {
         }
         if let Some(spacing) = style.letter_spacing {
             self.letter_spacing = if spacing.is_finite() { spacing } else { 0.0 };
+        }
+        if let Some(factor) = style.line_height
+            && factor.is_finite()
+            && factor > 0.0
+        {
+            self.line_height = LineHeight::Factor(factor);
         }
         if let Some(on) = style.underline {
             self.underline = on;
@@ -741,26 +818,20 @@ impl View for Text {
         self.style
     }
     fn intrinsic_size(&self, ctx: &mut LayoutCtx) -> Option<Size> {
-        let size = self.font_size.unwrap_or_else(|| ctx.default_font_size());
+        let size = self.font_size.unwrap_or_else(|| ctx.default_font_size()) * self.font_scale;
         let weight = self.weight.unwrap_or_default();
         let family = self.family.as_deref();
         let fstyle = self.font_style;
         let content = (self.content)();
         let pad = self.style.padding;
-        let text_size = if let Some(w) = self.truncate_width {
-            ctx.text_elided_size_styled_spaced(
-                &content,
-                size,
-                weight,
-                w,
-                self.elide_mode,
-                self.letter_spacing,
-                family,
-                fstyle,
-            )
+        let auto_wrap = if self.auto_wrap {
+            text_wrap_limit(self.style, ctx.available_width())
         } else {
-            match self.wrap_width {
-                Some(w) => ctx.text_wrapped_size_styled_spaced(
+            None
+        };
+        let text_size = if let Some(w) = self.truncate_width {
+            if let Some(max_lines) = self.max_lines {
+                let shown = ctx.text_elide_lines_styled_spaced(
                     &content,
                     size,
                     weight,
@@ -769,28 +840,112 @@ impl View for Text {
                     self.letter_spacing,
                     family,
                     fstyle,
-                ),
-                None => {
-                    let w = ctx.text_width_styled_spaced(
-                        &content,
-                        size,
-                        weight,
-                        self.letter_spacing,
-                        family,
-                        fstyle,
-                    );
-                    Size::new(w, LayoutCtx::text_line_height(size))
-                }
+                    self.line_height,
+                    max_lines,
+                );
+                ctx.text_wrapped_size_styled_spaced_lh(
+                    &shown,
+                    size,
+                    weight,
+                    w,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                )
+            } else {
+                ctx.text_elided_size_styled_spaced_lh(
+                    &content,
+                    size,
+                    weight,
+                    w,
+                    self.elide_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                )
             }
+        } else if let Some(w) = self.wrap_width.or(auto_wrap) {
+            let shown = match self.max_lines {
+                Some(max_lines) => ctx.text_elide_lines_styled_spaced(
+                    &content,
+                    size,
+                    weight,
+                    w,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                    max_lines,
+                ),
+                None => content.clone(),
+            };
+            ctx.text_wrapped_size_styled_spaced_lh(
+                &shown,
+                size,
+                weight,
+                w,
+                self.wrap_mode,
+                self.letter_spacing,
+                family,
+                fstyle,
+                self.line_height,
+            )
+        } else {
+            let w = ctx.text_width_styled_spaced(
+                &content,
+                size,
+                weight,
+                self.letter_spacing,
+                family,
+                fstyle,
+            );
+            let shaped = ctx.text_wrapped_size_styled_spaced_lh(
+                &content,
+                size,
+                weight,
+                w.max(1.0),
+                self.wrap_mode,
+                self.letter_spacing,
+                family,
+                fstyle,
+                self.line_height,
+            );
+            Size::new(w.max(shaped.width), shaped.height)
         };
         Some(Size::new(
             text_size.width + pad.horizontal_sum(),
             text_size.height + pad.vertical_sum(),
         ))
     }
+
+    fn baseline_offset(&self, ctx: &mut LayoutCtx, width: f32) -> Option<f32> {
+        let size = self.font_size.unwrap_or_else(|| ctx.default_font_size()) * self.font_scale;
+        let weight = self.weight.unwrap_or_default();
+        let family = self.family.as_deref();
+        let content = (self.content)();
+        let pad = self.style.padding;
+        let width = (width - pad.horizontal_sum()).max(0.0);
+        let baseline = ctx.text_first_baseline_styled_spaced_lh(
+            &content,
+            size,
+            weight,
+            width,
+            self.wrap_mode,
+            self.letter_spacing,
+            family,
+            self.font_style,
+            self.line_height,
+        );
+        Some(pad.top + baseline)
+    }
+
     fn paint_self(&self, ctx: &mut PaintCtx) {
         let theme = ctx.theme();
-        let size = self.font_size.unwrap_or(theme.font_size);
+        let size = self.font_size.unwrap_or(theme.font_size) * self.font_scale;
         let weight = self.weight.unwrap_or_default();
         let color = self.color.unwrap_or(theme.text);
         let content = (self.content)();
@@ -806,62 +961,84 @@ impl View for Text {
 
         let family = self.family.as_deref();
         let fstyle = self.font_style;
-        let (shown, y, wrapped) = if let Some(w) = self.truncate_width.or(if self.truncate_fill {
+        let truncate_width = self.truncate_width.or(if self.truncate_fill {
             Some(content_rect.size.width.max(0.0))
         } else {
             None
-        }) {
-            let shown = ctx.elide_styled_spaced(
-                &content,
-                size,
-                weight,
-                w,
-                self.elide_mode,
-                self.letter_spacing,
-                family,
-                fstyle,
-            );
-            let y = content_rect.top() + content_rect.size.height * 0.5 + size * 0.35;
-            (shown, y, None)
+        });
+        let auto_wrap = if self.auto_wrap && content_rect.size.width > 0.0 {
+            Some(content_rect.size.width)
         } else {
-            let y = match self.wrap_width {
-                Some(_) => {
-                    content_rect.top() + LayoutCtx::text_line_height(size) * 0.5 + size * 0.35
-                }
-                None => content_rect.top() + content_rect.size.height * 0.5 + size * 0.35,
-            };
-
-            #[cfg(debug_assertions)]
-            {
-                if self.wrap_width.is_none() && !content.is_empty() {
-                    let full_w = ctx.text_width_styled_spaced(
-                        &content,
-                        size,
-                        weight,
-                        self.letter_spacing,
-                        family,
-                        fstyle,
-                    );
-                    if full_w > content_rect.size.width + 1.0 && content_rect.size.width > 0.0 {
-                        use std::sync::Once;
-                        static WARN_ONCE: Once = Once::new();
-                        WARN_ONCE.call_once(|| {
-                            log::warn!(
-                                "sequoia-view: Text `{}` overflows box ({full_w:.1}px > {:.1}px) without truncate — add `.truncate_fill()` or `.truncate(w)`. \
-                                 (This warning once per process; subsequent overflows are silent.)",
-                                content.chars().take(24).collect::<String>(),
-                                content_rect.size.width,
-                            );
-                        });
-                    }
-                }
-            }
-            (content.clone(), y, self.wrap_width)
+            None
         };
-        match wrapped {
-            Some(w) => ctx.draw_text_wrapped_styled_spaced(
+        let (shown, wrap_at, shaped) = if let Some(w) = truncate_width {
+            if let Some(max_lines) = self.max_lines {
+                let shown = ctx.elide_lines_styled_spaced(
+                    &content,
+                    size,
+                    weight,
+                    w,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                    max_lines,
+                );
+                let shaped = ctx.shape_wrapped_styled_spaced_lh(
+                    &shown,
+                    size,
+                    weight,
+                    w,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                );
+                (shown, Some(w), shaped)
+            } else {
+                let shown = ctx.elide_styled_spaced(
+                    &content,
+                    size,
+                    weight,
+                    w,
+                    self.elide_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                );
+                let shaped = ctx.shape_wrapped_styled_spaced_lh(
+                    &shown,
+                    size,
+                    weight,
+                    0.0,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                );
+                (shown, None, shaped)
+            }
+        } else if let Some(w) = self.wrap_width.or(auto_wrap) {
+            let shown = match self.max_lines {
+                Some(max_lines) => ctx.elide_lines_styled_spaced(
+                    &content,
+                    size,
+                    weight,
+                    w,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                    max_lines,
+                ),
+                None => content.clone(),
+            };
+            let shaped = ctx.shape_wrapped_styled_spaced_lh(
                 &shown,
-                (x, y),
                 size,
                 weight,
                 w,
@@ -869,19 +1046,91 @@ impl View for Text {
                 self.letter_spacing,
                 family,
                 fstyle,
-                color,
-            ),
-            None => ctx.draw_text_styled_spaced(
-                &shown,
-                (x, y),
+                self.line_height,
+            );
+            (shown, Some(w), shaped)
+        } else {
+            let full_w = ctx.text_width_styled_spaced(
+                &content,
                 size,
                 weight,
                 self.letter_spacing,
                 family,
                 fstyle,
-                color,
-            ),
+            );
+            if let Some(max_lines) = self.max_lines {
+                let shown = ctx.elide_lines_styled_spaced(
+                    &content,
+                    size,
+                    weight,
+                    full_w.max(1.0),
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                    max_lines,
+                );
+                let shaped = ctx.shape_wrapped_styled_spaced_lh(
+                    &shown,
+                    size,
+                    weight,
+                    full_w.max(1.0),
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                );
+                (shown, None, shaped)
+            } else {
+                let shaped = ctx.shape_wrapped_styled_spaced_lh(
+                    &content,
+                    size,
+                    weight,
+                    0.0,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    family,
+                    fstyle,
+                    self.line_height,
+                );
+                (content.clone(), None, shaped)
+            }
+        };
+
+        #[cfg(debug_assertions)]
+        {
+            if wrap_at.is_none() && !content.is_empty() {
+                if shaped.width() > content_rect.size.width + 1.0 && content_rect.size.width > 0.0 {
+                    use std::sync::Once;
+                    static WARN_ONCE: Once = Once::new();
+                    WARN_ONCE.call_once(|| {
+                        log::warn!(
+                            "sequoia-view: Text `{}` overflows box ({:.1}px > {:.1}px) without truncate — add `.truncate_fill()` or `.truncate(w)`. \
+                             (This warning once per process; subsequent overflows are silent.)",
+                            content.chars().take(24).collect::<String>(),
+                            shaped.width(),
+                            content_rect.size.width,
+                        );
+                    });
+                }
+            }
         }
+
+        let text_h = shaped.height();
+        let block_top = match self.align_y {
+            TextVAlign::Top | TextVAlign::Baseline => content_rect.top(),
+            TextVAlign::Center => content_rect.top() + (content_rect.size.height - text_h) * 0.5,
+            TextVAlign::Bottom => content_rect.top() + content_rect.size.height - text_h,
+            _ => content_rect.top(),
+        };
+        let y = if self.align_y == TextVAlign::Baseline {
+            content_rect.top()
+        } else {
+            block_top + shaped.first_baseline()
+        };
+        ctx.draw_shaped(&shaped, (x, y), color);
         self.paint_decoration(ctx, &shown, x, y, size, weight, color);
     }
 }
@@ -2673,6 +2922,26 @@ impl Wrap {
 
     pub fn align_items(mut self, align: Align) -> Self {
         self.wrap = self.wrap.align(align);
+        self
+    }
+
+    pub fn columns(mut self, columns: usize) -> Self {
+        self.wrap = self.wrap.columns(columns);
+        self
+    }
+
+    pub fn rows(mut self, rows: usize) -> Self {
+        self.wrap = self.wrap.rows(rows);
+        self
+    }
+
+    pub fn clear_columns(mut self) -> Self {
+        self.wrap = self.wrap.clear_columns();
+        self
+    }
+
+    pub fn clear_rows(mut self) -> Self {
+        self.wrap = self.wrap.clear_rows();
         self
     }
 

@@ -162,8 +162,8 @@ pub use sequoia_style::{
     Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec, TextStyle, VisualState,
 };
 pub use sequoia_text::{
-    ElideMode, FontStyle, FontWeight, LetterSpacing, RichAlign, RichCaret, RichHit, RichLine,
-    RichParagraph, RichRect, TextSpan, WrapMode,
+    ElideMode, FontStyle, FontWeight, LetterSpacing, LineHeight, RichAlign, RichCaret, RichHit,
+    RichLine, RichParagraph, RichRect, TextSpan, TextVAlign, WrapMode,
 };
 
 pub mod prelude {
@@ -264,7 +264,7 @@ pub mod prelude {
         Backdrop, BorderSide, BoxStyle, Effect, Filter, Mask, ShadowSpec, TextStyle,
     };
     pub use sequoia_text::{
-        ElideMode, FontStyle, FontWeight, LetterSpacing, RichAlign, RichCaret, RichHit, RichLine,
-        RichParagraph, RichRect, TextSpan, WrapMode,
+        ElideMode, FontStyle, FontWeight, LetterSpacing, LineHeight, RichAlign, RichCaret, RichHit,
+        RichLine, RichParagraph, RichRect, TextSpan, TextVAlign, WrapMode,
     };
 }

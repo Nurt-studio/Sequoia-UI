@@ -2564,6 +2564,11 @@ impl Runtime {
         }
     }
 
+    fn baseline_offset(&self, el: ElementId, width: f32, ctx: &mut LayoutCtx) -> Option<f32> {
+        self.view_rc(el)
+            .and_then(|v| v.baseline_offset_erased(ctx, width))
+    }
+
     fn measure_inner(&self, el: ElementId, constraints: Constraints, ctx: &mut LayoutCtx) -> Size {
         {
             let arena = self.inner.arena.borrow();
@@ -2621,6 +2626,7 @@ impl Runtime {
 
         let children = self.children(el);
 
+        ctx.set_available_width(constraints.max.width);
         let intrinsic = v.intrinsic_size(ctx);
         let avail = constraints.max;
         let mut w = match style.width {
@@ -3486,7 +3492,7 @@ impl Runtime {
             Axis::Vertical => inner_avail.height,
         };
         let (mains, crosses, _) = self.wrap_child_sizes(children, wstyle, ctx);
-        let lines = wrap_lines(&mains, avail_main, wstyle.main_gap());
+        let lines = wstyle.lines(&mains, avail_main);
 
         let mut main_max = 0.0_f32;
         let mut cross_total = 0.0_f32;
@@ -3786,7 +3792,7 @@ impl Runtime {
             Axis::Vertical => content.size.height,
         };
         let (mains, crosses, ids) = self.wrap_child_sizes(children, wstyle, ctx);
-        let lines = wrap_lines(&mains, avail_main, wstyle.main_gap());
+        let lines = wstyle.lines(&mains, avail_main);
         let (main_gap, cross_gap) = (wstyle.main_gap(), wstyle.cross_gap());
 
         let mut cross_cursor = 0.0_f32;
@@ -3821,7 +3827,7 @@ impl Runtime {
                 let main_inner = (main_outer - m_main_start - m_main_end).max(0.0);
                 let mut cross_inner = (cross_outer - m_cross_start - m_cross_end).max(0.0);
                 let cross_off = match wstyle.align {
-                    Align::Start | Align::Stretch => 0.0,
+                    Align::Start | Align::Stretch | Align::Baseline => 0.0,
                     Align::Center => ((line_cross - cross_outer) * 0.5).max(0.0),
                     Align::End => (line_cross - cross_outer).max(0.0),
                 };
@@ -3926,7 +3932,7 @@ impl Runtime {
             }
             let h = cs.clamp_height(m.height).max(0.0);
             let ox = match align {
-                Align::Start | Align::Stretch => 0.0,
+                Align::Start | Align::Stretch | Align::Baseline => 0.0,
                 Align::Center => ((avail_w - w).max(0.0)) * 0.5,
                 Align::End => (avail_w - w).max(0.0),
             };
@@ -4026,6 +4032,35 @@ impl Runtime {
         let used_main: f32 = infos.iter().map(|(_, b, ..)| *b).sum::<f32>() + gaps;
         let extra = Self::extra_main(avail_main, used_main);
         let (mut cursor, gap_step) = cstyle.justify.distribute(infos.len(), cstyle.gap, extra);
+
+        let baseline_aligned: Vec<bool> = if cstyle.axis == Axis::Horizontal {
+            infos
+                .iter()
+                .map(|(_, _, _, _, _, _, _, cs)| {
+                    cs.effective_align(cstyle.align) == Align::Baseline
+                })
+                .collect()
+        } else {
+            vec![false; infos.len()]
+        };
+        let baselines: Vec<f32> = if baseline_aligned.iter().any(|&b| b) {
+            infos
+                .iter()
+                .zip(&baseline_aligned)
+                .map(|((child, base, _, _, cross, _, _, cs), &aligned)| {
+                    if !aligned {
+                        return 0.0;
+                    }
+                    let inner_h = (*cross - cs.margin.top - cs.margin.bottom).max(0.0);
+                    let width = (*base - cs.margin_main(cstyle.axis)).max(0.0);
+                    self.baseline_offset(*child, width, ctx).unwrap_or(inner_h)
+                })
+                .collect()
+        } else {
+            vec![0.0; infos.len()]
+        };
+        let max_baseline = baselines.iter().copied().fold(0.0_f32, f32::max);
+
         for (i, info) in infos.iter().enumerate() {
             let (child, base, _, _, cross, _, _, cs) = *info;
             if i > 0 {
@@ -4037,11 +4072,16 @@ impl Runtime {
             };
             let (cross_off, cross_size) = self.place_cross(child, cstyle, cross, avail_cross);
             let shift = Self::indent_cross_shift(&cs, cstyle.axis);
+            let baseline_shift = if baseline_aligned[i] {
+                (max_baseline - baselines[i]).max(0.0)
+            } else {
+                0.0
+            };
             let base_inner = (base - cs.margin_main(cstyle.axis)).max(0.0);
             let (rx, ry, rw, rh) = match cstyle.axis {
                 Axis::Horizontal => (
                     content.left() + cursor + margin_main_start,
-                    content.top() + cross_off + shift,
+                    content.top() + cross_off + shift + baseline_shift,
                     base_inner,
                     cross_size,
                 ),
@@ -4126,7 +4166,7 @@ impl Runtime {
             0.0
         };
         let (mut cross_cursor, cross_step) = match cstyle.align_content {
-            Align::Start => (0.0, 0.0),
+            Align::Start | Align::Baseline => (0.0, 0.0),
             Align::Center => (cross_extra * 0.5, 0.0),
             Align::End => (cross_extra, 0.0),
             Align::Stretch if line_crosses.len() > 1 => {
@@ -4260,12 +4300,12 @@ impl Runtime {
             let avail_w = (cw - cs.margin.horizontal_sum()).max(0.0);
             let avail_h = (ch - cs.margin.vertical_sum()).max(0.0);
             let ox = match eff_w {
-                Align::Start | Align::Stretch => 0.0,
+                Align::Start | Align::Stretch | Align::Baseline => 0.0,
                 Align::Center => ((avail_w - w).max(0.0)) * 0.5,
                 Align::End => (avail_w - w).max(0.0),
             };
             let oy = match eff_h {
-                Align::Start | Align::Stretch => 0.0,
+                Align::Start | Align::Stretch | Align::Baseline => 0.0,
                 Align::Center => ((avail_h - h).max(0.0)) * 0.5,
                 Align::End => (avail_h - h).max(0.0),
             };
@@ -4647,7 +4687,7 @@ impl Runtime {
             0.0
         };
         match eff {
-            Align::Start => (m_start, placed_inner),
+            Align::Start | Align::Baseline => (m_start, placed_inner),
             Align::Center => (m_start + slack * 0.5, placed_inner),
             Align::End => (m_start + slack, placed_inner),
             Align::Stretch => {
@@ -5437,6 +5477,120 @@ mod tests {
         let bounds = Rect::from_xywh(0.0, 0.0, 800.0, 600.0);
         rt.layout(bounds, &mut text);
         assert_eq!(rt.rect_of(rt.root().unwrap()).unwrap().size, bounds.size);
+    }
+
+    #[test]
+    fn text_auto_wrap_uses_own_width_line_height_and_max_lines() {
+        use crate::views::Text;
+
+        let mut text = TextSystem::new();
+        if text.shape("Hg", 16.0).glyph_count() == 0 {
+            eprintln!("skip: no fonts in environment");
+            return;
+        }
+        let content = "one two three four five six seven eight nine ten";
+
+        let mut measure = |view: Text| {
+            let rt = Runtime::new();
+            rt.mount(view);
+            rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
+            let rect = rt.rect_of(rt.root().unwrap()).unwrap();
+            rect.size
+        };
+
+        let normal = measure(Text::new(content).size(16.0).width(80.0).wrap());
+        let tall = measure(
+            Text::new(content)
+                .size(16.0)
+                .width(80.0)
+                .wrap()
+                .line_height(2.0),
+        );
+        let limited = measure(
+            Text::new(content)
+                .size(16.0)
+                .width(80.0)
+                .wrap()
+                .line_height(2.0)
+                .max_lines(2),
+        );
+
+        assert!(normal.width <= 80.5, "width: {}", normal.width);
+        assert!(normal.height > 16.0, "wrapped: {}", normal.height);
+        assert!(tall.height > normal.height + 8.0);
+        assert!(limited.height < tall.height);
+        assert!(limited.height <= 64.5, "limited: {}", limited.height);
+    }
+
+    #[test]
+    fn rich_text_auto_wrap_uses_own_width_line_height_and_max_lines() {
+        use crate::rich_text::RichText;
+        use sequoia_text::TextSpan;
+
+        let mut text = TextSystem::new();
+        if text.shape("Hg", 16.0).glyph_count() == 0 {
+            eprintln!("skip: no fonts in environment");
+            return;
+        }
+        let content = "one two three four five six seven eight nine ten";
+        let spans = || vec![TextSpan::new(content)];
+
+        let mut measure = |view: RichText| {
+            let rt = Runtime::new();
+            rt.mount(view);
+            rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
+            let rect = rt.rect_of(rt.root().unwrap()).unwrap();
+            rect.size
+        };
+
+        let normal = measure(RichText::new(spans()).size(16.0).width(80.0).wrap());
+        let tall = measure(
+            RichText::new(spans())
+                .size(16.0)
+                .width(80.0)
+                .wrap()
+                .line_height(2.0),
+        );
+        let limited = measure(
+            RichText::new(spans())
+                .size(16.0)
+                .width(80.0)
+                .wrap()
+                .line_height(2.0)
+                .max_lines(2),
+        );
+
+        assert!(normal.width <= 80.5, "width: {}", normal.width);
+        assert!(normal.height > 16.0, "wrapped: {}", normal.height);
+        assert!(tall.height > normal.height + 8.0);
+        assert!(limited.height < tall.height);
+        assert!(limited.height <= 64.5, "limited: {}", limited.height);
+    }
+
+    #[test]
+    fn row_baseline_aligns_text_first_baselines() {
+        use crate::views::{Row, Text};
+
+        let rt = Runtime::new();
+        rt.mount(
+            Row::new()
+                .align_items(Align::Baseline)
+                .child(Text::new("Big").size(40.0))
+                .child(Text::new("small").size(12.0)),
+        );
+        let mut text = TextSystem::new();
+        rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 200.0), &mut text);
+        let root = rt.root().unwrap();
+        let children = rt.children(root);
+        let big = rt.rect_of(children[0]).unwrap();
+        let small = rt.rect_of(children[1]).unwrap();
+        let big_baseline = big.top() + text.shape("Big", 40.0).first_baseline();
+        let small_baseline = small.top() + text.shape("small", 12.0).first_baseline();
+        assert!(
+            (big_baseline - small_baseline).abs() < 0.5,
+            "baselines: {big_baseline} vs {small_baseline}"
+        );
+        assert!(small.top() > big.top(), "smaller text is pushed down");
     }
 
     #[test]

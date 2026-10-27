@@ -12,8 +12,8 @@ use sequoia_layout::{
 use sequoia_reactive::Environment;
 use sequoia_style::{BoxStyle, Theme, VisualState};
 use sequoia_text::{
-    ElideMode, FontStyle, FontWeight, LetterSpacing, RichAlign, RichParagraph, TextSpan,
-    TextSystem, WrapMode,
+    ElideMode, FontStyle, FontWeight, LetterSpacing, LineHeight, RichAlign, RichParagraph,
+    ShapedText, TextSpan, TextSystem, WrapMode,
 };
 
 use crate::any::AnyView;
@@ -106,6 +106,14 @@ pub trait View {
 
     #[doc(hidden)]
     fn intrinsic_size(&self, _ctx: &mut LayoutCtx) -> Option<Size> {
+        None
+    }
+
+    /// Returns the first text baseline relative to the view's top edge.
+    ///
+    /// Used by [`sequoia_layout::Align::Baseline`] in horizontal containers.
+    #[doc(hidden)]
+    fn baseline_offset(&self, _ctx: &mut LayoutCtx, _width: f32) -> Option<f32> {
         None
     }
 
@@ -677,6 +685,103 @@ impl PaintCtx<'_> {
             .text
             .shape_wrapped_styled_spaced(text, size, weight, width, mode, spacing, family, style);
         self.text.draw(&shaped, origin, color, self.list);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn shape_wrapped_styled_spaced_lh(
+        &mut self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+        width: f32,
+        mode: WrapMode,
+        spacing: LetterSpacing,
+        family: Option<&str>,
+        style: FontStyle,
+        line_height: LineHeight,
+    ) -> Rc<ShapedText> {
+        self.text.shape_wrapped_styled_spaced_lh(
+            text,
+            size,
+            weight,
+            width,
+            mode,
+            spacing,
+            family,
+            style,
+            line_height,
+        )
+    }
+
+    pub fn draw_shaped(&mut self, shaped: &ShapedText, origin: (f32, f32), color: Color) {
+        self.text.draw(shaped, origin, color, self.list);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn shape_rich_full_lh(
+        &mut self,
+        spans: &[TextSpan],
+        size: f32,
+        width: f32,
+        mode: WrapMode,
+        spacing: LetterSpacing,
+        align: RichAlign,
+        line_height: LineHeight,
+    ) -> Rc<RichParagraph> {
+        self.text
+            .shape_rich_full_lh(spans, size, width, mode, spacing, align, line_height)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn elide_lines_styled_spaced(
+        &mut self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+        width: f32,
+        mode: WrapMode,
+        spacing: LetterSpacing,
+        family: Option<&str>,
+        style: FontStyle,
+        line_height: LineHeight,
+        max_lines: usize,
+    ) -> String {
+        self.text.elide_lines_styled_spaced(
+            text,
+            size,
+            weight,
+            width,
+            mode,
+            spacing,
+            family,
+            style,
+            line_height,
+            max_lines,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn elide_rich_lines(
+        &mut self,
+        spans: &[TextSpan],
+        size: f32,
+        width: f32,
+        mode: WrapMode,
+        spacing: LetterSpacing,
+        align: RichAlign,
+        line_height: LineHeight,
+        max_lines: usize,
+    ) -> Vec<TextSpan> {
+        self.text.elide_rich_lines(
+            spans,
+            size,
+            width,
+            mode,
+            spacing,
+            align,
+            line_height,
+            max_lines,
+        )
     }
 
     pub fn draw_rich(&mut self, rich: &RichParagraph, origin: (f32, f32), default_color: Color) {

@@ -123,6 +123,8 @@ pub enum Align {
     End,
     /// Stretch children to fill the cross axis.
     Stretch,
+    /// Align children on their first text baseline (horizontal rows only).
+    Baseline,
 }
 
 impl Align {
@@ -140,7 +142,7 @@ impl Align {
         }
         let slack = (avail - child).max(0.0);
         match self {
-            Self::Start | Self::Stretch => 0.0,
+            Self::Start | Self::Stretch | Self::Baseline => 0.0,
             Self::Center => slack * 0.5,
             Self::End => slack,
         }

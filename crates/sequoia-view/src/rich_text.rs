@@ -4,10 +4,10 @@ use sequoia_core::Edges;
 use sequoia_core::{Color, Length, Size};
 use sequoia_input::{CursorIcon, Event, EventPhase, PointerButton, PointerEvent};
 use sequoia_layout::{LayoutCtx, LayoutStyle};
-use sequoia_text::{LetterSpacing, RichAlign, TextSpan, WrapMode};
+use sequoia_text::{LetterSpacing, LineHeight, RichAlign, TextSpan, TextVAlign, WrapMode};
 
 use crate::view::{EventCtx, PaintCtx, View};
-use crate::views::Unit;
+use crate::views::{Unit, text_wrap_limit};
 
 pub struct RichText {
     spans: Box<dyn Fn() -> Vec<TextSpan>>,
@@ -16,6 +16,11 @@ pub struct RichText {
     wrap_width: Option<f32>,
     wrap_mode: WrapMode,
     align: RichAlign,
+    align_y: TextVAlign,
+    line_height: LineHeight,
+    max_lines: Option<usize>,
+    font_scale: f32,
+    auto_wrap: bool,
     letter_spacing: f32,
     on_span_click: Option<Rc<dyn Fn(usize)>>,
     style: LayoutStyle,
@@ -30,6 +35,11 @@ impl RichText {
             wrap_width: None,
             wrap_mode: WrapMode::default(),
             align: RichAlign::Left,
+            align_y: TextVAlign::Top,
+            line_height: LineHeight::default(),
+            max_lines: None,
+            font_scale: 1.0,
+            auto_wrap: false,
             letter_spacing: 0.0,
             on_span_click: None,
             style: LayoutStyle {
@@ -48,6 +58,11 @@ impl RichText {
             wrap_width: None,
             wrap_mode: WrapMode::default(),
             align: RichAlign::Left,
+            align_y: TextVAlign::Top,
+            line_height: LineHeight::default(),
+            max_lines: None,
+            font_scale: 1.0,
+            auto_wrap: false,
             letter_spacing: 0.0,
             on_span_click: None,
             style: LayoutStyle {
@@ -89,6 +104,48 @@ impl RichText {
 
     pub fn wrap_mode(mut self, mode: WrapMode) -> Self {
         self.wrap_mode = mode;
+        self
+    }
+
+    /// Enables wrapping at the width available from the parent container.
+    pub fn wrap(mut self) -> Self {
+        self.auto_wrap = true;
+        self
+    }
+
+    /// Sets the line height as a multiple of the font size.
+    pub fn line_height(mut self, factor: f32) -> Self {
+        if factor.is_finite() && factor > 0.0 {
+            self.line_height = LineHeight::Factor(factor);
+        }
+        self
+    }
+
+    /// Sets an absolute line height in logical pixels.
+    pub fn line_height_px(mut self, px: f32) -> Self {
+        if px.is_finite() && px > 0.0 {
+            self.line_height = LineHeight::Absolute(px);
+        }
+        self
+    }
+
+    /// Sets vertical alignment within the text box.
+    pub fn align_y(mut self, align: TextVAlign) -> Self {
+        self.align_y = align;
+        self
+    }
+
+    /// Limits visible wrapped text to `lines`, appending an ellipsis.
+    pub fn max_lines(mut self, lines: usize) -> Self {
+        self.max_lines = if lines == 0 { None } else { Some(lines) };
+        self
+    }
+
+    /// Scales the resolved font size without changing layout styles.
+    pub fn font_scale(mut self, scale: f32) -> Self {
+        if scale.is_finite() && scale > 0.0 {
+            self.font_scale = scale;
+        }
         self
     }
 
@@ -186,7 +243,7 @@ impl RichText {
 
     fn resolved(&self, theme_size: f32) -> (f32, f32) {
         (
-            self.font_size.unwrap_or(theme_size),
+            self.font_size.unwrap_or(theme_size) * self.font_scale,
             self.wrap_width.unwrap_or(0.0),
         )
     }
@@ -219,21 +276,76 @@ impl View for RichText {
     }
 
     fn intrinsic_size(&self, ctx: &mut LayoutCtx) -> Option<Size> {
-        let (size, wrap) = self.resolved(14.0);
+        let (size, _wrap) = self.resolved(ctx.default_font_size());
         let spans = (self.spans)();
         let pad = self.style.padding;
-        let text = ctx.rich_size(
-            &spans,
+        let auto_wrap = if self.auto_wrap {
+            text_wrap_limit(self.style, ctx.available_width())
+        } else {
+            None
+        };
+        let mut width = self.wrap_width.or(auto_wrap).unwrap_or(0.0);
+        if self.max_lines.is_some() && width <= 0.0 {
+            width = ctx
+                .rich_size_lh(
+                    &spans,
+                    size,
+                    0.0,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    self.align,
+                    self.line_height,
+                )
+                .width
+                .max(1.0);
+        }
+        let shown = match self.max_lines {
+            Some(max_lines) => ctx.rich_elide_lines(
+                &spans,
+                size,
+                width,
+                self.wrap_mode,
+                self.letter_spacing,
+                self.align,
+                self.line_height,
+                max_lines,
+            ),
+            None => spans,
+        };
+        let text = ctx.rich_size_lh(
+            &shown,
             size,
-            wrap,
+            width,
             self.wrap_mode,
             self.letter_spacing,
             self.align,
+            self.line_height,
         );
         Some(Size::new(
             text.width + pad.horizontal_sum(),
             text.height + pad.vertical_sum(),
         ))
+    }
+
+    fn baseline_offset(&self, ctx: &mut LayoutCtx, width: f32) -> Option<f32> {
+        let (size, wrap) = self.resolved(ctx.default_font_size());
+        let spans = (self.spans)();
+        let pad = self.style.padding;
+        let width = if wrap > 0.0 {
+            wrap
+        } else {
+            (width - pad.horizontal_sum()).max(0.0)
+        };
+        let baseline = ctx.rich_first_baseline(
+            &spans,
+            size,
+            width,
+            self.wrap_mode,
+            self.letter_spacing,
+            self.align,
+            self.line_height,
+        );
+        Some(pad.top + baseline)
     }
 
     fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
@@ -254,21 +366,54 @@ impl View for RichText {
                     .get::<sequoia_style::Theme>()
                     .map(|t| t.font_size)
                     .unwrap_or(14.0)
-            });
-            let wrap = self.wrap_width.unwrap_or(0.0);
+            }) * self.font_scale;
             let spans = (self.spans)();
             let pad = self.style.padding;
-            let rich = ctx.shape_rich_full(
-                &spans,
+            let wrap = self.wrap_width.unwrap_or_else(|| {
+                if self.auto_wrap {
+                    (ctx.rect.size.width - pad.horizontal_sum()).max(0.0)
+                } else {
+                    0.0
+                }
+            });
+            let shown = match self.max_lines {
+                Some(max_lines) => ctx.text.elide_rich_lines(
+                    &spans,
+                    size,
+                    wrap,
+                    self.wrap_mode,
+                    self.letter_spacing,
+                    self.align,
+                    self.line_height,
+                    max_lines,
+                ),
+                None => spans,
+            };
+            let rich = ctx.text.shape_rich_full_lh(
+                &shown,
                 size,
                 wrap,
                 self.wrap_mode,
                 self.letter_spacing,
                 self.align,
+                self.line_height,
             );
+            let text_h = rich.height();
+            let first_baseline = rich.line(0).map(|line| line.baseline).unwrap_or(0.0);
+            let block_top = match self.align_y {
+                TextVAlign::Baseline => pad.top - first_baseline,
+                TextVAlign::Top => pad.top,
+                TextVAlign::Center => {
+                    pad.top + (ctx.rect.size.height - pad.vertical_sum() - text_h) * 0.5
+                }
+                TextVAlign::Bottom => {
+                    pad.top + (ctx.rect.size.height - pad.vertical_sum() - text_h)
+                }
+                _ => pad.top,
+            };
             let hit = rich.hit_point(
                 pos.x - ctx.rect.left() - pad.left,
-                pos.y - ctx.rect.top() - pad.top,
+                pos.y - ctx.rect.top() - block_top,
             );
             if let Some(span) = hit.span {
                 handler(span);
@@ -286,16 +431,51 @@ impl View for RichText {
             return;
         }
         let pad = self.style.padding;
-        let origin = (ctx.rect.left() + pad.left, ctx.rect.top() + pad.top);
-        ctx.draw_rich_spans(
-            &spans,
-            origin,
+        let content_w = (ctx.rect.size.width - pad.horizontal_sum()).max(0.0);
+        let wrap = if wrap > 0.0 {
+            wrap
+        } else if self.auto_wrap {
+            content_w
+        } else {
+            0.0
+        };
+        let shown = match self.max_lines {
+            Some(max_lines) => ctx.elide_rich_lines(
+                &spans,
+                size,
+                wrap,
+                self.wrap_mode,
+                self.letter_spacing,
+                self.align,
+                self.line_height,
+                max_lines,
+            ),
+            None => spans,
+        };
+        let rich = ctx.shape_rich_full_lh(
+            &shown,
             size,
             wrap,
             self.wrap_mode,
             self.letter_spacing,
             self.align,
-            color,
+            self.line_height,
         );
+        let text_h = rich.height();
+        let first_baseline = rich.line(0).map(|line| line.baseline).unwrap_or(0.0);
+        let block_top = match self.align_y {
+            TextVAlign::Baseline => ctx.rect.top() + pad.top - first_baseline,
+            TextVAlign::Top => ctx.rect.top() + pad.top,
+            TextVAlign::Center => {
+                ctx.rect.top()
+                    + pad.top
+                    + (ctx.rect.size.height - pad.vertical_sum() - text_h) * 0.5
+            }
+            TextVAlign::Bottom => {
+                ctx.rect.top() + pad.top + (ctx.rect.size.height - pad.vertical_sum() - text_h)
+            }
+            _ => ctx.rect.top() + pad.top,
+        };
+        ctx.draw_rich(&rich, (ctx.rect.left() + pad.left, block_top), color);
     }
 }

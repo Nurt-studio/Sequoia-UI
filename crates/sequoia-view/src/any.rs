@@ -32,6 +32,7 @@ pub(crate) trait ErasedView: 'static {
     fn grid_placements(&self) -> Option<Vec<GridPlacement>>;
     fn flex_weights(&self) -> Option<Vec<f32>>;
     fn intrinsic_size(&self, ctx: &mut LayoutCtx) -> Option<Size>;
+    fn baseline_offset_erased(&self, ctx: &mut LayoutCtx, width: f32) -> Option<f32>;
     fn contain_size_erased(&self) -> bool;
     fn arrange_override_erased(
         &self,
@@ -131,6 +132,9 @@ impl<V: View + 'static> ErasedView for V {
     }
     fn intrinsic_size(&self, ctx: &mut LayoutCtx) -> Option<Size> {
         View::intrinsic_size(self, ctx)
+    }
+    fn baseline_offset_erased(&self, ctx: &mut LayoutCtx, width: f32) -> Option<f32> {
+        View::baseline_offset(self, ctx, width)
     }
     fn contain_size_erased(&self) -> bool {
         View::contain_size(self)
