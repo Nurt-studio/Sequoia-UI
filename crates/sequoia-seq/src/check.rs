@@ -337,7 +337,15 @@ const BUTTON_STYLE_FIELDS: &[&str] = &[
 ];
 
 const TEXT_STYLE_FIELDS: &[&str] = &[
-    "size", "color", "bold", "semi", "medium", "normal", "light", "black",
+    "size",
+    "color",
+    "bold",
+    "semi",
+    "medium",
+    "normal",
+    "light",
+    "black",
+    "line_height",
 ];
 
 const TEXT_WEIGHT_FLAGS: &[&str] = &["bold", "semi", "medium", "normal", "light", "black"];
@@ -1034,6 +1042,11 @@ fn check_arg(
             "black",
             "truncate",
             "wrap",
+            "line_height",
+            "line_height_px",
+            "align_y",
+            "max_lines",
+            "font_scale",
             "text",
             "dynamic",
             "t",

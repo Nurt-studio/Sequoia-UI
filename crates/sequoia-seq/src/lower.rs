@@ -13,8 +13,8 @@ use sequoia_view::{
     Align, AnimSpec, AnimatedSize, AnyView, AsyncView, Axis, Canvas, Column, EventCtx, Grid,
     GridFlow, GridPlacement, Icon, Image, Indents, Justify, Live, LiveOffset, LiveOpacity,
     MAX_ANIM_DT, Margined, Masonry, Motion, Overflow, Painter, Panel, Pulse, Rotated, Row, Scaled,
-    ScrollAxis, ScrollView, Shake, Spacer, SplitPanel, Stack, StackPos, Text, Track, View,
-    VirtualList, Wrap, when,
+    ScrollAxis, ScrollView, Shake, Spacer, SplitPanel, Stack, StackPos, Text, TextVAlign, Track,
+    View, VirtualList, Wrap, when,
 };
 
 use crate::bindings::{ActionSig, FieldSignal, HostBindings, PropType, SeqRowData};
@@ -928,6 +928,7 @@ fn apply_text_args(
             "normal" => v.weight = Some(TextWeight::Normal.value()),
             "light" => v.weight = Some(TextWeight::Light.value()),
             "black" => v.weight = Some(TextWeight::Black.value()),
+            "line_height" => v.line_height = Some(num(file, arg, res, None)?),
             _ => {
                 return Err(SeqError::new(
                     file,
@@ -1659,8 +1660,19 @@ fn lower_text(
             "truncate" => v = v.truncate(num(file, arg, res, row)?),
 
             "wrap" => {
-                let _ = flag(file, arg, res, row)?;
+                if flag(file, arg, res, row)? {
+                    v = v.wrap();
+                }
             }
+            "line_height" => v = v.line_height(num(file, arg, res, row)?),
+            "line_height_px" => v = v.line_height_px(num(file, arg, res, row)?),
+            "align_y" => v = v.align_y(text_valign(file, arg)?),
+            "max_lines" => {
+                if let Some(n) = count_val(file, node, res, row, "max_lines")? {
+                    v = v.max_lines(n.max(1));
+                }
+            }
+            "font_scale" => v = v.font_scale(num(file, arg, res, row)?),
 
             "flex" => v = v.flex(num(file, arg, res, row)?),
             "width" => v = v.width(len(file, arg, res, row)?),
@@ -1737,8 +1749,19 @@ fn apply_text_box(
             "truncate" => out = out.truncate(num(file, arg, res, row)?),
 
             "wrap" => {
-                let _ = flag(file, arg, res, row)?;
+                if flag(file, arg, res, row)? {
+                    out = out.wrap();
+                }
             }
+            "line_height" => out = out.line_height(num(file, arg, res, row)?),
+            "line_height_px" => out = out.line_height_px(num(file, arg, res, row)?),
+            "align_y" => out = out.align_y(text_valign(file, arg)?),
+            "max_lines" => {
+                if let Some(n) = count_val(file, node, res, row, "max_lines")? {
+                    out = out.max_lines(n.max(1));
+                }
+            }
+            "font_scale" => out = out.font_scale(num(file, arg, res, row)?),
 
             "flex" => out = out.flex(num(file, arg, res, row)?),
             "width" => out = out.width(len(file, arg, res, row)?),
@@ -8781,11 +8804,27 @@ fn align_val(file: &str, arg: &crate::ir::SeqArg) -> Result<Align, SeqError> {
         "start" => Ok(Align::Start),
         "end" => Ok(Align::End),
         "stretch" => Ok(Align::Stretch),
+        "baseline" => Ok(Align::Baseline),
         other => Err(SeqError::new(
             file,
             arg.line,
             1,
-            format!("align to center/start/end/stretch, nie '{other}'"),
+            format!("align to center/start/end/stretch/baseline, nie '{other}'"),
+        )),
+    }
+}
+
+fn text_valign(file: &str, arg: &crate::ir::SeqArg) -> Result<TextVAlign, SeqError> {
+    match ident(file, arg)?.as_str() {
+        "top" | "start" => Ok(TextVAlign::Top),
+        "center" => Ok(TextVAlign::Center),
+        "bottom" | "end" => Ok(TextVAlign::Bottom),
+        "baseline" => Ok(TextVAlign::Baseline),
+        other => Err(SeqError::new(
+            file,
+            arg.line,
+            1,
+            format!("align_y to top/center/bottom/baseline, nie '{other}'"),
         )),
     }
 }
@@ -8842,5 +8881,28 @@ mod tests {
         assert_eq!(style.size, Some(24.0));
         assert_eq!(style.color, Some(Color::parse_hex("#FF0000").unwrap()));
         assert_eq!(style.weight, Some(700));
+    }
+
+    #[test]
+    fn text_style_line_height_is_lowered() {
+        let app = crate::parser::parse(
+            "S.seq",
+            "app A {\n  title: \"A\"\n  size: (400, 300)\n  style Title: Text {\n    line_height: 1.6\n  }\n  window M {\n    Text(\"Hi\", style: Title)\n  }\n}\n",
+        )
+        .unwrap();
+        let styles = build_styles("S.seq", &Theme::dark(), &app.styles).unwrap();
+        let style = styles.text_style("Title").unwrap();
+        assert_eq!(style.line_height, Some(1.6));
+    }
+
+    #[test]
+    fn text_arguments_accept_layout_options() {
+        let app = crate::parser::parse(
+            "S.seq",
+            "app A {\n  title: \"A\"\n  size: (400, 300)\n  window M {\n    Text(\"one two three\", wrap: true, line_height: 1.5, align_y: baseline, max_lines: 2, font_scale: 1.2)\n  }\n}\n",
+        )
+        .unwrap();
+        check_decls("S.seq", &app, &HostBindings::default()).unwrap();
+        lower("S.seq", &app).unwrap();
     }
 }
