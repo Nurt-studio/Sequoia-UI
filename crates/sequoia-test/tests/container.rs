@@ -167,6 +167,62 @@ fn fit_container_hugs_text_child() {
 }
 
 #[test]
+fn justify_and_align_center_the_child() {
+    let h = Harness::new(
+        Container::new()
+            .width(200.0)
+            .height(100.0)
+            .justify_content(Justify::Center)
+            .align_items(Align::Center)
+            .child(Panel::new().width(40.0).height(20.0)),
+    );
+    h.layout(400.0, 400.0);
+
+    let child = h.children(h.root().unwrap())[0];
+    assert_eq!(
+        h.rect(child).unwrap(),
+        Rect::from_xywh(80.0, 40.0, 40.0, 20.0)
+    );
+}
+
+#[test]
+fn center_shorthand_centers_on_both_axes() {
+    let h = Harness::new(
+        Container::new()
+            .width(200.0)
+            .height(100.0)
+            .center()
+            .child(Panel::new().width(40.0).height(20.0)),
+    );
+    h.layout(400.0, 400.0);
+
+    let child = h.children(h.root().unwrap())[0];
+    assert_eq!(
+        h.rect(child).unwrap(),
+        Rect::from_xywh(80.0, 40.0, 40.0, 20.0)
+    );
+}
+
+#[test]
+fn vertical_axis_justifies_along_height() {
+    let h = Harness::new(
+        Container::new()
+            .width(200.0)
+            .height(100.0)
+            .axis(Axis::Vertical)
+            .justify(Justify::End)
+            .child(Panel::new().width(40.0).height(20.0)),
+    );
+    h.layout(400.0, 400.0);
+
+    let child = h.children(h.root().unwrap())[0];
+    assert_eq!(
+        h.rect(child).unwrap(),
+        Rect::from_xywh(0.0, 80.0, 40.0, 20.0)
+    );
+}
+
+#[test]
 fn rounded_clip_cuts_header_to_card_shape() {
     struct Card;
     impl View for Card {

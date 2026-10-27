@@ -129,6 +129,9 @@ let _ = footer;
 child overrides the parent's cross-axis alignment for that child. Alignment
 only distributes space that is left over after padding, margins, and gaps.
 
+`Container` exposes `justify_content`, `align_items`, `axis`, and `center` for
+placing its single child inside the available space.
+
 ## Grids
 
 `Grid` places children in rows and columns. Define tracks with `Track` and
@@ -178,6 +181,12 @@ let _ = tags;
 
 `Wrap::vertical()` wraps into columns instead of rows. `column_gap` and
 `row_gap` set the two gaps independently.
+
+`.columns(n)` and `.rows(n)` replace width-based wrapping with an explicit
+count. On a horizontal `Wrap`, `columns` is the number of items per line and
+`rows` is the number of lines. On a vertical `Wrap`, `rows` is the number of
+items per column and `columns` is the number of columns. The count that matches
+the main axis wins when both are set.
 
 ## Overlays and docking
 

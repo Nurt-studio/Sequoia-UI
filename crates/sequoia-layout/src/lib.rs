@@ -54,4 +54,4 @@ pub use style::{
     Indents, Inset, LayoutStyle, Position, sanitize_flex, sanitize_indent, sanitize_ratio,
     sanitize_shrink,
 };
-pub use wrap::{WrapStyle, wrap_lines};
+pub use wrap::{WrapStyle, wrap_lines, wrap_lines_counted};

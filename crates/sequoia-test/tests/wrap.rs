@@ -109,6 +109,57 @@ fn wider_than_the_line_gets_its_own_line() {
 }
 
 #[test]
+fn explicit_columns_force_line_breaks() {
+    let h = Harness::new(Wrap::new().columns(2).children([
+        cell(10.0, 20.0),
+        cell(10.0, 20.0),
+        cell(10.0, 20.0),
+    ]));
+    h.layout(1000.0, 200.0);
+
+    let kids = h.children(h.root().unwrap());
+    assert!(approx(h.rect(kids[0]).unwrap().left(), 0.0));
+    assert!(approx(h.rect(kids[1]).unwrap().left(), 10.0));
+    assert!(approx(h.rect(kids[2]).unwrap().left(), 0.0));
+    assert!(approx(h.rect(kids[2]).unwrap().top(), 20.0));
+    assert!(approx(h.rect(h.root().unwrap()).unwrap().size.height, 40.0));
+}
+
+#[test]
+fn explicit_rows_limit_the_number_of_lines() {
+    let h = Harness::new(Wrap::new().rows(2).children([
+        cell(10.0, 20.0),
+        cell(10.0, 20.0),
+        cell(10.0, 20.0),
+        cell(10.0, 20.0),
+        cell(10.0, 20.0),
+        cell(10.0, 20.0),
+    ]));
+    h.layout(1000.0, 200.0);
+
+    let kids = h.children(h.root().unwrap());
+    assert!(approx(h.rect(kids[2]).unwrap().left(), 20.0));
+    assert!(approx(h.rect(kids[3]).unwrap().left(), 0.0));
+    assert!(approx(h.rect(kids[3]).unwrap().top(), 20.0));
+    assert!(approx(h.rect(h.root().unwrap()).unwrap().size.height, 40.0));
+}
+
+#[test]
+fn explicit_rows_on_vertical_wrap_force_column_breaks() {
+    let h = Harness::new(Wrap::vertical().width(200.0).rows(2).children([
+        cell(40.0, 30.0),
+        cell(40.0, 30.0),
+        cell(40.0, 30.0),
+    ]));
+    h.layout(200.0, 1000.0);
+
+    let kids = h.children(h.root().unwrap());
+    assert!(approx(h.rect(kids[1]).unwrap().top(), 30.0));
+    assert!(approx(h.rect(kids[2]).unwrap().left(), 40.0));
+    assert!(approx(h.rect(kids[2]).unwrap().top(), 0.0));
+}
+
+#[test]
 fn fixed_card_three_tiles_wrap_to_two_lines() {
     use sequoia_elements::Container;
     let h = Harness::new(Container::new().width(320.0).padding(8.0).child(

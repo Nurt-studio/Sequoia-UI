@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use sequoia_core::{Color, Edges, Length};
 use sequoia_input::{CursorIcon, Event, EventPhase, Key, PointerButton, PointerEvent};
-use sequoia_layout::{Align, Inset, LayoutStyle, Overflow, Position};
+use sequoia_layout::{
+    Align, Axis, ContainerStyle, Inset, Justify, LayoutStyle, Overflow, Position,
+};
 use sequoia_reactive::{Environment, Signal};
 use sequoia_style::{BoxStyle, Theme, VisualState};
 use sequoia_view::{AnyView, EventCtx, PaintCtx, Prop, Unit, View};
@@ -24,6 +26,7 @@ pub struct Container {
     child: Option<AnyView>,
     deco: BoxStyle,
     style: LayoutStyle,
+    layout: ContainerStyle,
     clip: bool,
     on_click: Option<Rc<dyn Fn()>>,
     on_click_env: Option<EnvAction>,
@@ -50,6 +53,7 @@ impl Default for Container {
                 padding: Edges::ZERO,
                 ..LayoutStyle::default()
             },
+            layout: ContainerStyle::default(),
             on_click: None,
             on_click_env: None,
             trigger: ClickTrigger::default(),
@@ -80,6 +84,7 @@ impl Container {
                 padding: Edges::ZERO,
                 ..LayoutStyle::default()
             },
+            layout: ContainerStyle::default(),
             on_click: None,
             on_click_env: None,
             trigger: ClickTrigger::default(),
@@ -232,7 +237,7 @@ impl Container {
         self
     }
 
-    pub fn size(mut self, side: impl Into<Length>) -> Self {
+    pub fn size(self, side: impl Into<Length>) -> Self {
         self.square(side)
     }
 
@@ -375,6 +380,40 @@ impl Container {
         self
     }
 
+    pub fn container_style(mut self, layout: ContainerStyle) -> Self {
+        self.layout = layout;
+        self
+    }
+
+    pub fn axis(mut self, axis: Axis) -> Self {
+        self.layout.axis = axis;
+        self
+    }
+
+    pub fn justify_content(mut self, justify: Justify) -> Self {
+        self.layout.justify = justify;
+        self
+    }
+
+    pub fn justify(self, justify: Justify) -> Self {
+        self.justify_content(justify)
+    }
+
+    pub fn align_items(mut self, align: Align) -> Self {
+        self.layout.align = align;
+        self
+    }
+
+    pub fn align(self, align: Align) -> Self {
+        self.align_items(align)
+    }
+
+    pub fn center(mut self) -> Self {
+        self.layout.align = Align::Center;
+        self.layout.justify = Justify::Center;
+        self
+    }
+
     pub fn hit_testable(mut self, on: bool) -> Self {
         self.style = self.style.hit_testable(on);
         self
@@ -502,6 +541,9 @@ impl View for Container {
         style.padding.right += edges.right;
         style.padding.bottom += edges.bottom;
         style
+    }
+    fn container(&self) -> Option<ContainerStyle> {
+        (self.layout != ContainerStyle::default()).then_some(self.layout)
     }
     fn paint_self(&self, ctx: &mut PaintCtx) {
         if let Some(sig) = &self.hovered {

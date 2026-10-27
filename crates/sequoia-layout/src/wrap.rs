@@ -14,6 +14,10 @@ pub struct WrapStyle {
     pub column_gap: f32,
     /// Gap between wrapped lines.
     pub row_gap: f32,
+    /// Explicit number of columns, overriding width-based wrapping.
+    pub columns: Option<usize>,
+    /// Explicit number of rows, overriding width-based wrapping.
+    pub rows: Option<usize>,
 }
 
 impl Default for WrapStyle {
@@ -23,6 +27,8 @@ impl Default for WrapStyle {
             align: Align::Start,
             column_gap: 0.0,
             row_gap: 0.0,
+            columns: None,
+            rows: None,
         }
     }
 }
@@ -82,6 +88,65 @@ impl WrapStyle {
         self.axis = axis;
         self
     }
+
+    /// Forces the layout to use exactly `columns` columns.
+    ///
+    /// Values below one are clamped to one. For a horizontal axis this is the
+    /// number of items per line; for a vertical axis it is the number of
+    /// lines.
+    pub fn columns(mut self, columns: usize) -> Self {
+        self.columns = Some(columns.max(1));
+        self
+    }
+
+    /// Forces the layout to use exactly `rows` rows.
+    ///
+    /// Values below one are clamped to one. For a vertical axis this is the
+    /// number of items per line; for a horizontal axis it is the number of
+    /// lines.
+    pub fn rows(mut self, rows: usize) -> Self {
+        self.rows = Some(rows.max(1));
+        self
+    }
+
+    /// Removes the explicit column count and restores width-based wrapping.
+    pub fn clear_columns(mut self) -> Self {
+        self.columns = None;
+        self
+    }
+
+    /// Removes the explicit row count and restores width-based wrapping.
+    pub fn clear_rows(mut self) -> Self {
+        self.rows = None;
+        self
+    }
+
+    /// Returns how many items fit on one line when an explicit count is set.
+    ///
+    /// The count matching the main axis wins: `columns` for a horizontal
+    /// axis and `rows` for a vertical axis. The other count is treated as the
+    /// desired number of lines.
+    pub fn items_per_line(self, count: usize) -> Option<usize> {
+        if count == 0 {
+            return None;
+        }
+        let columns = self.columns.filter(|&n| n > 0);
+        let rows = self.rows.filter(|&n| n > 0);
+        match self.axis {
+            Axis::Horizontal => columns.or_else(|| rows.map(|rows| count.div_ceil(rows))),
+            Axis::Vertical => rows.or_else(|| columns.map(|columns| count.div_ceil(columns))),
+        }
+    }
+
+    /// Splits `main_sizes` into lines using the explicit counts when present.
+    pub fn lines(self, main_sizes: &[f32], avail_main: f32) -> Vec<(usize, usize)> {
+        wrap_lines_counted(
+            main_sizes,
+            avail_main,
+            self.main_gap(),
+            self.items_per_line(main_sizes.len()),
+        )
+    }
 }
 
 /// Splits main-axis sizes into lines that fit within `avail_main`.
@@ -120,6 +185,27 @@ pub fn wrap_lines(main_sizes: &[f32], avail_main: f32, gap: f32) -> Vec<(usize, 
     }
     lines.push((start, main_sizes.len()));
     lines
+}
+
+/// Splits items into lines with an optional fixed number of items per line.
+///
+/// When `per_line` is `None` or zero this falls back to [`wrap_lines`].
+pub fn wrap_lines_counted(
+    main_sizes: &[f32],
+    avail_main: f32,
+    gap: f32,
+    per_line: Option<usize>,
+) -> Vec<(usize, usize)> {
+    let Some(per_line) = per_line.filter(|&n| n > 0) else {
+        return wrap_lines(main_sizes, avail_main, gap);
+    };
+    if main_sizes.is_empty() {
+        return Vec::new();
+    }
+    (0..main_sizes.len())
+        .step_by(per_line)
+        .map(|start| (start, (start + per_line).min(main_sizes.len())))
+        .collect()
 }
 
 #[cfg(test)]
@@ -188,5 +274,47 @@ mod tests {
         let s = s.axis(Axis::Vertical);
         assert_eq!(s.main_gap(), 10.0);
         assert_eq!(s.cross_gap(), 6.0);
+    }
+
+    #[test]
+    fn explicit_columns_override_the_available_width() {
+        let sizes = [10.0; 7];
+        let s = WrapStyle::new(Axis::Horizontal).columns(3);
+        assert_eq!(s.lines(&sizes, 1000.0), vec![(0, 3), (3, 6), (6, 7)]);
+    }
+
+    #[test]
+    fn explicit_rows_limit_the_number_of_lines() {
+        let sizes = [10.0; 7];
+        let s = WrapStyle::new(Axis::Horizontal).rows(2);
+        assert_eq!(s.lines(&sizes, 1000.0), vec![(0, 4), (4, 7)]);
+    }
+
+    #[test]
+    fn vertical_axis_maps_rows_to_items_per_line() {
+        let sizes = [10.0; 7];
+        let s = WrapStyle::new(Axis::Vertical).rows(3);
+        assert_eq!(s.lines(&sizes, 1000.0), vec![(0, 3), (3, 6), (6, 7)]);
+    }
+
+    #[test]
+    fn counts_clamp_to_at_least_one() {
+        let s = WrapStyle::new(Axis::Horizontal).columns(0).rows(0);
+        assert_eq!(s.columns, Some(1));
+        assert_eq!(s.rows, Some(1));
+        assert_eq!(s.items_per_line(3), Some(1));
+    }
+
+    #[test]
+    fn clearing_counts_restores_width_based_wrapping() {
+        let sizes = [40.0, 40.0, 40.0];
+        let s = WrapStyle::new(Axis::Horizontal).columns(1).clear_columns();
+        assert_eq!(s.columns, None);
+        assert_eq!(s.lines(&sizes, 100.0), vec![(0, 2), (2, 3)]);
+    }
+
+    #[test]
+    fn counted_wrap_with_no_items_is_empty() {
+        assert!(wrap_lines_counted(&[], 100.0, 0.0, Some(3)).is_empty());
     }
 }
