@@ -82,6 +82,38 @@ then falls back to the part after the colon, so registering `logo` also makes
 registered with that prefix. Names are just map keys; the fallback is useful
 for themes that add their own prefix to common icon names.
 
+### Icon files
+
+Embed a single SVG at compile time with `include_svg!`. The path is relative to
+the source file that invokes the macro:
+
+```rust,ignore
+const LOGO: &str = include_svg!("../assets/icons/logo.svg");
+
+let app = App::new().icon("brand:logo", LOGO);
+```
+
+For a directory of SVG files, `App::icons_dir` loads them at startup. The icon
+name is the path relative to that directory, without the `.svg` extension and
+using `/` between directories:
+
+```rust,no_run
+# use sequoia_ui::prelude::*;
+let app = App::new().icons_dir("assets/icons");
+# let _ = app;
+```
+
+```text
+assets/icons/tool/select.svg  ->  tool/select
+assets/icons/ui/radius.svg    ->  ui/radius
+```
+
+Only `.svg` files are loaded. Invalid SVGs are logged and skipped. To inspect
+which files were registered or failed parsing, call
+`AssetRegistry::register_icon_dir` directly; it returns an `IconDirReport`.
+Prefer `include_svg!` for portable binaries, because `icons_dir` reads files
+from the runtime filesystem.
+
 The SVG's own colors are not preserved. Icons are rasterized as alpha masks
 and tinted with `Icon::color` (or the theme text color). Using `currentColor`
 in the SVG is fine, but the painted color still comes from the widget.
