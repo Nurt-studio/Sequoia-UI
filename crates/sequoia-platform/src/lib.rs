@@ -14,7 +14,7 @@ use sequoia_reactive::Environment;
 use sequoia_render::{GpuOptions, GpuRenderer};
 use sequoia_style::Theme;
 use sequoia_text::TextSystem;
-use sequoia_view::{AnyView, Runtime, View};
+use sequoia_view::{AnyView, CullCtx, FrameOutcome, Runtime, View};
 
 mod cli;
 mod clipboard;
@@ -76,12 +76,15 @@ impl std::fmt::Display for AppError {
 
 impl std::error::Error for AppError {}
 
+/// Controls when the platform schedules frames.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RedrawMode {
+    /// Paint only after a redraw request; idle windows wait for events.
     #[default]
     OnDemand,
 
+    /// Keep scheduling frames (optionally paced by `fps_limit`).
     Continuous,
 }
 
@@ -135,6 +138,15 @@ impl Accelerator {
 
 pub fn not_editing(editing: sequoia_reactive::Signal<bool>) -> Rc<dyn Fn() -> bool> {
     Rc::new(move || !editing.get_untracked())
+}
+
+/// Plain-key accelerators must not fire while a text input has focus.
+///
+/// Modified shortcuts (Ctrl/Alt/Super) still pass through, so commands like
+/// Ctrl+S remain usable while typing.
+fn accelerator_allowed(modifiers: Modifiers, text_input_focused: bool) -> bool {
+    !text_input_focused
+        || modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
 }
 
 pub struct App {
@@ -234,6 +246,27 @@ impl App {
         let name = name.into();
         self.assets.register_icon(&name, svg)?;
         Ok(self)
+    }
+
+    pub fn icons_dir(self, dir: impl AsRef<std::path::Path>) -> Self {
+        match self.assets.register_icon_dir(dir) {
+            Ok(report) => {
+                for (path, error) in report.failed {
+                    log::warn!(
+                        "sequoia-platform: invalid SVG `{}`: {error} - icon skipped",
+                        path.display()
+                    );
+                }
+                log::debug!(
+                    "sequoia-platform: registered {} icons from directory",
+                    report.registered.len()
+                );
+            }
+            Err(error) => {
+                log::error!("sequoia-platform: failed to read icon directory: {error}");
+            }
+        }
+        self
     }
 
     pub fn font(self, name: impl Into<String>, data: Vec<u8>) -> Self {
@@ -659,23 +692,34 @@ impl WindowState {
         self.list.clear();
         let mut epoch = self.text.atlas().epoch();
         let mut passes = 1;
-        self.rt.paint(&mut self.list, &mut self.text);
+        // `paint_if_dirty` clears the tracker, so capture the regions first.
+        let damage = self.rt.damage_regions();
+        let outcome = self.rt.paint_if_dirty(&mut self.list, &mut self.text);
         // The glyph atlas can grow, repack or clear while we paint. Entries
         // pushed before that carry UVs for the previous atlas layout, so those
         // glyphs would sample the wrong pixels. Repaint until the atlas is
         // stable, exactly like offscreen export does.
-        while self.text.atlas().epoch() != epoch && passes < ATLAS_REPAINT_LIMIT {
+        while outcome == FrameOutcome::Painted
+            && self.text.atlas().epoch() != epoch
+            && passes < ATLAS_REPAINT_LIMIT
+        {
             epoch = self.text.atlas().epoch();
             self.list.clear();
-            self.rt.paint(&mut self.list, &mut self.text);
+            self.rt
+                .paint_region(&mut self.list, &mut self.text, CullCtx::ENABLED);
             passes += 1;
         }
         let surfaces = self.rt.take_surface_draws();
         let paint_ms = t.elapsed().as_secs_f64() * 1000.0;
         t = Instant::now();
-        if let Err(e) = self
-            .gpu
-            .render(&self.list, self.text.atlas_mut(), s, &surfaces)
+        if outcome == FrameOutcome::Painted
+            && let Err(e) = self.gpu.render_with_damage_regions(
+                &self.list,
+                self.text.atlas_mut(),
+                s,
+                &surfaces,
+                damage.as_deref(),
+            )
         {
             log::warn!("sequoia-platform: render error: {e}");
         }
@@ -685,15 +729,17 @@ impl WindowState {
             self.push_fps_title(tick_ms + layout_ms + paint_ms + render_ms);
         }
 
-        match self.gpu.take_frame_skip() {
-            Some(FrameSkip::Timeout) => self.gate.borrow_mut().request(),
-            Some(FrameSkip::Occluded) | None => {}
+        if outcome == FrameOutcome::Painted {
+            match self.gpu.take_frame_skip() {
+                Some(FrameSkip::Timeout) => self.gate.borrow_mut().request(),
+                Some(FrameSkip::Occluded) | None => {}
 
-            Some(_) => {}
-        }
+                Some(_) => {}
+            }
 
-        if self.gpu.take_redraw_request() {
-            self.gate.borrow_mut().request();
+            if self.gpu.take_redraw_request() {
+                self.gate.borrow_mut().request();
+            }
         }
 
         sync_cursor(&self.window, &mut self.last_cursor, &self.rt);
@@ -1113,6 +1159,7 @@ impl PlatformApp {
         state.gate.borrow_mut().clear_request();
         if show_after_first_frame {
             state.window.set_visible(true);
+            state.rt.mark_full_damage();
         }
         state.request_redraw();
         self.live.insert(wid, state);
@@ -1376,6 +1423,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             match event {
                 WindowEvent::Resized(size) => {
                     ws.gpu.resize(size.width, size.height);
+                    ws.rt.mark_full_damage();
                     ws.request_redraw();
                 }
 
@@ -1383,12 +1431,14 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                     if ws.settings.scale_override.is_none() {
                         ws.scale = sanitize_scale(scale_factor);
                         ws.text.set_scale_factor(ws.scale);
+                        ws.rt.mark_full_damage();
                         ws.request_redraw();
                     }
                 }
 
                 WindowEvent::Occluded(occluded) => {
                     if !occluded {
+                        ws.rt.mark_full_damage();
                         ws.request_redraw();
                     }
                 }
@@ -1458,8 +1508,13 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                             scale: ws.scale,
                             environment: self.env.clone(),
                         };
+                        let text_input = ws.rt.text_input_focused();
                         for acc in &self.accelerators {
-                            if acc.key == k && acc.modifiers == ws.mods && acc.should_fire() {
+                            if acc.key == k
+                                && acc.modifiers == ws.mods
+                                && acc.should_fire()
+                                && accelerator_allowed(ws.mods, text_input)
+                            {
                                 acc.fire(&ctx);
                                 hit = true;
                                 break;
@@ -1698,6 +1753,16 @@ mod tests {
     use sequoia_view::Unit;
 
     #[test]
+    fn editing_text_suppresses_plain_key_accelerators() {
+        assert!(accelerator_allowed(Modifiers::NONE, false));
+        assert!(!accelerator_allowed(Modifiers::NONE, true));
+        assert!(!accelerator_allowed(Modifiers::SHIFT, true));
+        assert!(accelerator_allowed(Modifiers::CONTROL, true));
+        assert!(accelerator_allowed(Modifiers::ALT, true));
+        assert!(accelerator_allowed(Modifiers::SUPER, true));
+    }
+
+    #[test]
     fn app_builder_targets_primary_and_counts_windows() {
         let app = App::new()
             .title("Main")
@@ -1716,6 +1781,18 @@ mod tests {
             (400.0, 300.0)
         );
         assert_eq!(app.windows[2].title, "Third");
+    }
+
+    #[test]
+    fn accelerators_are_suppressed_while_typing() {
+        use sequoia_input::Modifiers;
+        assert!(accelerator_allowed(Modifiers::NONE, false));
+        assert!(
+            !accelerator_allowed(Modifiers::NONE, true),
+            "plain Delete must reach the focused text field"
+        );
+        assert!(accelerator_allowed(Modifiers::CONTROL, true));
+        assert!(accelerator_allowed(Modifiers::SUPER, true));
     }
 
     #[test]
