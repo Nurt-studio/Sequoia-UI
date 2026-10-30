@@ -38,6 +38,11 @@ A composite is still one node in the tree. Its `body` is rebuilt when the
 values it reads change, so the body should be a pure description of the current
 state. Keep durable state in signals or a store.
 
+When a composite returns exactly one child, a `Fit` axis inherits that child's
+fill request. For bodies with several children, return an explicit
+`layout_style` (for example `.width(Length::Fill(1.0))`) when the composite
+should expand instead of hugging its content.
+
 Pass `&self` data into the body when the values are cheap to clone. When the
 body reads a signal, clone the signal into a closure:
 
@@ -356,7 +361,8 @@ errors in `rt.errors()` rather than panicking.
 - `body` must return one view. Use `AnyView` for branches with different types.
 - Read signals in `track` or `body`, not in `paint`; painting must not subscribe.
 - Return a meaningful `layout_style` or `intrinsic_size`; otherwise the leaf may
-  collapse to zero size inside a `Fit` parent.
+  collapse to zero size inside a `Fit` parent. A composite with several fill
+  children and a `Fit` style needs the same treatment.
 - Call `ctx.handled()` only for input the leaf fully consumes.
 - `impl_view_for_leaf!` must be invoked once per type, at module scope.
 

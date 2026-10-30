@@ -75,6 +75,32 @@ fn reactive_background_follows_signal() {
 }
 
 #[test]
+fn composite_view_inherits_fill_from_sole_child() {
+    struct Wrapper;
+    impl View for Wrapper {
+        fn body(&self) -> impl View + 'static {
+            Canvas::new()
+        }
+
+        fn test_id(&self) -> Option<String> {
+            Some("fill-wrapper".into())
+        }
+    }
+
+    let rt = Runtime::new();
+    rt.mount(Column::new().fill_size().child(Wrapper));
+    let mut text = TextSystem::new();
+    rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 300.0), &mut text);
+
+    let id = rt.find_by_test_id("fill-wrapper").expect("wrapper mounted");
+    let rect = rt.rect_of(id).expect("wrapper arranged");
+    assert!(
+        rect.size.height > 0.0,
+        "composite with a fill child must not collapse: {rect:?}"
+    );
+}
+
+#[test]
 fn when_mounts_and_unmounts_child() {
     let open = Signal::new(true);
     let rt = Runtime::new();

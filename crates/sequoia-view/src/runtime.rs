@@ -2839,9 +2839,28 @@ impl Runtime {
     }
 
     pub(crate) fn child_layout_style(&self, el: ElementId) -> LayoutStyle {
-        self.view_rc(el)
-            .map(|v| v.layout_style_ctx_erased(self, el))
-            .unwrap_or_default()
+        let Some(view) = self.view_rc(el) else {
+            return LayoutStyle::default();
+        };
+        let mut style = view.layout_style_ctx_erased(self, el);
+        if view.is_leaf() || !(style.width.is_fit() || style.height.is_fit()) {
+            return style;
+        }
+        let children = self.children(el);
+        if children.len() != 1 {
+            return style;
+        }
+        let child_style = self
+            .view_rc(children[0])
+            .map(|v| v.layout_style_ctx_erased(self, children[0]))
+            .unwrap_or_default();
+        if style.width.is_fit() && child_style.width.is_fill() {
+            style.width = child_style.width;
+        }
+        if style.height.is_fit() && child_style.height.is_fill() {
+            style.height = child_style.height;
+        }
+        style
     }
 
     pub fn check_root_fill(&self, root: ElementId, bounds: Rect, measured: Size) -> bool {
@@ -2904,7 +2923,8 @@ impl Runtime {
         let Some(v) = self.view_rc(el) else {
             return Size::ZERO;
         };
-        let style = v.layout_style_ctx_erased(self, el);
+        let children = self.children(el);
+        let style = self.child_layout_style(el);
         let container = v.container();
         let grid = v.grid();
 
@@ -2924,7 +2944,7 @@ impl Runtime {
 
         let flex = v.flex_weights().unwrap_or_default();
         let pre_placements = v.grid_placements().unwrap_or_default();
-        let children_len = self.children_len(el);
+        let children_len = children.len();
 
         {
             let measures = self.inner.measures.borrow();
@@ -2942,8 +2962,6 @@ impl Runtime {
                 return e.size;
             }
         }
-
-        let children = self.children(el);
 
         ctx.set_available_width(constraints.max.width);
         let intrinsic = v.intrinsic_size(ctx);
@@ -3140,6 +3158,34 @@ impl Runtime {
 
         let (w, h) = apply_aspect(w, h);
         let size = clamp_to(style.clamp_size(Size::new(w, h)), constraints);
+        let might_collapse = size.width <= 0.5 || size.height <= 0.5;
+        if might_collapse
+            && !v.is_leaf()
+            && !children.is_empty()
+            && (style.width.is_fit() || style.height.is_fit())
+        {
+            let mut fill_w = false;
+            let mut fill_h = false;
+            for child in &children {
+                let child_style = self.child_layout_style(*child);
+                fill_w |= child_style.width.is_fill();
+                fill_h |= child_style.height.is_fill();
+            }
+            let collapsed_w =
+                style.width.is_fit() && fill_w && size.width <= 0.5 && constraints.max.width > 1.0;
+            let collapsed_h = style.height.is_fit()
+                && fill_h
+                && size.height <= 0.5
+                && constraints.max.height > 1.0;
+            if collapsed_w || collapsed_h {
+                log::warn!(
+                    "sequoia-view: composite `{}` collapsed to {size:?} while a body child \
+                     requests fill; give the composite an explicit size or a `layout_style` \
+                     using `Length::Fill(1.0)`",
+                    v.type_name()
+                );
+            }
+        }
         self.inner.measures.borrow_mut().insert(
             el,
             MeasureEntry {
@@ -3358,7 +3404,7 @@ impl Runtime {
                 found = true;
                 break;
             }
-            let cs = v.layout_style_ctx_erased(self, id);
+            let cs = self.child_layout_style(id);
             if cs.flex_weight() > 0.0
                 || matches!(cs.width, Length::Fill(_))
                 || matches!(cs.height, Length::Fill(_))
@@ -3385,10 +3431,10 @@ impl Runtime {
         avail_cross: f32,
         ctx: &mut LayoutCtx,
     ) -> f32 {
-        let Some(v) = self.view_rc(child) else {
+        if self.view_rc(child).is_none() {
             return 0.0;
-        };
-        let cs = v.layout_style_ctx_erased(self, child);
+        }
+        let cs = self.child_layout_style(child);
 
         let margin_main = cs.margin_main(container_axis);
         let allocated = (allocated_main - margin_main).max(0.0);
@@ -3421,8 +3467,8 @@ impl Runtime {
 
     fn child_limits_full(&self, child: ElementId, axis: Axis) -> (f32, f32, f32, f32, f32) {
         match self.view_rc(child) {
-            Some(v) => {
-                let cs = v.layout_style_ctx_erased(self, child);
+            Some(_v) => {
+                let cs = self.child_layout_style(child);
                 let margin_main = cs.margin_main(axis);
                 let margin_cross = cs.margin_cross(axis);
                 let px_floor_main = match axis {
@@ -3485,10 +3531,10 @@ impl Runtime {
         flex_extra: f32,
         ctx: &mut LayoutCtx,
     ) -> (f32, f32, f32, f32, f32, f32) {
-        let Some(v) = self.view_rc(child) else {
+        if self.view_rc(child).is_none() {
             return (0.0, 0.0, 1.0, 0.0, 0.0, f32::INFINITY);
-        };
-        let cs = v.layout_style_ctx_erased(self, child);
+        }
+        let cs = self.child_layout_style(child);
         let (main_len, cross_len) = match cstyle.axis {
             Axis::Horizontal => (cs.width, cs.height),
             Axis::Vertical => (cs.height, cs.width),
@@ -3967,7 +4013,7 @@ impl Runtime {
         }
 
         let Some(v) = self.view_rc(el) else { return };
-        let style = v.layout_style_ctx_erased(self, el);
+        let style = self.child_layout_style(el);
         let content = Rect::from_xywh(
             rect.left() + style.padding.left,
             rect.top() + style.padding.top,
@@ -4044,8 +4090,8 @@ impl Runtime {
                 ctx,
             );
             let (cw, ch) = match self.view_rc(child) {
-                Some(v) => {
-                    let cs = v.layout_style_ctx_erased(self, child);
+                Some(_v) => {
+                    let cs = self.child_layout_style(child);
                     let w_auto = matches!(cs.width, Length::Fit)
                         || (cs.width.is_fill() && !avail.width.is_finite());
                     let h_auto = matches!(cs.height, Length::Fit)
@@ -4965,10 +5011,10 @@ impl Runtime {
         cross: f32,
         avail_cross: f32,
     ) -> (f32, f32) {
-        let Some(v) = self.view_rc(child) else {
+        if self.view_rc(child).is_none() {
             return (0.0, 0.0);
-        };
-        let cs = v.layout_style_ctx_erased(self, child);
+        }
+        let cs = self.child_layout_style(child);
         let eff = cs.effective_align(cstyle.align);
         let (m_start, m_end) = match cstyle.axis {
             Axis::Horizontal => (cs.margin.top, cs.margin.bottom),
