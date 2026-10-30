@@ -10,6 +10,7 @@ pub use rich::{
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cosmic_text::{
     Attrs, Buffer, CacheKey, Family, FontSystem, Metrics, Shaping, Style as CosmicStyle,
@@ -338,7 +339,10 @@ pub struct AtlasDirty {
     pub full: bool,
 }
 
+static ATLAS_SERIAL: AtomicU64 = AtomicU64::new(1);
+
 pub struct GlyphAtlas {
+    id: u64,
     width: u32,
     height: u32,
     pixels: Vec<u8>,
@@ -366,6 +370,7 @@ impl GlyphAtlas {
         let bytes = checked_atlas_bytes(width, height).unwrap_or(0);
 
         Self {
+            id: ATLAS_SERIAL.fetch_add(1, Ordering::Relaxed),
             width,
             height,
             pixels: vec![0; bytes],
@@ -382,6 +387,14 @@ impl GlyphAtlas {
             used: RefCell::new(HashMap::new()),
             sprite_used: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Unique identity for this atlas instance.
+    ///
+    /// Glyph UVs are only meaningful for the atlas that produced them; caches
+    /// must compare this id before reusing shaped output across text systems.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -3256,6 +3269,7 @@ mod tests {
     #[test]
     fn atlas_construction_is_clamped_and_inserts_validate_data() {
         let atlas = GlyphAtlas::new(u32::MAX, u32::MAX);
+        assert_ne!(atlas.id(), GlyphAtlas::new(8, 8).id());
         assert_eq!(atlas.size(), (ATLAS_MAX_DIM, ATLAS_MAX_DIM));
         assert_eq!(
             atlas.pixels().len(),
