@@ -578,3 +578,24 @@ fn effect_survives_panic_and_retries() {
         "the effect is alive and responds to subsequent changes"
     );
 }
+
+#[test]
+fn bind_syncs_both_ways_and_stops_on_drop() {
+    let a = Signal::new(1i32);
+    let b = Signal::new(1i32);
+    let binding = a.bind(&b);
+
+    a.set(5);
+    assert_eq!(b.get_untracked(), 5, "a -> b");
+    b.set(9);
+    assert_eq!(a.get_untracked(), 9, "b -> a");
+
+    b.set(9);
+    assert_eq!(a.version(), 2, "equal set does not bounce back and forth");
+
+    drop(binding);
+    a.set(2);
+    assert_eq!(b.get_untracked(), 9, "dropped binding no longer syncs");
+    b.set(3);
+    assert_eq!(a.get_untracked(), 2);
+}

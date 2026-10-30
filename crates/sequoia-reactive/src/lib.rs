@@ -17,7 +17,7 @@ pub use history::History;
 pub use i18n::I18n;
 pub use memo::{Memo, memo};
 pub use runtime::{batch, current_transaction, flush_effects, transaction, untracked};
-pub use signal::Signal;
+pub use signal::{Binding, Signal};
 pub use store::Store;
 pub use undo_signal::{DEFAULT_COALESCE_WINDOW, UndoSignal};
 pub use watch::{ReadSet, Watcher, capture_reads};
@@ -29,7 +29,7 @@ pub mod prelude {
     pub use crate::i18n::I18n;
     pub use crate::memo::{Memo, memo};
     pub use crate::runtime::{batch, current_transaction, flush_effects, transaction, untracked};
-    pub use crate::signal::Signal;
+    pub use crate::signal::{Binding, Signal};
     pub use crate::store::Store;
     pub use crate::undo_signal::{DEFAULT_COALESCE_WINDOW, UndoSignal};
     pub use crate::watch::{ReadSet, Watcher, capture_reads};

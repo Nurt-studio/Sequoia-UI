@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use crate::effect::{Subscription, effect};
+use crate::effect::{Effect, Subscription, effect};
 use crate::runtime::{
     Dependency, Observer, batch_depth, flush_effects, observers_in, propagate,
     register_observer_in, track_read, unregister_observer_in,
@@ -59,12 +59,17 @@ impl<T: Clone + PartialEq + 'static> Signal<T> {
         self.inner.value.borrow().clone()
     }
 
+    /// Reads the value by reference and tracks the read.
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         track_read(&self.inner);
         let borrowed = self.inner.value.borrow();
         f(&borrowed)
     }
 
+    /// Reads the value by reference without cloning or tracking.
+    ///
+    /// Use this in paint and event loops when the value is large (for example
+    /// `Vec<Layer>`); `get_untracked()` clones the whole value on every call.
     pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         let borrowed = self.inner.value.borrow();
         f(&borrowed)
@@ -102,6 +107,44 @@ impl<T: Clone + PartialEq + 'static> Signal<T> {
             track_read(&inner);
             listener();
         }))
+    }
+
+    /// Keeps this signal and `other` synchronized in both directions.
+    ///
+    /// The returned [`Binding`] owns the two effects; dropping it stops the
+    /// synchronization and disposes them, so there is no need for
+    /// `.forget()`. `Signal::set` ignores equal values, so the pair settles
+    /// instead of looping.
+    #[must_use = "binding stops syncing when dropped — keep it with the signals"]
+    pub fn bind(&self, other: &Signal<T>) -> Binding {
+        let a = self.clone();
+        let b = other.clone();
+        let forward = effect(move || b.set(a.get()));
+
+        let a = self.clone();
+        let b = other.clone();
+        let backward = effect(move || a.set(b.get()));
+
+        Binding {
+            _forward: forward,
+            _backward: backward,
+        }
+    }
+}
+
+/// A live two-way link between two [`Signal`]s.
+///
+/// Dropping the binding disposes both synchronization effects.
+#[must_use = "binding stops syncing when dropped — keep it with the signals"]
+pub struct Binding {
+    _forward: Effect,
+    _backward: Effect,
+}
+
+impl Binding {
+    /// Stops syncing immediately instead of waiting for the drop.
+    pub fn dispose(self) {
+        drop(self);
     }
 }
 
