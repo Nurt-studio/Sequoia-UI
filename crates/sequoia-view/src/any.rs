@@ -1,7 +1,7 @@
 use std::any::{Any, TypeId};
 use std::rc::Rc;
 
-use sequoia_core::{Rect, Size, Vec2};
+use sequoia_core::{Dirty, Rect, Size, Vec2};
 use sequoia_input::{CursorIcon, Event};
 use sequoia_style::{Filter, VisualState};
 
@@ -23,6 +23,7 @@ pub(crate) trait ErasedView: 'static {
     fn call_body(&self) -> AnyView;
     fn layout_style_erased(&self) -> LayoutStyle;
     fn layout_style_ctx_erased(&self, rt: &Runtime, el: ElementId) -> LayoutStyle;
+    fn signal_dirty_erased(&self) -> Dirty;
     fn container(&self) -> Option<ContainerStyle>;
     fn grid(&self) -> Option<GridStyle>;
     fn dock(&self) -> Option<DockStyle>;
@@ -107,6 +108,9 @@ impl<V: View + 'static> ErasedView for V {
     }
     fn layout_style_ctx_erased(&self, rt: &Runtime, el: ElementId) -> LayoutStyle {
         View::layout_style_ctx(self, rt, el)
+    }
+    fn signal_dirty_erased(&self) -> Dirty {
+        View::signal_dirty(self)
     }
     fn container(&self) -> Option<ContainerStyle> {
         View::container(self)

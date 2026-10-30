@@ -135,7 +135,8 @@ let canvas = Canvas::new()
 # let _ = canvas;
 ```
 
-Calling `progress.set(...)` now marks the canvas dirty and repaints it. A
+Calling `progress.set(...)` now marks the canvas paint-only dirty: the runtime
+repaints the display list without rebuilding the view tree or relayouting. A
 `track` closure may read several signals. Keep it small and read only what the
 drawing uses; it runs during the build phase, not during painting.
 

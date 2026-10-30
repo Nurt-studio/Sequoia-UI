@@ -174,7 +174,13 @@ fn repaint_on_tracked_signal() {
     let h = Harness::new(Demo { dots: dots.clone() });
     h.layout(200.0, 200.0);
     assert_eq!(h.paint().quads().count(), 0);
+    let rebuilds = h.stats().rebuilds;
     h.set(&dots, vec![Point::new(10.0, 10.0), Point::new(50.0, 50.0)]);
+    assert_eq!(
+        h.stats().rebuilds,
+        rebuilds,
+        "tracked Canvas signals must repaint without rebuilding the body"
+    );
     h.layout(200.0, 200.0);
     assert_eq!(h.paint().quads().count(), 2);
 }

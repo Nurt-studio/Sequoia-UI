@@ -264,7 +264,11 @@ struct Inner {
 
 impl Inner {
     fn schedule(&self, id: ElementId) {
-        self.mark(id, Dirty::LAYOUT | Dirty::CHILDREN);
+        let view = self.arena.borrow().get(id).and_then(|e| e.view.clone());
+        let dirty = view
+            .map(|v| v.signal_dirty_erased())
+            .unwrap_or(Dirty::LAYOUT | Dirty::CHILDREN);
+        self.mark(id, dirty);
     }
 
     fn mark(&self, id: ElementId, flags: Dirty) {

@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use sequoia_core::{Color, Fill, Length, Point, Rect, Size, Vec2};
+use sequoia_core::{Color, Dirty, Fill, Length, Point, Rect, Size, Vec2};
 use sequoia_input::{
     CursorIcon, Event, EventPhase, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
 };
@@ -423,6 +423,10 @@ impl View for Canvas {
 
     fn layout_style(&self) -> LayoutStyle {
         self.style
+    }
+
+    fn signal_dirty(&self) -> Dirty {
+        Dirty::CANVAS
     }
 
     fn clip_self(&self) -> bool {

@@ -2,7 +2,7 @@ use std::any::Any;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use sequoia_core::{Color, ImageSource, Point, Rect, RenderList, Size, Vec2, WindowId};
+use sequoia_core::{Color, Dirty, ImageSource, Point, Rect, RenderList, Size, Vec2, WindowId};
 use sequoia_draw::ShapeCache;
 use sequoia_input::{CursorIcon, Event, EventPhase, Modifiers, PenTool};
 use sequoia_layout::{
@@ -48,6 +48,16 @@ pub trait View {
 
     fn layout_style_ctx(&self, _rt: &Runtime, _el: ElementId) -> LayoutStyle {
         self.layout_style()
+    }
+
+    /// Dirty flags applied when a signal read while building this view changes.
+    ///
+    /// The default rebuilds the body and relayouts. Views that paint their own
+    /// content from tracked signals — notably [`Canvas`](crate::Canvas) — can
+    /// narrow this to a paint-only flag.
+    #[doc(hidden)]
+    fn signal_dirty(&self) -> Dirty {
+        Dirty::LAYOUT | Dirty::CHILDREN
     }
 
     #[doc(hidden)]
