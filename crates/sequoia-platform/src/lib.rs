@@ -1121,10 +1121,10 @@ impl PlatformApp {
         let rt = Runtime::new();
         rt.set_window_id(id);
         rt.set_root_fill(true);
+        rt.set_environment(self.env.clone());
         if let Some(root) = spec.root.clone() {
             rt.mount_any(root);
         }
-        rt.set_environment(self.env.clone());
 
         let gate = Rc::new(RefCell::new(PaintGate::default()));
         {
