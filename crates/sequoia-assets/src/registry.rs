@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::photo::PhotoError;
@@ -36,6 +37,12 @@ impl From<PhotoError> for AssetError {
     fn from(e: PhotoError) -> Self {
         AssetError::Photo(e)
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IconDirReport {
+    pub registered: Vec<String>,
+    pub failed: Vec<(PathBuf, SvgError)>,
 }
 
 #[derive(Default)]
@@ -97,6 +104,26 @@ impl AssetRegistry {
         let icon = parse_svg(svg_src)?;
         self.register_icon_data(name, icon);
         Ok(())
+    }
+
+    pub fn register_icon_dir(&self, dir: impl AsRef<Path>) -> std::io::Result<IconDirReport> {
+        let root = dir.as_ref();
+        let mut files = Vec::new();
+        collect_svg_files(root, &mut files)?;
+        files.sort();
+
+        let mut report = IconDirReport::default();
+        for path in files {
+            let Some(name) = icon_name(root, &path) else {
+                continue;
+            };
+            let svg = std::fs::read_to_string(&path)?;
+            match self.register_icon(name.clone(), &svg) {
+                Ok(()) => report.registered.push(name),
+                Err(e) => report.failed.push((path, e)),
+            }
+        }
+        Ok(report)
     }
 
     pub fn register_icon_data(&self, name: impl Into<String>, icon: SvgIcon) {
@@ -213,6 +240,39 @@ impl AssetRegistry {
     }
 }
 
+fn collect_svg_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_svg_files(&path, out)?;
+        } else if file_type.is_file()
+            && path
+                .extension()
+                .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("svg"))
+        {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn icon_name(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        let std::path::Component::Normal(part) = component else {
+            continue;
+        };
+        parts.push(part.to_str()?.to_owned());
+    }
+    let file = parts.pop()?;
+    let stem = Path::new(&file).file_stem()?.to_str()?.to_owned();
+    parts.push(stem);
+    Some(parts.join("/"))
+}
+
 pub fn icon_key(name: &str, px: u32) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in name.as_bytes() {
@@ -318,6 +378,27 @@ mod tests {
             let sprite = registry.rasterize_icon(&name, 24).expect("rasteryzacja");
             assert!(!sprite.is_blank(), "icon {name} must not be blank");
         }
+    }
+
+    #[test]
+    fn icon_dir_loads_recursively_by_relative_name() {
+        let root = std::env::temp_dir().join(format!("sequoia-icons-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("tool")).unwrap();
+        std::fs::write(root.join("tool/select.svg"), DOT).unwrap();
+        std::fs::write(root.join("bad.svg"), "<svg></svg>").unwrap();
+        std::fs::write(root.join("notes.txt"), DOT).unwrap();
+
+        let registry = AssetRegistry::new();
+        let report = registry.register_icon_dir(&root).unwrap();
+        assert_eq!(report.registered, vec!["tool/select".to_owned()]);
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(report.failed[0].0, root.join("bad.svg"));
+        assert!(registry.icon("tool/select").is_some());
+        assert!(registry.icon("notes").is_none());
+        assert!(registry.register_icon_dir(root.join("missing")).is_err());
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
