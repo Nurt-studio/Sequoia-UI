@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 pub use sequoia_animation as animation;
 pub use sequoia_assets as assets;
+pub use sequoia_assets::include_svg;
 pub use sequoia_async as async_bridge;
 pub use sequoia_async::{
     AsyncRuntime, AsyncState, Debouncer, Emitter, Resource, ScopedTask, SignalAsyncExt, TaskHandle,
@@ -22,7 +23,7 @@ pub use sequoia_platform::{
     native_message, not_editing,
 };
 pub use sequoia_reactive as reactive;
-pub use sequoia_reactive::{Environment, Signal, Store, UndoSignal};
+pub use sequoia_reactive::{Binding, Environment, Signal, Store, UndoSignal};
 pub use sequoia_render as render;
 pub use sequoia_seq as seq;
 pub use sequoia_seq::{AppMeta, HostBindings, LoadedApp, SeqError, SeqLoader};
@@ -49,6 +50,7 @@ pub mod prelude {
     };
 
     pub use sequoia_animation::Value as TrackValue;
+    pub use sequoia_assets::include_svg;
     pub use sequoia_assets::{
         AssetRegistry, MAX_PHOTO_DIM, PhotoError, decode_pixels, decode_pixels_thumbnail,
         load_pixels, load_pixels_thumbnail,
@@ -83,7 +85,7 @@ pub mod prelude {
         Inset, Justify, LayoutStyle, MasonryStyle, Overflow, Position, Track, WrapStyle,
     };
     pub use sequoia_reactive::{
-        DEFAULT_COALESCE_WINDOW, Effect, EffectHandle, EffectScope, History, I18n, Memo,
+        Binding, DEFAULT_COALESCE_WINDOW, Effect, EffectHandle, EffectScope, History, I18n, Memo,
         UndoSignal, batch, effect, memo, untracked,
     };
     pub use sequoia_seq::{
