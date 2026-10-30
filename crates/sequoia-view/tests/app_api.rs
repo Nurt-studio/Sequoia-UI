@@ -96,7 +96,8 @@ fn when_mounts_and_unmounts_child() {
     open.set(false);
     rt.tick();
 
-    for _ in 0..60 {
+    // Bez `.enter()` / `.exit()` nie ma animacji: dziecko znika w kilku klatkach.
+    for _ in 0..3 {
         rt.advance_for_test(std::time::Duration::from_millis(10));
         rt.tick();
         rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);

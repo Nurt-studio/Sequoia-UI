@@ -17,8 +17,18 @@ animation jump.
 
 ## Enter and exit motion
 
-Any view can be wrapped with a motion that plays when it is mounted and,
-optionally, one that plays when it leaves the tree:
+Motion is opt-in. `when(open, child)` on its own only mounts and unmounts the
+child — it appears and disappears immediately. Attach motion to the transitions
+that deserve it with `enter` and `exit`:
+
+```rust
+# use sequoia_ui::prelude::*;
+let open = Signal::new(true);
+let instant = when(open.clone(), Text::new("No motion"));
+let animated = when(open, Text::new("Fades"))
+    .enter(fade())
+    .exit(fade());
+```
 
 ```rust
 # use sequoia_ui::prelude::*;
