@@ -1050,8 +1050,8 @@ fn backdrop_copy_covers_marker_plus_kernel() {
         GpuRenderer::backdrop_copy_region([100.0, 100.0, 200.0, 120.0], 16.0, fb)
             .expect("marker na ekranie");
 
-    assert_eq!((origin.x, origin.y), (83, 83));
-    assert_eq!((extent.width, extent.height), (234, 154));
+    assert_eq!((origin.x, origin.y), (53, 53));
+    assert_eq!((extent.width, extent.height), (294, 214));
     assert!(extent.width < fb.0 && extent.height < fb.1);
 
     let (origin, extent) = GpuRenderer::backdrop_copy_region([100.0, 100.0, 200.0, 120.0], 0.0, fb)
@@ -1067,8 +1067,8 @@ fn backdrop_copy_clamps_and_skips_offscreen() {
     let (origin, extent) =
         GpuRenderer::backdrop_copy_region([700.0, 500.0, 200.0, 200.0], 16.0, fb)
             .expect("partially visible");
-    assert_eq!((origin.x, origin.y), (683, 483));
-    assert_eq!((extent.width, extent.height), (800 - 683, 600 - 483));
+    assert_eq!((origin.x, origin.y), (653, 453));
+    assert_eq!((extent.width, extent.height), (800 - 653, 600 - 453));
 
     assert!(GpuRenderer::backdrop_copy_region([2000.0, 2000.0, 100.0, 100.0], 16.0, fb).is_none());
     assert!(
@@ -1080,11 +1080,10 @@ fn backdrop_copy_clamps_and_skips_offscreen() {
 #[test]
 fn backdrop_kernel_grows_with_blur_radius() {
     assert_eq!(GpuRenderer::backdrop_kernel_reach(0.0), 1.0);
-    assert!((GpuRenderer::backdrop_kernel_reach(16.0) - 16.84).abs() < 0.001);
-    assert_eq!(GpuRenderer::backdrop_kernel_reach(64.0), 64.0);
-    assert_eq!(
-        GpuRenderer::backdrop_kernel_reach(256.0),
-        64.0,
+    assert!((GpuRenderer::backdrop_kernel_reach(16.0) - 46.8128).abs() < 0.001);
+    assert!((GpuRenderer::backdrop_kernel_reach(64.0) - 181.2512).abs() < 0.001);
+    assert!(
+        (GpuRenderer::backdrop_kernel_reach(256.0) - 181.2512).abs() < 0.001,
         "cap keeps the kernel bounded"
     );
 }
@@ -2200,4 +2199,62 @@ fn identity_transform_is_default() {
     );
     assert_eq!(quads[0].transform_a, [1.0, 0.0, 0.0, 1.0]);
     assert_eq!(quads[0].transform_b, [0.0, 0.0]);
+}
+
+#[test]
+fn damage_scissors_clip_at_framebuffer_edges() {
+    let regions = [
+        Rect::from_xywh(-10.0, -10.0, 20.0, 20.0),
+        Rect::from_xywh(95.0, 90.0, 20.0, 20.0),
+    ];
+    let scissors = damage_scissors(&regions, 0.0, 1.0, (100, 100));
+    assert_eq!(scissors.len(), 2);
+    assert_eq!(scissors[0].1, (0, 0, 10, 10), "left/top clipped");
+    assert_eq!(scissors[1].1, (95, 90, 5, 10), "right/bottom clipped");
+}
+
+#[test]
+fn damage_scissors_cover_fractional_edges() {
+    let regions = [Rect::from_xywh(10.2, 10.2, 10.0, 10.0)];
+    let scissors = damage_scissors(&regions, 0.0, 1.5, (100, 100));
+    assert_eq!(
+        scissors[0].1,
+        (15, 15, 16, 16),
+        "floor/ceil keeps anti-aliased edges inside the scissor"
+    );
+}
+
+#[test]
+fn damage_scissors_apply_margin_in_logical_pixels() {
+    let regions = [Rect::from_xywh(40.0, 40.0, 20.0, 20.0)];
+    let scissors = damage_scissors(&regions, 32.0, 1.0, (200, 200));
+    assert_eq!(scissors[0].1, (8, 8, 84, 84));
+    assert!(
+        scissors[0]
+            .0
+            .contains_rect(Rect::from_xywh(40.0, 40.0, 20.0, 20.0))
+    );
+}
+
+#[test]
+fn damage_scissors_drop_offscreen_regions() {
+    let regions = [
+        Rect::from_xywh(200.0, 200.0, 10.0, 10.0),
+        Rect::from_xywh(10.0, 10.0, 5.0, 5.0),
+    ];
+    let scissors = damage_scissors(&regions, 0.0, 1.0, (100, 100));
+    assert_eq!(scissors.len(), 1);
+    assert_eq!(scissors[0].1, (10, 10, 5, 5));
+    assert!(damage_scissors(&[], 0.0, 1.0, (100, 100)).is_empty());
+}
+
+#[test]
+fn damage_scissors_bound_region_count() {
+    let regions: Vec<Rect> = (0..=MAX_DAMAGE_REGIONS)
+        .map(|i| Rect::from_xywh(i as f32 * 20.0, 0.0, 4.0, 4.0))
+        .collect();
+    let scissors = damage_scissors(&regions, 0.0, 1.0, (1000, 1000));
+    assert_eq!(scissors.len(), 1, "extra regions collapse into a bbox");
+    assert_eq!(scissors[0].1.0, 0);
+    assert!(scissors[0].1.2 >= MAX_DAMAGE_REGIONS as u32 * 20);
 }

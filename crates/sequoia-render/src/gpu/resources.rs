@@ -190,6 +190,7 @@ impl crate::renderer::GpuRenderer {
         if let Some(old) = self.backdrop_tex.take() {
             old.a_tex.destroy();
             old.b_tex.destroy();
+            old.c_tex.destroy();
         }
         let format = self.render_format;
         let mk = |label: &'static str| {
@@ -229,6 +230,7 @@ impl crate::renderer::GpuRenderer {
         };
         let (a_tex, a_view, a_bg) = mk("sequoia-backdrop-a");
         let (b_tex, b_view, b_bg) = mk("sequoia-backdrop-b");
+        let (c_tex, c_view, c_bg) = mk("sequoia-backdrop-c");
         self.backdrop_tex = Some(BackdropBuffers {
             a_tex,
             a_view,
@@ -236,8 +238,63 @@ impl crate::renderer::GpuRenderer {
             b_tex,
             b_view,
             b_bg,
+            c_tex,
+            c_view,
+            c_bg,
             size,
         });
+    }
+
+    /// Recreates the persistent partial-repaint target when the size changes.
+    ///
+    /// Returns `true` when the target was created or resized, which means its
+    /// contents must be treated as undefined.
+    pub(crate) fn ensure_frame_target(&mut self, size: (u32, u32)) -> bool {
+        let size = (size.0.max(1), size.1.max(1));
+        if self.frame_target.as_ref().is_some_and(|t| t.size == size) {
+            return false;
+        }
+        if let Some(old) = self.frame_target.take() {
+            old.texture.destroy();
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sequoia-frame-target"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.render_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sequoia-frame-target-bg"),
+            layout: &self.atlas_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.blit_sampler),
+                },
+            ],
+        });
+        self.frame_target = Some(FrameTarget {
+            texture,
+            view,
+            bg,
+            size,
+        });
+        true
     }
 
     /// Grows `buf` to hold at least `len` instances of `item_bytes`.

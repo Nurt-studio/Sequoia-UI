@@ -357,6 +357,61 @@ pub(crate) fn phys_rect(rect: Rect, scale: f32, fb_w: u32, fb_h: u32) -> Option<
     if r.is_empty() { None } else { Some(r) }
 }
 
+/// Converts a physical damage rect into a wgpu scissor rectangle.
+pub(crate) fn scissor_rect(rect: Rect, fb: (u32, u32)) -> Option<(u32, u32, u32, u32)> {
+    let x0 = rect.left().floor().clamp(0.0, fb.0 as f32) as u32;
+    let y0 = rect.top().floor().clamp(0.0, fb.1 as f32) as u32;
+    let x1 = rect.right().ceil().clamp(0.0, fb.0 as f32) as u32;
+    let y1 = rect.bottom().ceil().clamp(0.0, fb.1 as f32) as u32;
+    (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
+}
+
+/// Maximum number of disjoint scissor regions recorded for one frame.
+pub(crate) const MAX_DAMAGE_REGIONS: usize = 8;
+
+/// Clips logical damage regions to the framebuffer and converts them to
+/// scissors, inflating each by `margin` logical pixels first.
+///
+/// More than [`MAX_DAMAGE_REGIONS`] inputs collapse into one bounding box.
+/// Regions that clip away completely are dropped.
+pub(crate) fn damage_scissors(
+    regions: &[Rect],
+    margin: f32,
+    scale: f32,
+    fb: (u32, u32),
+) -> Vec<(Rect, (u32, u32, u32, u32))> {
+    let margin = if margin.is_finite() {
+        margin.max(0.0)
+    } else {
+        0.0
+    };
+    let mut out = Vec::new();
+    if regions.len() > MAX_DAMAGE_REGIONS {
+        let all = regions.iter().copied().fold(Rect::ZERO, Rect::union);
+        push_damage_scissor(&mut out, all, margin, scale, fb);
+    } else {
+        for &region in regions {
+            push_damage_scissor(&mut out, region, margin, scale, fb);
+        }
+    }
+    out
+}
+
+fn push_damage_scissor(
+    out: &mut Vec<(Rect, (u32, u32, u32, u32))>,
+    region: Rect,
+    margin: f32,
+    scale: f32,
+    fb: (u32, u32),
+) {
+    let Some(phys) = phys_rect(region.inflate(margin, margin), scale, fb.0, fb.1) else {
+        return;
+    };
+    if let Some(scissor) = scissor_rect(phys, fb) {
+        out.push((phys, scissor));
+    }
+}
+
 pub(crate) fn inset_rect(r: Rect, pad: [f32; 4]) -> Rect {
     Rect::from_xywh(
         r.left() + pad[0],
@@ -378,4 +433,29 @@ pub(crate) fn scale_inset(pad: [f32; 4], scale: f32) -> [f32; 4] {
         pad[2] * scale,
         pad[3] * scale,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scissor_rounds_outward_and_clamps() {
+        let rect = Rect::from_xywh(10.2, 20.7, 30.2, 40.1);
+        assert_eq!(scissor_rect(rect, (100, 100)), Some((10, 20, 31, 41)));
+    }
+
+    #[test]
+    fn scissor_clips_to_framebuffer() {
+        let rect = Rect::from_xywh(-5.0, -5.0, 120.0, 120.0);
+        assert_eq!(scissor_rect(rect, (50, 40)), Some((0, 0, 50, 40)));
+    }
+
+    #[test]
+    fn scissor_rejects_empty_and_offscreen() {
+        let empty = Rect::from_xywh(0.0, 0.0, 0.0, 10.0);
+        assert_eq!(scissor_rect(empty, (50, 50)), None);
+        let outside = Rect::from_xywh(60.0, 0.0, 10.0, 10.0);
+        assert_eq!(scissor_rect(outside, (50, 50)), None);
+    }
 }

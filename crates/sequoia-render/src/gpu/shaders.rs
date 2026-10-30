@@ -385,20 +385,79 @@ fn vs_backdrop(
     return out;
 }
 
-// Binomial row n=6: a cheap Gaussian approximation with a wider support than
-// the previous 5-tap tent, so large blur radii no longer collapse to a small
-// kernel.
+// The blur is a two-pass separable Gaussian. A single sparse grid made fine
+// detail such as glyph strokes break into a visible lattice, so each axis uses
+// 25 densely spaced taps with normalized exp(-d^2 / 12) weights.
+const BLUR_TAPS: i32 = 12;
+const BLUR_STEP_SCALE: f32 = 0.1167;
+
+fn backdrop_blur_step(blur: f32) -> f32 {
+    return max(blur * BLUR_STEP_SCALE, 0.0);
+}
+
+fn backdrop_blur_reach(blur: f32) -> f32 {
+    return f32(BLUR_TAPS) * backdrop_blur_step(blur) + 1.0;
+}
+
+const BLUR_WEIGHTS = array<f32, 25>(
+    0.0000010, 0.0000068, 0.000039, 0.000191, 0.000786,
+    0.002747, 0.008109, 0.020272, 0.042932, 0.076934,
+    0.116700, 0.149846, 0.162868, 0.149846, 0.116700,
+    0.076934, 0.042932, 0.020272, 0.008109, 0.002747,
+    0.000786, 0.000191, 0.000039, 0.0000068, 0.0000010,
+);
+
 fn backdrop_weight(d: i32) -> f32 {
-    if (d == 0) {
-        return 20.0;
+    return BLUR_WEIGHTS[d + BLUR_TAPS];
+}
+
+// Horizontal pass: expands the effect rect so the vertical pass has valid
+// samples outside the visible shape, then samples the source texture.
+@vertex
+fn vs_blur(
+    @builtin(vertex_index) vi: u32,
+    @location(0) rect: vec4<f32>,
+    @location(1) dim: vec4<f32>,
+    @location(2) params: vec4<f32>,
+    @location(3) clip_rect: vec4<f32>,
+    @location(4) mask: vec4<f32>,
+) -> VsBackdrop {
+    let c = vec2<f32>(f32(vi & 1u), f32(vi >> 1u));
+    let m = backdrop_blur_reach(params.x);
+    let r = vec4<f32>(
+        rect.xy - vec2<f32>(m, m),
+        rect.zw + vec2<f32>(2.0 * m, 2.0 * m),
+    );
+    let world = r.xy + c * r.zw;
+    var out: VsBackdrop;
+    out.pos = vec4<f32>(
+        world.x / screen.size.x * 2.0 - 1.0,
+        1.0 - world.y / screen.size.y * 2.0,
+        0.0,
+        1.0
+    );
+    out.rect = r;
+    out.world = world;
+    out.dim = dim;
+    out.blur = params.x;
+    out.noise = 0.0;
+    out.radius = 0.0;
+    out.clip_rect = clip_rect;
+    out.clip_radius = 0.0;
+    out.mask = mask;
+    return out;
+}
+
+@fragment
+fn fs_blur(frag: VsBackdrop) -> @location(0) vec4<f32> {
+    let uv = frag.world / screen.size.xy;
+    let step = backdrop_blur_step(frag.blur) / screen.size.x;
+    var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    for (var ox = -BLUR_TAPS; ox <= BLUR_TAPS; ox++) {
+        let tap = uv + vec2<f32>(f32(ox) * step, 0.0);
+        acc += textureSample(blit_tex, blit_samp, tap) * backdrop_weight(ox);
     }
-    if (d == 1 || d == -1) {
-        return 15.0;
-    }
-    if (d == 2 || d == -2) {
-        return 6.0;
-    }
-    return 1.0;
+    return acc;
 }
 
 @fragment
@@ -416,13 +475,11 @@ fn fs_backdrop(frag: VsBackdrop) -> @location(0) vec4<f32> {
     if (frag.blur < 0.5) {
         b = textureSample(blit_tex, blit_samp, uv);
     } else {
-        let step = clamp(frag.blur * 0.33, 1.0, 21.0) / screen.size.xy;
+        let step = backdrop_blur_step(frag.blur) / screen.size.y;
         var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        for (var oy = -3; oy <= 3; oy++) {
-            for (var ox = -3; ox <= 3; ox++) {
-                let w = backdrop_weight(ox) * backdrop_weight(oy) / 4096.0;
-                acc += textureSample(blit_tex, blit_samp, uv + vec2<f32>(f32(ox), f32(oy)) * step) * w;
-            }
+        for (var oy = -BLUR_TAPS; oy <= BLUR_TAPS; oy++) {
+            let tap = uv + vec2<f32>(0.0, f32(oy) * step);
+            acc += textureSample(blit_tex, blit_samp, tap) * backdrop_weight(oy);
         }
         b = acc;
     }

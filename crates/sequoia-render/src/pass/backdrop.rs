@@ -6,12 +6,16 @@ use crate::utils::*;
 use sequoia_core::Color;
 
 impl crate::renderer::GpuRenderer {
-    /// Returns how far the blur kernel extends beyond the effect rectangle.
+    /// Returns how much scene the two blur passes read around the effect rect.
+    ///
+    /// The horizontal pass draws an expanded quad and then samples one more
+    /// kernel width outside it, so the copy needs both reaches.
     pub(crate) fn backdrop_kernel_reach(blur_px: f32) -> f32 {
         if blur_px < 0.5 {
             1.0
         } else {
-            3.0 * (blur_px * 0.33).clamp(1.0, 21.0) + 1.0
+            let blur = blur_px.min(MAX_BACKDROP_BLUR_PX);
+            24.0 * blur * BACKDROP_BLUR_STEP_SCALE + 2.0
         }
     }
 
@@ -44,6 +48,7 @@ impl crate::renderer::GpuRenderer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_backdrop_marker_at(
         backdrop_pipeline: &wgpu::RenderPipeline,
+        blur_pipeline: &wgpu::RenderPipeline,
         bind_group: &wgpu::BindGroup,
         bufs: &BackdropBuffers,
         copy_origin: wgpu::Origin3d,
@@ -52,6 +57,7 @@ impl crate::renderer::GpuRenderer {
         target_a: &wgpu::TextureView,
         backdrop_buf: &wgpu::Buffer,
         instance_idx: u32,
+        blur_px: f32,
     ) {
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
@@ -68,6 +74,30 @@ impl crate::renderer::GpuRenderer {
             },
             copy_extent,
         );
+        let blurred = blur_px >= 0.5;
+        if blurred {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sequoia-backdrop-blur-h"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bufs.c_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(blur_pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(1, &bufs.b_bg, &[]);
+            pass.set_vertex_buffer(0, backdrop_buf.slice(..));
+            pass.draw(0..4, instance_idx..instance_idx + 1);
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sequoia-backdrop"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -86,7 +116,7 @@ impl crate::renderer::GpuRenderer {
         });
         pass.set_pipeline(backdrop_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
-        pass.set_bind_group(1, &bufs.b_bg, &[]);
+        pass.set_bind_group(1, if blurred { &bufs.c_bg } else { &bufs.b_bg }, &[]);
         pass.set_vertex_buffer(0, backdrop_buf.slice(..));
         pass.draw(0..4, instance_idx..instance_idx + 1);
     }
@@ -105,6 +135,68 @@ impl crate::renderer::GpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         screen: &wgpu::TextureView,
     ) {
+        Self::present_texture(
+            device,
+            queue,
+            present_buf,
+            present_cap,
+            present_pipeline,
+            bind_group,
+            &bufs.a_bg,
+            clear_color,
+            fb,
+            encoder,
+            screen,
+            "sequoia-present",
+        );
+    }
+
+    /// Blits a full-screen texture to `screen`, clearing the swapchain first.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn present_frame_target(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        present_buf: &mut wgpu::Buffer,
+        present_cap: &mut usize,
+        present_pipeline: &wgpu::RenderPipeline,
+        bind_group: &wgpu::BindGroup,
+        frame_bg: &wgpu::BindGroup,
+        clear_color: Color,
+        fb: (u32, u32),
+        encoder: &mut wgpu::CommandEncoder,
+        screen: &wgpu::TextureView,
+    ) {
+        Self::present_texture(
+            device,
+            queue,
+            present_buf,
+            present_cap,
+            present_pipeline,
+            bind_group,
+            frame_bg,
+            clear_color,
+            fb,
+            encoder,
+            screen,
+            "sequoia-frame-present",
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn present_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        present_buf: &mut wgpu::Buffer,
+        present_cap: &mut usize,
+        present_pipeline: &wgpu::RenderPipeline,
+        bind_group: &wgpu::BindGroup,
+        texture_bg: &wgpu::BindGroup,
+        clear_color: Color,
+        fb: (u32, u32),
+        encoder: &mut wgpu::CommandEncoder,
+        screen: &wgpu::TextureView,
+        label: &'static str,
+    ) {
         let quad = BlitQuad {
             rect: [0.0, 0.0, fb.0.max(1) as f32, fb.1.max(1) as f32],
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -118,7 +210,7 @@ impl crate::renderer::GpuRenderer {
         Self::ensure_capacity(device, present_buf, present_cap, 1, BLIT_BYTES);
         queue.write_buffer(present_buf, 0, bytemuck::cast_slice(&[quad]));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("sequoia-present"),
+            label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: screen,
                 depth_slice: None,
@@ -135,7 +227,7 @@ impl crate::renderer::GpuRenderer {
         });
         pass.set_pipeline(present_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
-        pass.set_bind_group(1, &bufs.a_bg, &[]);
+        pass.set_bind_group(1, texture_bg, &[]);
         pass.set_vertex_buffer(0, present_buf.slice(..));
         pass.draw(0..4, 0..1);
     }

@@ -56,11 +56,14 @@ pub struct GpuRenderer {
     pub(crate) backdrop_buf: wgpu::Buffer,
     pub(crate) backdrop_cap: usize,
     pub(crate) backdrop_pipeline: wgpu::RenderPipeline,
+    pub(crate) backdrop_blur_pipeline: wgpu::RenderPipeline,
     pub(crate) gradient_pipeline: wgpu::RenderPipeline,
     pub(crate) gradient_buf: wgpu::Buffer,
     pub(crate) gradient_cap: usize,
     pub(crate) present_pipeline: wgpu::RenderPipeline,
     pub(crate) backdrop_tex: Option<BackdropBuffers>,
+    pub(crate) frame_target: Option<FrameTarget>,
+    pub(crate) frame_target_valid: bool,
     pub(crate) capacity: usize,
     pub(crate) glyph_capacity: usize,
     pub(crate) quad_ceiling: usize,
@@ -372,6 +375,9 @@ impl GpuRenderer {
         let backdrop_pipeline =
             create_backdrop_pipeline(&device, &shader, &glyph_layout, format, blend);
 
+        let backdrop_blur_pipeline =
+            create_backdrop_blur_pipeline(&device, &shader, &glyph_layout, format);
+
         let present_pipeline = create_present_pipeline(&device, &shader, &glyph_layout, format);
 
         let quad_ceiling = instance_ceiling(&device, QUAD_BYTES);
@@ -398,11 +404,14 @@ impl GpuRenderer {
             backdrop_buf,
             backdrop_cap: INITIAL_BACKDROP_CAPACITY,
             backdrop_pipeline,
+            backdrop_blur_pipeline,
             gradient_pipeline,
             gradient_buf,
             gradient_cap: INITIAL_GRADIENT_CAPACITY,
             present_pipeline,
             backdrop_tex: None,
+            frame_target: None,
+            frame_target_valid: false,
             atlas_bgl,
             bind_group,
             uniform_buf,
@@ -561,6 +570,49 @@ impl GpuRenderer {
         scale: f32,
         surfaces: &[SurfaceDraw],
     ) -> Result<(), RenderError> {
+        self.render_with_damage(list, atlas, scale, surfaces, None)
+    }
+
+    /// Renders `list`, limiting the colour writes to `damage` when possible.
+    ///
+    /// `damage` is in logical window coordinates. `None` means a full repaint.
+    /// Composited paths (backdrops, filters, opacity groups, embedded surfaces,
+    /// and cached surface blits) currently fall back to a full repaint.
+    pub fn render_with_damage(
+        &mut self,
+        list: &RenderList,
+        atlas: &mut GlyphAtlas,
+        scale: f32,
+        surfaces: &[SurfaceDraw],
+        damage: Option<Rect>,
+    ) -> Result<(), RenderError> {
+        self.render_with_damage_regions(
+            list,
+            atlas,
+            scale,
+            surfaces,
+            damage.as_ref().map(std::slice::from_ref),
+        )
+    }
+
+    /// Renders `list`, limiting colour writes to multiple disjoint `damage`
+    /// regions when possible.
+    ///
+    /// Regions are in logical window coordinates. `None` or an empty slice
+    /// means a full repaint. Each region gets its own scissored clear/draw
+    /// pass. At most eight regions are used; extra inputs collapse into one
+    /// bounding box.
+    ///
+    /// The same fallbacks as [`render_with_damage`](Self::render_with_damage)
+    /// apply: composited paths and embedded surfaces repaint the full frame.
+    pub fn render_with_damage_regions(
+        &mut self,
+        list: &RenderList,
+        atlas: &mut GlyphAtlas,
+        scale: f32,
+        surfaces: &[SurfaceDraw],
+        damage: Option<&[Rect]>,
+    ) -> Result<(), RenderError> {
         if self.config.width == 0 || self.config.height == 0 {
             return Ok(());
         }
@@ -628,7 +680,26 @@ impl GpuRenderer {
         let backdrop_a_view: Option<wgpu::TextureView> = (has_backdrops || has_filters)
             .then(|| self.backdrop_tex.as_ref().map(|b| b.a_view.clone()))
             .flatten();
-        let scene_target: &wgpu::TextureView = backdrop_a_view.as_ref().unwrap_or(&view);
+
+        // Partial repaint needs a persistent colour target. Composited paths
+        // (backdrops, filters, opacity groups) and embedded surface callbacks
+        // keep the old full-repaint path for now.
+        let use_offscreen = !has_backdrops && !has_filters && !list.has_opacity_groups();
+        if use_offscreen {
+            if self.ensure_frame_target(fb) {
+                self.frame_target_valid = false;
+            }
+        } else {
+            self.frame_target_valid = false;
+        }
+        let frame_view: Option<wgpu::TextureView> = use_offscreen
+            .then(|| self.frame_target.as_ref().map(|t| t.view.clone()))
+            .flatten();
+        let scene_target: &wgpu::TextureView = frame_view
+            .as_ref()
+            .or(backdrop_a_view.as_ref())
+            .unwrap_or(&view);
+        let clear_color = self.clear_color;
 
         let frame_quads = &mut self.scratch_frame;
         let regions = &mut self.scratch_regions;
@@ -682,6 +753,35 @@ impl GpuRenderer {
                 };
                 regions.push((region, binding));
             }
+        }
+
+        // Shadows and antialiasing reach beyond the painted rect, so the
+        // scissor is deliberately more generous than the tracker's 2 px.
+        const DAMAGE_MARGIN: f32 = 32.0;
+
+        // Embedded surface callbacks and cached blits are not scissored, so
+        // they stay on the full-repaint path even though the colour target is
+        // still offscreen.
+        let partial_regions = if use_offscreen
+            && self.frame_target_valid
+            && regions.is_empty()
+            && cached.is_empty()
+        {
+            damage
+                .map(|regions| damage_scissors(regions, DAMAGE_MARGIN, s, fb))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let partial = !partial_regions.is_empty();
+
+        for (index, (damage, _)) in partial_regions.iter().enumerate() {
+            // Leading instances replace old pixels in each damage region,
+            // then surface decorations and content are drawn over them.
+            frame_quads.insert(
+                index,
+                quad_instance(*damage, linear_rgba(clear_color), 0.0, [0.0; 4], 0.0),
+            );
         }
 
         Self::ensure_capacity(
@@ -1364,8 +1464,13 @@ impl GpuRenderer {
             Self::ensure_depth_slot(&self.device, &mut self.depth_tex, fb.0, fb.1);
         }
 
-        if fb_drawn {
+        if fb_drawn || use_offscreen {
             let clear = clear_color_linear(self.clear_color);
+            let load = if partial {
+                wgpu::LoadOp::Load
+            } else {
+                wgpu::LoadOp::Clear(clear)
+            };
 
             let split_depth = shared_depth && !frame_quads.is_empty();
             let depth_attachment = if shared_depth && !split_depth {
@@ -1383,9 +1488,6 @@ impl GpuRenderer {
                 None
             };
             passes += 1;
-            if !frame_quads.is_empty() {
-                draws += 1;
-            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sequoia-surface-clear"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1393,7 +1495,7 @@ impl GpuRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1403,10 +1505,33 @@ impl GpuRenderer {
                 multiview_mask: None,
             });
             if !frame_quads.is_empty() {
-                pass.set_pipeline(&self.quad_pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.set_vertex_buffer(0, self.frame_buf.slice(..));
-                pass.draw(0..4, 0..frame_quads.len() as u32);
+                if partial {
+                    // Leading instances are damage-rect clears; REPLACE avoids
+                    // blending them with stale contents. Content is drawn once
+                    // per region so every scissor sees the full scene.
+                    let clear_count = partial_regions.len() as u32;
+                    pass.set_pipeline(&self.quad_pipeline_opaque);
+                    for (index, (_, scissor)) in partial_regions.iter().enumerate() {
+                        pass.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
+                        let index = index as u32;
+                        pass.draw(0..4, index..index + 1);
+                        draws += 1;
+                    }
+                    if frame_quads.len() > clear_count as usize {
+                        pass.set_pipeline(&self.quad_pipeline);
+                        for (_, scissor) in partial_regions.iter() {
+                            pass.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
+                            pass.draw(0..4, clear_count..frame_quads.len() as u32);
+                            draws += 1;
+                        }
+                    }
+                } else {
+                    pass.set_pipeline(&self.quad_pipeline);
+                    pass.draw(0..4, 0..frame_quads.len() as u32);
+                    draws += 1;
+                }
             }
             drop(pass);
             if split_depth && let Some((_, view, _)) = self.depth_tex.as_ref() {
@@ -1562,6 +1687,7 @@ impl GpuRenderer {
                                 ) {
                                     Self::draw_backdrop_marker_at(
                                         &self.backdrop_pipeline,
+                                        &self.backdrop_blur_pipeline,
                                         &self.bind_group,
                                         bufs,
                                         origin,
@@ -1570,9 +1696,14 @@ impl GpuRenderer {
                                         scene_target,
                                         &self.backdrop_buf,
                                         idx,
+                                        inst.params[0],
                                     );
                                     passes += 1;
                                     draws += 1;
+                                    if inst.params[0] >= 0.5 {
+                                        passes += 1;
+                                        draws += 1;
+                                    }
                                 }
                             }
                         }
@@ -1605,8 +1736,10 @@ impl GpuRenderer {
                                 && let (Some(idx), Some(bufs)) =
                                     (fplan.filter_idx, self.backdrop_tex.as_ref())
                             {
+                                let filter_blur = backdrop_insts[idx as usize].params[0];
                                 Self::draw_filter_at(
                                     &self.backdrop_pipeline,
+                                    &self.backdrop_blur_pipeline,
                                     &self.bind_group,
                                     &self.quad_pipeline,
                                     &self.quad_pipeline_opaque,
@@ -1627,9 +1760,13 @@ impl GpuRenderer {
                                     &fplan.runs,
                                     image_draws,
                                     fplan.all_opaque,
+                                    filter_blur,
                                 );
-                                passes += 2;
+                                passes += if filter_blur >= 0.5 { 3 } else { 2 };
                                 draws += gui_run_draws(&fplan.runs, image_draws) + 1;
+                                if filter_blur >= 0.5 {
+                                    draws += 1;
+                                }
                                 self.stats.filter_spans += 1;
                                 composited = true;
                             }
@@ -1738,6 +1875,7 @@ impl GpuRenderer {
                     ) {
                         Self::draw_backdrop_marker_at(
                             &self.backdrop_pipeline,
+                            &self.backdrop_blur_pipeline,
                             &self.bind_group,
                             bufs,
                             origin,
@@ -1746,9 +1884,14 @@ impl GpuRenderer {
                             scene_target,
                             &self.backdrop_buf,
                             idx,
+                            inst.params[0],
                         );
                         passes += 1;
                         draws += 1;
+                        if inst.params[0] >= 0.5 {
+                            passes += 1;
+                            draws += 1;
+                        }
                     }
                 }
             }
@@ -1841,17 +1984,18 @@ impl GpuRenderer {
             let all_opaque = gradients.is_empty() && quads.iter().all(quad_is_opaque);
 
             {
-                let load = if fb_drawn {
+                let load = if use_offscreen || fb_drawn {
                     wgpu::LoadOp::Load
                 } else {
                     wgpu::LoadOp::Clear(clear_color_linear(self.clear_color))
                 };
                 passes += 1;
                 draws += blit_quads.len() as u64 + gui_run_draws(runs, image_draws);
+                let target = if use_offscreen { scene_target } else { &view };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("sequoia-composite"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
+                        view: target,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
@@ -1864,7 +2008,6 @@ impl GpuRenderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-
                 if !blit_quads.is_empty() {
                     pass.set_pipeline(&self.surface_blit_pipeline);
                     pass.set_bind_group(0, &self.bind_group, &[]);
@@ -1923,7 +2066,31 @@ impl GpuRenderer {
                     }
                 }
             }
+
+            if use_offscreen {
+                let frame_bg = self
+                    .frame_target
+                    .as_ref()
+                    .map(|t| &t.bg)
+                    .expect("frame target");
+                Self::present_frame_target(
+                    &self.device,
+                    &self.queue,
+                    &mut self.present_buf,
+                    &mut self.present_cap,
+                    &self.present_pipeline,
+                    &self.bind_group,
+                    frame_bg,
+                    clear_color,
+                    fb,
+                    &mut encoder,
+                    &view,
+                );
+                passes += 1;
+                draws += 1;
+            }
         }
+        self.frame_target_valid = use_offscreen;
         // Publish statistics and present the finished frame.
         self.stats.quad_instances = quads.len() as u64;
         self.stats.glyph_instances = glyphs.len() as u64;

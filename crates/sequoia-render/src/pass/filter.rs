@@ -8,6 +8,7 @@ impl crate::renderer::GpuRenderer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_filter_at(
         filter_pipeline: &wgpu::RenderPipeline,
+        blur_pipeline: &wgpu::RenderPipeline,
         bind_group: &wgpu::BindGroup,
         quad_pipeline: &wgpu::RenderPipeline,
         quad_pipeline_opaque: &wgpu::RenderPipeline,
@@ -28,6 +29,7 @@ impl crate::renderer::GpuRenderer {
         runs: &[GuiRun],
         image_draws: &[(u32, wgpu::BindGroup)],
         all_opaque: bool,
+        blur_px: f32,
     ) {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -66,6 +68,31 @@ impl crate::renderer::GpuRenderer {
             );
         }
 
+        let blurred = blur_px >= 0.5;
+        if blurred {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sequoia-filter-blur-h"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bufs.c_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(blur_pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(1, &bufs.b_bg, &[]);
+            pass.set_vertex_buffer(0, backdrop_buf.slice(..));
+            pass.draw(0..4, instance_idx..instance_idx + 1);
+        }
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sequoia-filter-composite"),
@@ -85,7 +112,7 @@ impl crate::renderer::GpuRenderer {
             });
             pass.set_pipeline(filter_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
-            pass.set_bind_group(1, &bufs.b_bg, &[]);
+            pass.set_bind_group(1, if blurred { &bufs.c_bg } else { &bufs.b_bg }, &[]);
             pass.set_vertex_buffer(0, backdrop_buf.slice(..));
             pass.draw(0..4, instance_idx..instance_idx + 1);
         }

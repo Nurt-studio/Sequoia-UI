@@ -102,6 +102,17 @@ pub(crate) struct BackdropBuffers {
     pub(crate) b_tex: wgpu::Texture,
     pub(crate) b_view: wgpu::TextureView,
     pub(crate) b_bg: wgpu::BindGroup,
+    pub(crate) c_tex: wgpu::Texture,
+    pub(crate) c_view: wgpu::TextureView,
+    pub(crate) c_bg: wgpu::BindGroup,
+    pub(crate) size: (u32, u32),
+}
+
+/// Persistent offscreen target used for partial repaint.
+pub(crate) struct FrameTarget {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+    pub(crate) bg: wgpu::BindGroup,
     pub(crate) size: (u32, u32),
 }
 
@@ -168,6 +179,12 @@ pub(crate) const BACKDROP_BYTES: usize = 20 * 4;
 pub(crate) const GRADIENT_BYTES: usize = 44 * 4;
 
 pub(crate) const MAX_BACKDROP_BLUR_PX: f32 = 64.0;
+
+/// Spacing between adjacent Gaussian taps, as a fraction of the blur radius.
+///
+/// Two separable passes with 25 taps each must stay in sync with the WGSL
+/// `BLUR_STEP_SCALE` constant.
+pub(crate) const BACKDROP_BLUR_STEP_SCALE: f32 = 0.1167;
 
 pub(crate) const INITIAL_QUAD_CAPACITY: usize = 1024;
 

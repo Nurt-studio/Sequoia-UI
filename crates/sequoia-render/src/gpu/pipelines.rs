@@ -470,12 +470,55 @@ pub(crate) fn create_backdrop_pipeline(
     format: wgpu::TextureFormat,
     blend: wgpu::BlendComponent,
 ) -> wgpu::RenderPipeline {
+    create_backdrop_pipeline_with(
+        device,
+        shader,
+        glyph_layout,
+        format,
+        "vs_backdrop",
+        "fs_backdrop",
+        "sequoia-backdrop-pipeline",
+        wgpu::BlendState {
+            color: blend,
+            alpha: blend,
+        },
+    )
+}
+
+pub(crate) fn create_backdrop_blur_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    glyph_layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    create_backdrop_pipeline_with(
+        device,
+        shader,
+        glyph_layout,
+        format,
+        "vs_blur",
+        "fs_blur",
+        "sequoia-backdrop-blur-pipeline",
+        wgpu::BlendState::REPLACE,
+    )
+}
+
+fn create_backdrop_pipeline_with(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    glyph_layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    vertex_entry: &str,
+    fragment_entry: &str,
+    label: &str,
+    blend: wgpu::BlendState,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("sequoia-backdrop-pipeline"),
+        label: Some(label),
         layout: Some(glyph_layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs_backdrop"),
+            entry_point: Some(vertex_entry),
             compilation_options: Default::default(),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: BACKDROP_BYTES as u64,
@@ -511,14 +554,11 @@ pub(crate) fn create_backdrop_pipeline(
         },
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some("fs_backdrop"),
+            entry_point: Some(fragment_entry),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
-                blend: Some(wgpu::BlendState {
-                    color: blend,
-                    alpha: blend,
-                }),
+                blend: Some(blend),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
