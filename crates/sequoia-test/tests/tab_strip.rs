@@ -20,14 +20,10 @@ fn strip() -> (
     let picked = Rc::new(Cell::new(None));
     let closed = Rc::new(Cell::new(None));
     let p = picked.clone();
-    let a = active.clone();
     let c = closed.clone();
     let s = TabStrip::new(active.clone(), ["LAYERS", "SETTINGS"])
         .closable([true, false])
-        .on_select(move |i| {
-            p.set(Some(i));
-            a.set(i);
-        })
+        .on_select(move |i| p.set(Some(i)))
         .on_close(move |i| c.set(Some(i)));
     let h = Harness::new(Container::new().width(300.0).height(40.0).child(s));
     h.layout(300.0, 40.0);

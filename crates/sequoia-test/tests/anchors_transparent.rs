@@ -1,4 +1,4 @@
-use sequoia_elements::{Button, Drawer, Modal, ToastQueue, ToastStack};
+use sequoia_elements::{Button, Dialog, Drawer, Modal, ToastQueue, ToastStack};
 use sequoia_reactive::Signal;
 use sequoia_test::Harness;
 use sequoia_view::prelude::*;
@@ -54,5 +54,40 @@ fn closed_overlay_anchors_let_clicks_through() {
     assert!(
         clicked.get_untracked(),
         "klik dociera do przycisku pod kotwicami"
+    );
+}
+
+#[test]
+fn closed_dialog_lets_clicks_through() {
+    let clicked = Signal::new(false);
+
+    fn overlay_shell(clicked: Signal<bool>) -> Stack {
+        Stack::new().fill_size().child_at(
+            Column::new()
+                .fill_size()
+                .child(Button::labeled("Klik").on_click({
+                    let clicked = clicked.clone();
+                    move || clicked.set(true)
+                })),
+            StackPos::fill(),
+        )
+    }
+
+    let h = Harness::new(overlay_shell(clicked.clone()).child_at(
+        Dialog::new(Signal::new(false), "T").content(Text::new("C")),
+        StackPos::fill(),
+    ));
+    h.layout(400.0, 300.0);
+    h.paint();
+    h.tick();
+
+    let stack = h.root().unwrap();
+    let col = h.children(stack)[0];
+    let btn = h.children(col)[0];
+    let r = h.rect(btn).unwrap();
+    h.click(r.left() + r.size.width * 0.5, r.top() + r.size.height * 0.5);
+    assert!(
+        clicked.get_untracked(),
+        "zamkniety Dialog nie blokuje klikniec"
     );
 }

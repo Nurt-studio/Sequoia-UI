@@ -56,6 +56,62 @@ impl Harness {
         list
     }
 
+    /// Paint with culling (without the frame-skip gate).
+    /// Use in tests that need the window-visible composition while skipping
+    /// the cost of shaping off-screen content.
+    pub fn paint_culled(&self) -> sequoia_core::RenderList {
+        let mut list = sequoia_core::RenderList::new();
+        let mut text = sequoia_text::TextSystem::new();
+        self.rt
+            .paint_region(&mut list, &mut text, sequoia_view::CullCtx::ENABLED);
+        list
+    }
+
+    /// Stats after culled painting (for comparison with `paint_stats`).
+    pub fn paint_culled_stats(&self, width: f32, height: f32) -> PaintStats {
+        use sequoia_core::RenderItem;
+        self.layout(width, height);
+        let list = self.paint_culled();
+        let mut stats = PaintStats {
+            items: list.len(),
+            backdrops: list.backdrops().len(),
+            ..PaintStats::default()
+        };
+        for item in list.items() {
+            match item {
+                RenderItem::Quad(_) => stats.quads += 1,
+                RenderItem::Text(t) => {
+                    stats.texts += 1;
+                    stats.glyphs += t.glyphs.len() as u64;
+                }
+                RenderItem::Image(_) => stats.images += 1,
+                RenderItem::Shadow(_) => stats.shadows += 1,
+                RenderItem::Waveform(w) => stats.waveform_bars += w.bars.len() as u64,
+                _ => {}
+            }
+        }
+        stats
+    }
+
+    /// Paint only when the runtime has accumulated damage.
+    pub fn paint_if_dirty(&self) -> sequoia_view::FrameOutcome {
+        let mut list = sequoia_core::RenderList::new();
+        let mut text = sequoia_text::TextSystem::new();
+        self.rt.paint_if_dirty(&mut list, &mut text)
+    }
+
+    pub fn needs_frame(&self) -> bool {
+        self.rt.needs_frame()
+    }
+
+    pub fn damage_stats(&self) -> (u64, u64) {
+        self.rt.damage_stats()
+    }
+
+    pub fn damage_rect(&self) -> Option<Rect> {
+        self.rt.damage_rect()
+    }
+
     pub fn paint_stats(&self, width: f32, height: f32) -> PaintStats {
         use sequoia_core::RenderItem;
         self.layout(width, height);

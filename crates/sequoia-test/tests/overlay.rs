@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use sequoia_core::{Color, Length, Point, Rect, Size};
 use sequoia_elements::Container;
+use sequoia_reactive::Signal;
 use sequoia_test::Harness;
 use sequoia_view::prelude::*;
 
@@ -563,4 +564,46 @@ fn overlay_position_fixed_clamps_to_viewport() {
         (rect.top() - 300.0).abs() < 0.01,
         "clamped to viewport: {rect:?}"
     );
+}
+
+#[test]
+fn overlay_hover_reaches_container_and_its_descendants() {
+    let outer_hover = Signal::new(false);
+    let inner_hover = Signal::new(false);
+    let menu = Container::new()
+        .width(200.0)
+        .height(120.0)
+        .hovered(outer_hover.clone())
+        .child(
+            Container::new()
+                .width(100.0)
+                .height(40.0)
+                .margin_top(20.0)
+                .margin_left(20.0)
+                .hovered(inner_hover.clone()),
+        );
+
+    let h = Harness::new(panel((400.0, 400.0), Color::RED));
+    h.layout(400.0, 400.0);
+    let id = h.overlay_show(OverlayEntry::new(menu).at(100.0, 100.0));
+    h.layout(400.0, 400.0);
+    let menu_el = h.overlay_element(id).expect("overlay element");
+    let inner = h.children(menu_el)[0];
+    let inner_rect = h.rect(inner).expect("inner rect");
+
+    h.pointer_move(inner_rect.center().x, inner_rect.center().y);
+    let _ = h.paint();
+
+    assert!(inner_hover.get_untracked(), "hovered leaf inside overlay");
+    assert!(
+        outer_hover.get_untracked(),
+        "overlay ancestor keeps hover while a child is hovered"
+    );
+    assert!(h.runtime().visual_state(menu_el).hovered);
+    assert!(h.runtime().visual_state(inner).hovered);
+
+    h.pointer_move(5.0, 5.0);
+    let _ = h.paint();
+    assert!(!inner_hover.get_untracked());
+    assert!(!outer_hover.get_untracked());
 }

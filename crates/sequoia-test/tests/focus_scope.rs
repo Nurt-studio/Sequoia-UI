@@ -80,3 +80,36 @@ fn no_trap_tabs_through_everything() {
         assert_eq!(focused_index(&h), Some(expected));
     }
 }
+
+#[test]
+fn text_input_focused_tracks_the_focused_widget() {
+    use sequoia_elements::Button;
+
+    let text = Signal::new(String::new());
+    let h = Harness::new(
+        Column::new()
+            .child(Button::new("OK"))
+            .child(TextField::new(text.clone())),
+    );
+    h.layout(300.0, 200.0);
+    assert!(!h.runtime().text_input_focused(), "nic nie ma focusu");
+
+    let root = h.root().unwrap();
+    let kids = h.children(root);
+    let button_rect = h.rect(kids[0]).unwrap();
+    h.click(button_rect.center().x, button_rect.center().y);
+    assert!(
+        !h.runtime().text_input_focused(),
+        "przycisk nie jest polem tekstowym"
+    );
+
+    let field_rect = h.rect(kids[1]).unwrap();
+    h.click(field_rect.center().x, field_rect.center().y);
+    assert!(
+        h.runtime().text_input_focused(),
+        "TextField z focusem blokuje accelerator Delete"
+    );
+
+    h.key(Key::from_char('a'));
+    assert_eq!(text.get_untracked(), "a", "znak trafia do pola");
+}
