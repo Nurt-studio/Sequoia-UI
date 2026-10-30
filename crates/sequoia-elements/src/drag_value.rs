@@ -1,11 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use sequoia_core::{Color, Edges, Length, Point, Size};
+use sequoia_core::{Color, Edges, Length, Point, Rect, Size};
 use sequoia_input::{
     CursorIcon, Event, EventPhase, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
 };
-use sequoia_layout::{Axis, LayoutCtx, LayoutStyle};
+use sequoia_layout::{Align, Axis, LayoutCtx, LayoutStyle};
 use sequoia_reactive::Signal;
 use sequoia_style::{DragValueStyle, Theme, VisualState};
 use sequoia_view::{AnyView, EventCtx, FontWeight, PaintCtx, Unit, View};
@@ -59,6 +59,7 @@ pub struct DragValue {
     appearance: Option<DragValueStyle>,
     style: LayoutStyle,
     margin: Edges,
+    align: Align,
 
     revision: Signal<u32>,
 
@@ -94,6 +95,7 @@ impl DragValue {
                 ..LayoutStyle::default()
             },
             margin: Edges::ZERO,
+            align: Align::Start,
             revision: Signal::new(0),
             gesture: Rc::new(RefCell::new(Gesture::default())),
             on_change_start: None,
@@ -167,6 +169,12 @@ impl DragValue {
 
     pub fn trim_zeros(mut self, trim: bool) -> Self {
         self.trim_zeros = trim;
+        self
+    }
+
+    /// Horizontal alignment of the value inside the field.
+    pub fn align(mut self, align: Align) -> Self {
+        self.align = align;
         self
     }
 
@@ -692,18 +700,38 @@ impl View for DragValue {
         let text = self.display(self.clamped(self.value.get_untracked()));
         let text_width = ctx.text_width_weighted(&text, size, weight);
 
-        if line_width > 0.0 && colors.line.a > 0.0 {
+        let line_h = LayoutCtx::text_line_height(size);
+        let draws_line = line_width > 0.0 && colors.line.a > 0.0;
+        // Bez podkreślenia nie rezerwujemy miejsca pod linią, więc tekst
+        // centrujemy w pionie w całym polu. Z linią układ zostaje jak dotąd.
+        let text_top = if draws_line {
+            rect.top()
+        } else {
+            rect.top() + ((rect.size.height - line_h) * 0.5).max(0.0)
+        };
+
+        if draws_line {
             let w = if self.line_full {
                 (rect.size.width - underline::PAD_X * 2.0).max(0.0)
             } else {
-                text_width
+                text_width.min((rect.size.width - underline::PAD_X * 2.0).max(0.0))
             };
-            let line = underline::line_rect(rect, size, w, line_width);
+            let line = Rect::from_xywh(
+                rect.left() + underline::PAD_X,
+                text_top + line_h + underline::LINE_GAP,
+                w,
+                line_width,
+            );
             ctx.quad(line, colors.line, line_width * 0.5);
         }
 
-        let x = rect.left() + underline::PAD_X;
-        let y = underline::baseline(rect, size);
+        let x = match self.align {
+            Align::Center => rect.left() + (rect.size.width - text_width) * 0.5,
+            Align::End => rect.right() - underline::PAD_X - text_width,
+            _ => rect.left() + underline::PAD_X,
+        };
+        let x = x.max(rect.left());
+        let y = text_top + line_h * 0.5 + size * 0.35;
         ctx.draw_text_weighted(&text, (x, y), size, weight, colors.text);
     }
 }

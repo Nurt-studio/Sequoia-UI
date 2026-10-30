@@ -8,10 +8,6 @@ pub(crate) const LINE_GAP: f32 = 3.0;
 
 pub(crate) const LINE_W: f32 = 2.0;
 
-pub(crate) fn line_rect(rect: Rect, font_size: f32, text_width: f32, line_width: f32) -> Rect {
-    line_rect_padded(rect, font_size, text_width, line_width, PAD_X, 0.0)
-}
-
 pub(crate) fn line_rect_padded(
     rect: Rect,
     font_size: f32,
@@ -26,10 +22,6 @@ pub(crate) fn line_rect_padded(
         text_width.min((rect.size.width - pad_x * 2.0).max(0.0)),
         line_width,
     )
-}
-
-pub(crate) fn baseline(rect: Rect, font_size: f32) -> f32 {
-    baseline_padded(rect, font_size, 0.0)
 }
 
 pub(crate) fn baseline_padded(rect: Rect, font_size: f32, pad_y: f32) -> f32 {
