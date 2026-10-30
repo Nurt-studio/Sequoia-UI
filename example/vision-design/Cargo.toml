@@ -1,0 +1,13 @@
+[package]
+name = "vision-design"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image = { workspace = true }
+sequoia-ui = { workspace = true }
+
+[lints]
+workspace = true
