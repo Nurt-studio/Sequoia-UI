@@ -249,10 +249,10 @@ fn draw_item_range(
     let items = list.items();
     let start = start.min(items.len());
     let end = end.min(items.len());
-    for i in start..end {
+    for (i, item) in items.iter().enumerate().take(end).skip(start) {
         let clip = clips.get(i).copied().flatten();
         let transform = transforms.get(i).copied().unwrap_or_default();
-        match &items[i] {
+        match item {
             RenderItem::Quad(q) => draw_quad(img, *q, clip, scale),
             RenderItem::Text(t) => draw_text(img, t, atlas, clip, scale, transform),
             RenderItem::Image(d) => draw_image(img, d, clip, scale),
