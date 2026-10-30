@@ -1006,7 +1006,7 @@ impl PaintCtx<'_> {
     }
 
     pub fn show_overlay(&self, entry: OverlayEntry) -> OverlayId {
-        self.runtime.overlay_show(entry)
+        self.runtime.overlay_show(entry.owned_by(self.element))
     }
 
     pub fn hide_overlay(&self, id: OverlayId) -> bool {

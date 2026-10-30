@@ -607,3 +607,39 @@ fn overlay_hover_reaches_container_and_its_descendants() {
     assert!(!inner_hover.get_untracked());
     assert!(!outer_hover.get_untracked());
 }
+#[derive(Clone)]
+struct PopperGate {
+    open: Signal<bool>,
+}
+
+impl View for PopperGate {
+    fn body(&self) -> impl View + 'static {
+        if self.open.get() {
+            AnyView::new(
+                Popper::new(self.open.clone())
+                    .anchor_rect(Rect::from_xywh(100.0, 100.0, 0.0, 0.0))
+                    .child(panel((40.0, 40.0), Color::BLUE)),
+            )
+        } else {
+            AnyView::new(Unit)
+        }
+    }
+}
+
+#[test]
+fn popper_unmount_hides_overlay() {
+    let open = Signal::new(true);
+    let h = Harness::new(PopperGate { open: open.clone() });
+    h.layout(400.0, 400.0);
+    h.paint();
+    assert_eq!(h.overlay_count(), 1);
+
+    h.set(&open, false);
+    h.layout(400.0, 400.0);
+    h.paint();
+    assert_eq!(
+        h.overlay_count(),
+        0,
+        "unmounted popper must hide its overlay"
+    );
+}

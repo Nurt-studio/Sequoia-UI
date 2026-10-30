@@ -126,6 +126,7 @@ pub struct OverlayEntry {
     pub(crate) offset: (f32, f32),
     pub(crate) element: Cell<Option<ElementId>>,
     pub(crate) rect: Cell<Rect>,
+    pub(crate) owner: Option<ElementId>,
 }
 
 impl OverlayEntry {
@@ -144,7 +145,13 @@ impl OverlayEntry {
             offset: (0.0, 0.0),
             element: Cell::new(None),
             rect: Cell::new(Rect::ZERO),
+            owner: None,
         }
+    }
+
+    pub(crate) fn owned_by(mut self, owner: ElementId) -> Self {
+        self.owner = Some(owner);
+        self
     }
 
     pub fn anchor(mut self, anchor: Anchor) -> Self {
@@ -256,14 +263,19 @@ impl OverlayStore {
     }
 
     pub(crate) fn anchored_to(&self, el: crate::runtime::ElementId) -> Vec<OverlayId> {
-        if let Some(v) = self.anchor_index.get(&el) {
-            return v.clone();
+        let mut ids = self.anchor_index.get(&el).cloned().unwrap_or_else(|| {
+            self.entries
+                .iter()
+                .filter(|e| matches!(e.anchor, Anchor::View(a) if a == el))
+                .map(|e| e.id)
+                .collect()
+        });
+        for entry in &self.entries {
+            if entry.owner == Some(el) && !ids.contains(&entry.id) {
+                ids.push(entry.id);
+            }
         }
-        self.entries
-            .iter()
-            .filter(|e| matches!(e.anchor, Anchor::View(a) if a == el))
-            .map(|e| e.id)
-            .collect()
+        ids
     }
 
     pub(crate) fn outside_dismiss_ids(&self, pos: Point) -> Vec<OverlayId> {
