@@ -6,6 +6,7 @@ use sequoia_style::{FORM_ERROR, FormStyle};
 use sequoia_view::{AnyView, Column, Row, Text, Unit, View};
 
 use crate::button::Button;
+use crate::container::Container;
 use crate::drag_value::DragValue;
 use crate::floating_menu::FloatingMenu;
 use crate::text_field::TextField;
@@ -190,6 +191,13 @@ fn error_size_of(style: Option<FormStyle>) -> f32 {
 
 fn error_color_of(style: Option<FormStyle>) -> sequoia_core::Color {
     style.and_then(|s| s.error).unwrap_or(ERROR_RED)
+}
+
+fn styled_button(button: Button, style: Option<FormStyle>) -> Button {
+    match style.and_then(|s| s.button) {
+        Some(button_style) => button.style(button_style),
+        None => button,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -424,9 +432,15 @@ impl View for NumberField {
             .child(
                 Row::new()
                     .gap(4.0)
-                    .child(Button::new("−").on_click(move || minus.nudge(-1.0)))
-                    .child_flex(drag, 1.0)
-                    .child(Button::new("+").on_click(move || plus.nudge(1.0))),
+                    .child(styled_button(
+                        Button::new("-").on_click(move || minus.nudge(-1.0)),
+                        f.style,
+                    ))
+                    .child_flex(Container::new().fill_size().center().child(drag), 1.0)
+                    .child(styled_button(
+                        Button::new("+").on_click(move || plus.nudge(1.0)),
+                        f.style,
+                    )),
             );
         if let Some(msg) = error {
             col = col.child(
@@ -567,9 +581,15 @@ impl View for DateField {
             .child(
                 Row::new()
                     .gap(4.0)
-                    .child(Button::new("‹").on_click(move || prev.shift_days(-1)))
+                    .child(styled_button(
+                        Button::new("<").on_click(move || prev.shift_days(-1)),
+                        f.style,
+                    ))
                     .child_flex(input, 1.0)
-                    .child(Button::new("›").on_click(move || next.shift_days(1))),
+                    .child(styled_button(
+                        Button::new(">").on_click(move || next.shift_days(1)),
+                        f.style,
+                    )),
             );
         if let Some(msg) = error {
             col = col.child(
@@ -774,7 +794,7 @@ impl View for MultiSelect {
         let touched = me.touched.get();
         let error = if touched { me.error() } else { None };
         let summary = me.summary_text();
-        let mut menu = FloatingMenu::wrap(Button::new(summary))
+        let mut menu = FloatingMenu::wrap(styled_button(Button::new(summary), me.style))
             .below_invoker()
             .open_on_click()
             .popup_width(220.0);

@@ -58,6 +58,25 @@ impl ContextMenu {
         }
     }
 
+    /// Opens the menu at a screen-space point, without waiting for a click.
+    ///
+    /// Right-clicking the wrapped child also opens the menu; this method is for
+    /// keyboard shortcuts, toolbar buttons, and tests.
+    pub fn open_at(&self, pos: Point) {
+        self.open_at.set(Some(pos));
+        self.popup.open();
+    }
+
+    /// Closes the menu if it is open.
+    pub fn close(&self) {
+        self.popup.close();
+    }
+
+    /// Whether the menu is currently open.
+    pub fn is_open(&self) -> bool {
+        self.popup.is_open()
+    }
+
     pub fn item(mut self, label: impl Into<String>, action: impl Fn() + 'static) -> Self {
         self.items.push(MenuRow {
             label: label.into(),

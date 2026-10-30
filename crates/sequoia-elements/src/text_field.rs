@@ -977,6 +977,10 @@ impl View for TextField {
         true
     }
 
+    fn accepts_text_input(&self) -> bool {
+        true
+    }
+
     fn has_visual_state(&self) -> bool {
         true
     }

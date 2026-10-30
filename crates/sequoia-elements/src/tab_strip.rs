@@ -195,12 +195,14 @@ impl TabStrip {
             );
         }
 
+        let active = self.active.clone();
         let on_select = self.on_select.clone();
         let click = Container::new()
             .child(row)
             .width(Length::Fill(1.0))
             .height(Length::Fill(1.0))
             .on_click(move || {
+                active.set(i);
                 if let Some(f) = &on_select {
                     f(i);
                 }

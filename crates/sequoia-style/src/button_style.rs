@@ -105,6 +105,22 @@ impl ButtonStyle {
         border_color: None,
     };
 
+    /// Neutral outlined button for secondary actions on light or dark surfaces.
+    pub const OUTLINE: Self = Self {
+        background: Some(Color::TRANSPARENT),
+        hover: Some(Color::hexa(0x64748B1F)),
+        pressed: Some(Color::hexa(0x64748B33)),
+        disabled: None,
+        text: Some(Color::hex(0x64748B)),
+        text_disabled: None,
+        font_size: None,
+        font_weight: Some(500),
+        radius: None,
+        padding: None,
+        border_width: Some(1.0),
+        border_color: Some(Color::hexa(0x64748B66)),
+    };
+
     pub const DARK_FILLED: Self = Self {
         background: Some(Color::hex(0x1F1F1F)),
         hover: Some(Color::hex(0x2B2B2B)),
@@ -149,6 +165,10 @@ impl ButtonStyle {
 
     pub const fn ghost() -> Self {
         Self::GHOST
+    }
+
+    pub const fn outline() -> Self {
+        Self::OUTLINE
     }
 
     pub const fn dark_filled() -> Self {

@@ -205,8 +205,11 @@ impl View for Checkbox {
         let check = self.check.or(style.check);
 
         let check_view: sequoia_view::AnyView = if selected {
+            let icon_px = (box_px - 4.0).max(1.0);
+            let inset = ((box_px - icon_px) * 0.5).max(0.0);
             let mut icon = Icon::new("check")
-                .size((box_px - 4.0).max(1.0))
+                .size(icon_px)
+                .margin_xy(inset, inset)
                 .hit_testable(false);
 
             icon = icon.color(check.unwrap_or(Color::hex(0x191919)));

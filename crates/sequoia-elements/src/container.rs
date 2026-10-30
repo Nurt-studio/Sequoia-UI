@@ -8,7 +8,7 @@ use sequoia_layout::{
 };
 use sequoia_reactive::{Environment, Signal};
 use sequoia_style::{BoxStyle, Theme, VisualState};
-use sequoia_view::{AnyView, EventCtx, PaintCtx, Prop, Unit, View};
+use sequoia_view::{AnyView, EventCtx, Live, PaintCtx, Prop, Unit, View};
 
 type EnvAction = Rc<dyn Fn(&Environment)>;
 
@@ -35,6 +35,7 @@ pub struct Container {
     hover: Option<Color>,
     pressed: Option<Color>,
     disabled_background: Option<Color>,
+    background_live: Option<Live<Color>>,
 
     blend_rate: f32,
     hovered: Option<Signal<bool>>,
@@ -61,6 +62,7 @@ impl Default for Container {
             hover: None,
             pressed: None,
             disabled_background: None,
+            background_live: None,
             blend_rate: 0.0,
             hovered: None,
             pressed_flag: Rc::new(Cell::new(false)),
@@ -92,6 +94,7 @@ impl Container {
             hover: None,
             pressed: None,
             disabled_background: None,
+            background_live: None,
             blend_rate: 0.0,
             hovered: None,
             pressed_flag: Rc::new(Cell::new(false)),
@@ -129,8 +132,15 @@ impl Container {
         self
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.deco = self.deco.background(color);
+    /// Sets the background from a color or a live color.
+    ///
+    /// `Live<Color>` accepts signals, memos, derived values, and animation
+    /// specs, so animated backgrounds work on `Container` without wrapping it
+    /// in a separate view.
+    pub fn background(mut self, color: impl Into<Live<Color>>) -> Self {
+        let live = color.into();
+        self.deco = self.deco.background(live.target_untracked());
+        self.background_live = Some(live);
         self
     }
 
@@ -493,12 +503,17 @@ impl Container {
         self.blend_rate
     }
 
-    pub fn target_background(&self, theme: &Theme, state: VisualState) -> Color {
-        let mut state = state;
+    fn idle_background(&self) -> Color {
+        self.background_live
+            .as_ref()
+            .map(|live| live.target_untracked())
+            .unwrap_or(self.deco.background)
+    }
+
+    fn state_background(&self, theme: &Theme, mut state: VisualState, idle: Color) -> Color {
         if self.disabled {
             state.disabled = true;
         }
-        let idle = self.deco.background;
         if state.disabled {
             self.disabled_background.unwrap_or(theme.disabled)
         } else if state.pressed {
@@ -508,6 +523,10 @@ impl Container {
         } else {
             idle
         }
+    }
+
+    pub fn target_background(&self, theme: &Theme, state: VisualState) -> Color {
+        self.state_background(theme, state, self.idle_background())
     }
 
     fn fire(&self, env: &Environment) {
@@ -552,11 +571,27 @@ impl View for Container {
                 sig.set(hovered);
             }
         }
+        let idle = match &self.background_live {
+            Some(live) if live.is_animated() => {
+                ctx.runtime()
+                    .live_color(
+                        ctx.element,
+                        Prop::BACKGROUND,
+                        live.target_untracked(),
+                        live.tween_spec().as_ref(),
+                    )
+                    .0
+            }
+            Some(live) => live.target_untracked(),
+            None => self.deco.background,
+        };
         if !self.is_interactive() {
-            ctx.paint_box(self.deco);
+            let mut deco = self.deco;
+            deco.background = idle;
+            ctx.paint_box(deco);
             return;
         }
-        let target = self.target_background(&ctx.theme(), ctx.state);
+        let target = self.state_background(&ctx.theme(), ctx.state, idle);
         let bg = if self.blend_rate <= 0.0 {
             target
         } else {
@@ -629,5 +664,26 @@ impl View for Container {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_accepts_live_colors() {
+        let bg = Signal::new(Color::RED);
+        let c = Container::new().background(bg.clone());
+        assert_eq!(
+            c.target_background(&Theme::dark(), VisualState::default()),
+            Color::RED
+        );
+
+        bg.set(Color::BLUE);
+        assert_eq!(
+            c.target_background(&Theme::dark(), VisualState::default()),
+            Color::BLUE
+        );
     }
 }

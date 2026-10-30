@@ -9,7 +9,7 @@ use sequoia_view::{
 use crate::button::Button;
 use crate::modal::Modal;
 use crate::modal::ModalScrim;
-use sequoia_style::{DIALOG_DANGER, DialogStyle};
+use sequoia_style::{Backdrop, ButtonStyle, DIALOG_DANGER, DialogStyle};
 
 type ActionFn = Rc<dyn Fn()>;
 
@@ -107,7 +107,9 @@ impl Dialog {
     }
 
     pub fn scrim(&self) -> ModalScrim {
-        Modal::new(self.open.clone()).scrim()
+        Modal::new(self.open.clone())
+            .scrim()
+            .backdrop(Backdrop::blur(10.0))
     }
 
     fn footer(&self) -> AnyView {
@@ -115,21 +117,27 @@ impl Dialog {
         if let Some(label) = &self.cancel_label {
             let this = self.clone();
             row = row
-                .child(Button::new(label.clone()).on_click(move || this.close()))
+                .child(
+                    Button::new(label.clone())
+                        .style(ButtonStyle::OUTLINE)
+                        .on_click(move || this.close()),
+                )
                 .child(Spacer::flex(1.0));
         } else {
             row = row.child(Spacer::flex(1.0));
         }
         for a in &self.actions {
             let action = a.action.clone();
-            let btn = Button::new(a.label.clone()).on_click(move || {
+            let style = if a.danger {
+                ButtonStyle::OUTLINE_ROSE
+                    .text(self.danger_color())
+                    .border_color(self.danger_color())
+            } else {
+                ButtonStyle::PRIMARY
+            };
+            let btn = Button::new(a.label.clone()).style(style).on_click(move || {
                 action();
             });
-            let btn = if a.danger {
-                btn.color(self.danger_color())
-            } else {
-                btn
-            };
             row = row.child(btn);
         }
         AnyView::new(row)
@@ -187,5 +195,9 @@ impl View for Dialog {
 
     fn layout_style(&self) -> sequoia_layout::LayoutStyle {
         sequoia_layout::LayoutStyle::default()
+    }
+
+    fn hit_testable(&self) -> bool {
+        false
     }
 }

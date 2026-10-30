@@ -3189,6 +3189,10 @@ impl View for TextArea {
         true
     }
 
+    fn accepts_text_input(&self) -> bool {
+        true
+    }
+
     fn accepts_tab(&self) -> bool {
         self.accept_tab
     }
