@@ -6,8 +6,10 @@ mod any;
 pub mod app;
 pub mod async_view;
 mod backdrop;
+mod cache;
 mod canvas;
 mod clock;
+mod damage;
 pub mod dev_overlay;
 mod dnd;
 mod dock;
@@ -30,6 +32,7 @@ mod live_view;
 mod modifiers;
 mod overlay;
 mod paint_draw;
+mod paint_region;
 mod painter;
 mod portal;
 mod presence;
@@ -59,8 +62,10 @@ pub use animated::{
 pub use any::AnyView;
 pub use async_view::AsyncView;
 pub use backdrop::BackdropBlur;
+pub use cache::{LayerCache, LayerKey};
 pub use canvas::{Canvas, KeyBinding};
 pub use clock::{FrameClock, MAX_FRAME_STEP_SECS};
+pub use damage::{DamageTracker, FrameOutcome};
 pub use dev_overlay::DevOverlay;
 pub use dnd::{
     DRAG_THRESHOLD, DragEnd, DragId, DragOptions, DragPayload, DragSession, DropPosition,
@@ -128,8 +133,8 @@ pub use tree::{FlatRow, TreeNode, TreeView};
 pub use value::{Value, ValueExt, derived, spring_spec, value};
 pub use view::{CustomLayout, EventCtx, PaintCtx, TextMetrics, View};
 pub use views::{
-    AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Masonry, Panel, Row,
-    Spacer, Stack, StackPos, Text, Unit, Wrap,
+    AspectRatio, Cached, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Masonry,
+    Panel, Row, Spacer, Stack, StackPos, Text, Unit, Wrap,
 };
 pub use virtual_list::VirtualList;
 
@@ -149,6 +154,7 @@ pub use sequoia_draw::{
 };
 
 pub use paint_draw::GRADIENT_BAND_PX;
+pub use paint_region::CullCtx;
 
 pub use sequoia_input::{
     CursorIcon, DropEffect, Event, EventPhase, Key, KeyEvent, Modifiers, PenTool, PointerButton,
@@ -172,7 +178,9 @@ pub mod prelude {
     pub use crate::any::AnyView;
     pub use crate::async_view::AsyncView;
     pub use crate::backdrop::BackdropBlur;
+    pub use crate::cache::{LayerCache, LayerKey};
     pub use crate::canvas::{Canvas, KeyBinding};
+    pub use crate::damage::{DamageTracker, FrameOutcome};
     pub use crate::dev_overlay::DevOverlay;
     pub use crate::dnd::{
         DRAG_THRESHOLD, DragEnd, DragId, DragOptions, DragPayload, DragSession, DropPosition,
@@ -233,8 +241,8 @@ pub mod prelude {
     pub use crate::value::{Value, ValueExt, derived, spring_spec, value};
     pub use crate::view::{CustomLayout, EventCtx, PaintCtx, TextMetrics, View};
     pub use crate::views::{
-        AspectRatio, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Masonry, Panel,
-        Row, Spacer, Stack, StackPos, Text, Unit, Wrap,
+        AspectRatio, Cached, Column, FocusScope, Fragment, Grid, IntoChildren, Margined, Masonry,
+        Panel, Row, Spacer, Stack, StackPos, Text, Unit, Wrap,
     };
     pub use crate::virtual_list::VirtualList;
     pub use sequoia_animation::Easing;

@@ -15,6 +15,10 @@ pub fn derived<T: Clone + PartialEq + 'static>(f: impl Fn() -> T + 'static) -> V
 pub trait ValueExt<T: Clone + PartialEq + 'static>: Clone {
     fn value_untracked(&self) -> T;
 
+    /// Derives a new value from this one.
+    ///
+    /// The closure receives `&T`, not `T`, so match it against a reference
+    /// (for example `|v| *v * 2.0` or `|v| v.is_open()`).
     fn map_value<U: Clone + PartialEq + 'static>(&self, f: impl Fn(&T) -> U + 'static) -> Value<U>;
 
     fn animated(self, spec: impl Into<AnimSpec>) -> Value<T>;

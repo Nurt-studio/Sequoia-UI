@@ -118,6 +118,15 @@ impl View for BackdropFiltered {
     }
 }
 
+/// Wraps a single view and paints a [`Effect`] for it.
+///
+/// Effects are applied after the inner view is fully built. [`EffectNode`]
+/// exposes no `.child()` method, so construct the child first:
+///
+/// ```ignore
+/// let menu = Container::new().child(Row::new() /* ... */);
+/// let menu = EffectNode::new(menu, Effect::Shadow(spec));
+/// ```
 #[derive(Clone)]
 pub struct EffectNode {
     child: AnyView,

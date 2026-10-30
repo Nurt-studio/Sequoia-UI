@@ -2,7 +2,7 @@
 
 use sequoia_core::{
     BrushStroke, Color, Fill, GradientKind, GradientStops, ImageSampling, ImageSource, Pixels,
-    Point, Rect, Size, Transform, Vec2,
+    Point, Rect, Size, StrokeSpace, Transform, Vec2,
 };
 use sequoia_text::FontWeight;
 
@@ -74,9 +74,17 @@ impl<'a, 'b> Painter<'a, 'b> {
         self.transform.apply_vec(Vec2::new(1.0, 0.0)).length()
     }
 
+    fn stroke_scale(&self, stroke: BrushStroke) -> f32 {
+        match stroke.space {
+            StrokeSpace::Local => self.unit_scale(),
+            StrokeSpace::Screen => 1.0,
+            _ => self.unit_scale(),
+        }
+    }
+
     fn stroke_style(&self, stroke: BrushStroke) -> sequoia_draw::StrokeStyle {
         use sequoia_draw::StrokeStyle;
-        let w = (stroke.width * self.unit_scale()).max(0.0);
+        let w = (stroke.width * self.stroke_scale(stroke)).max(0.0);
         if stroke.rounded {
             StrokeStyle::round(w)
         } else {
@@ -195,7 +203,7 @@ impl<'a, 'b> Painter<'a, 'b> {
         let (from, to) = crisp_axis_line(
             from,
             to,
-            stroke.width * self.unit_scale(),
+            stroke.width * self.stroke_scale(stroke),
             self.ctx.scale_factor(),
         );
         let mut path = sequoia_draw::Path::new();
@@ -295,17 +303,35 @@ impl<'a, 'b> Painter<'a, 'b> {
         self.to_local_bounds(bounds)
     }
 
+    /// Draws a single line with `baseline` as the text baseline.
+    ///
+    /// The font size scales with the active `with_transform` scale so text
+    /// zooms with the canvas instead of staying at a fixed pixel size.
     pub fn text(&mut self, text: &str, baseline: Point, size: f32, color: Color) {
         if text.is_empty() || !(size > 0.0) || color.a <= 0.0 {
             return;
         }
         let g = self.to_global_point(baseline);
-        self.ctx.draw_text(text, (g.x, g.y), size, color);
+        self.ctx
+            .draw_text(text, (g.x, g.y), size * self.unit_scale(), color);
     }
 
+    /// Draws a single line with `top_left` at the top-left of its line box.
+    ///
+    /// The font size scales with the active `with_transform` scale.
     pub fn text_tl(&mut self, text: &str, top_left: Point, size: f32, color: Color) {
-        let baseline = Point::new(top_left.x, PaintCtx::baseline_top(top_left.y, size));
+        let k = self.unit_scale();
+        if k <= 0.0 {
+            return;
+        }
+        let ascent = self.ctx.text_metrics(size * k).ascent / k;
+        let baseline = Point::new(top_left.x, top_left.y + ascent);
         self.text(text, baseline, size, color);
+    }
+
+    /// Vertical metrics for the default font at `size`.
+    pub fn text_metrics(&mut self, size: f32) -> crate::TextMetrics {
+        self.ctx.text_metrics(size)
     }
 
     pub fn text_tl_rotated(
@@ -337,21 +363,30 @@ impl<'a, 'b> Painter<'a, 'b> {
         }
         let g = self.to_global_point(baseline);
         self.ctx
-            .draw_text_weighted(text, (g.x, g.y), size, weight, color);
+            .draw_text_weighted(text, (g.x, g.y), size * self.unit_scale(), weight, color);
     }
 
+    /// Measures `text` in local coordinates, including the transform scale.
     pub fn text_width(&mut self, text: &str, size: f32) -> f32 {
         if text.is_empty() || !(size > 0.0) {
             return 0.0;
         }
-        self.ctx.text_width(text, size)
+        let k = self.unit_scale();
+        if k <= 0.0 {
+            return 0.0;
+        }
+        self.ctx.text_width(text, size * k) / k
     }
 
     pub fn text_width_weighted(&mut self, text: &str, size: f32, weight: FontWeight) -> f32 {
         if text.is_empty() || !(size > 0.0) {
             return 0.0;
         }
-        self.ctx.text_width_weighted(text, size, weight)
+        let k = self.unit_scale();
+        if k <= 0.0 {
+            return 0.0;
+        }
+        self.ctx.text_width_weighted(text, size * k, weight) / k
     }
 
     pub fn text_center_x(&mut self, text: &str, center_x: f32, top: f32, size: f32, color: Color) {
@@ -360,11 +395,17 @@ impl<'a, 'b> Painter<'a, 'b> {
     }
 
     pub fn text_center(&mut self, rect: Rect, text: &str, size: f32, color: Color) {
-        let metrics = self.ctx.text_metrics(text, size);
-        let top = rect.top() + (rect.size.height - metrics.height) * 0.5;
+        let k = self.unit_scale();
+        if k <= 0.0 {
+            return;
+        }
+        let metrics = self.ctx.measure_text(text, size * k);
+        let width = metrics.width / k;
+        let height = metrics.height / k;
+        let top = rect.top() + (rect.size.height - height) * 0.5;
         self.text_tl(
             text,
-            Point::new(rect.center().x - metrics.width * 0.5, top),
+            Point::new(rect.center().x - width * 0.5, top),
             size,
             color,
         );

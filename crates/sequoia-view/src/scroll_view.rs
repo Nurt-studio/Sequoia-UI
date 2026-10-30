@@ -105,6 +105,7 @@ pub struct ScrollView {
     thumb_color: Option<Color>,
     step: f32,
     on_scroll: Option<Rc<dyn Fn(Vec2)>>,
+    style: LayoutStyle,
 }
 
 impl ScrollView {
@@ -118,6 +119,11 @@ impl ScrollView {
             thumb_color: None,
             step: DEFAULT_STEP,
             on_scroll: None,
+            style: LayoutStyle {
+                width: Length::Fill(1.0),
+                height: Length::Fill(1.0),
+                ..LayoutStyle::default()
+            },
         }
     }
 
@@ -188,6 +194,20 @@ impl ScrollView {
 
     pub fn scroll_axis(&self) -> ScrollAxis {
         self.axis
+    }
+
+    pub fn fill_width(mut self) -> Self {
+        self.style = self.style.width(Length::Fill(1.0));
+        self
+    }
+
+    pub fn fill_height(mut self) -> Self {
+        self.style = self.style.height(Length::Fill(1.0));
+        self
+    }
+
+    pub fn fill_size(self) -> Self {
+        self.fill_width().fill_height()
     }
 
     fn load(rt: &Runtime, el: ElementId) -> ScrollState {
@@ -446,10 +466,11 @@ impl ScrollView {
             s.offset = next;
             prev
         });
-        if next != prev
-            && let Some(cb) = &self.on_scroll
-        {
-            cb(next);
+        if next != prev {
+            rt.invalidate_layout();
+            if let Some(cb) = &self.on_scroll {
+                cb(next);
+            }
         }
     }
 
@@ -736,11 +757,7 @@ impl View for ScrollView {
     }
 
     fn layout_style(&self) -> LayoutStyle {
-        LayoutStyle {
-            width: Length::Fill(1.0),
-            height: Length::Fill(1.0),
-            ..LayoutStyle::default()
-        }
+        self.style
     }
 
     fn intrinsic_size(&self, _ctx: &mut LayoutCtx) -> Option<Size> {
@@ -1196,5 +1213,18 @@ impl View for ScrollView {
                 ctx.quad(corner, track_color, 0.0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fill_helpers_keep_scroll_view_filled() {
+        let s = ScrollView::new(crate::views::Unit).fill_size();
+        let style = s.layout_style();
+        assert_eq!(style.width, Length::Fill(1.0));
+        assert_eq!(style.height, Length::Fill(1.0));
     }
 }

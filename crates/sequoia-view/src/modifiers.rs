@@ -856,6 +856,15 @@ pub trait ViewModifiers: View + Sized + 'static {
         self.blur_own(px)
     }
 
+    /// Wraps the view in an [`EffectNode`] that paints `spec` behind it.
+    ///
+    /// This changes the builder type, so finish configuring the inner view
+    /// first: call `.child(...)`, `.padding(...)`, and other builder methods
+    /// **before** `.shadow(...)`. To add more builders after the effect, wrap
+    /// the already-built view explicitly with
+    /// `EffectNode::new(view, Effect::Shadow(spec))`, or set the shadow through
+    /// `BoxStyle::shadow` where the view supports a box style (for example
+    /// `Container::box_style`). [`EffectNode`] has no `.child()` method.
     fn shadow(self, spec: ShadowSpec) -> EffectNode {
         self.effect(sequoia_style::Effect::Shadow(spec))
     }

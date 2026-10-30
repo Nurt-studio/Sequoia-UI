@@ -44,6 +44,7 @@ pub(crate) trait ErasedView: 'static {
     fn clip_self_erased(&self) -> bool;
     fn clip_radius_erased(&self) -> f32;
     fn paint_opacity_erased(&self) -> Option<f32>;
+    fn cache_layer_erased(&self) -> bool;
     fn paint_offset_erased(&self) -> Vec2;
     fn paint_opacity_ctx_erased(&self, rt: &Runtime, el: ElementId) -> Option<f32>;
     fn paint_offset_ctx_erased(&self, rt: &Runtime, el: ElementId) -> Vec2;
@@ -65,6 +66,7 @@ pub(crate) trait ErasedView: 'static {
     fn focusable_erased(&self) -> bool;
     fn focus_trap_erased(&self) -> bool;
     fn accepts_tab_erased(&self) -> bool;
+    fn accepts_text_input_erased(&self) -> bool;
     fn cursor_icon_erased(&self, state: VisualState) -> CursorIcon;
     fn has_visual_state_erased(&self) -> bool;
     fn wants_hover_updates_erased(&self) -> bool;
@@ -157,6 +159,9 @@ impl<V: View + 'static> ErasedView for V {
     fn paint_opacity_erased(&self) -> Option<f32> {
         View::paint_opacity(self)
     }
+    fn cache_layer_erased(&self) -> bool {
+        View::cache_layer(self)
+    }
     fn paint_offset_erased(&self) -> Vec2 {
         View::paint_offset(self)
     }
@@ -221,6 +226,9 @@ impl<V: View + 'static> ErasedView for V {
     }
     fn accepts_tab_erased(&self) -> bool {
         View::accepts_tab(self)
+    }
+    fn accepts_text_input_erased(&self) -> bool {
+        View::accepts_text_input(self)
     }
     fn cursor_icon_erased(&self, state: VisualState) -> CursorIcon {
         View::cursor_icon(self, state)
@@ -311,6 +319,9 @@ impl View for AnyView {
     }
     fn paint_opacity(&self) -> Option<f32> {
         self.0.paint_opacity_erased()
+    }
+    fn cache_layer(&self) -> bool {
+        self.0.cache_layer_erased()
     }
     fn paint_offset(&self) -> Vec2 {
         self.0.paint_offset_erased()

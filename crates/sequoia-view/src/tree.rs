@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use sequoia_core::Length;
@@ -64,6 +66,7 @@ pub struct TreeView<T> {
     scrollbar: ScrollbarVisibility,
     style: Option<TreeStyle>,
     label: String,
+    expanded: Rc<RefCell<HashMap<String, Signal<bool>>>>,
 }
 
 impl<T: Clone + 'static> Clone for TreeView<T> {
@@ -77,6 +80,7 @@ impl<T: Clone + 'static> Clone for TreeView<T> {
             scrollbar: self.scrollbar,
             style: self.style,
             label: self.label.clone(),
+            expanded: Rc::clone(&self.expanded),
         }
     }
 }
@@ -92,6 +96,7 @@ impl<T: Clone + 'static> TreeView<T> {
             scrollbar: ScrollbarVisibility::Auto,
             style: None,
             label: String::new(),
+            expanded: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -134,24 +139,35 @@ impl<T: Clone + 'static> TreeView<T> {
     }
 
     pub fn flatten(&self) -> Vec<FlatRow<T>> {
-        fn walk<T: Clone>(nodes: &[TreeNode<T>], depth: usize, out: &mut Vec<FlatRow<T>>) {
+        fn walk<T: Clone>(
+            nodes: &[TreeNode<T>],
+            depth: usize,
+            expanded: &mut HashMap<String, Signal<bool>>,
+            out: &mut Vec<FlatRow<T>>,
+        ) {
             for n in nodes {
+                let signal = expanded
+                    .entry(n.id.clone())
+                    .or_insert_with(|| n.expanded.clone())
+                    .clone();
+                let is_open = signal.get_untracked();
                 out.push(FlatRow {
                     id: n.id.clone(),
                     depth,
                     has_children: !n.children.is_empty(),
-                    expanded: n.expanded.clone(),
+                    expanded: signal,
                     value: n.value.clone(),
                 });
-                if !n.children.is_empty() && n.expanded.get_untracked() {
-                    walk(&n.children, depth + 1, out);
+                if !n.children.is_empty() && is_open {
+                    walk(&n.children, depth + 1, expanded, out);
                 }
             }
         }
 
         let roots = (self.roots)();
+        let mut expanded = self.expanded.borrow_mut();
         let mut out = Vec::new();
-        walk(&roots, 0, &mut out);
+        walk(&roots, 0, &mut expanded, &mut out);
         for r in &out {
             let _ = r.expanded.get();
         }

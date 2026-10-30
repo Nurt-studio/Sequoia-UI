@@ -446,10 +446,17 @@ fn text_measure_helpers_are_sane() {
                 .height(Length::Px(40.0))
         }
         fn paint_self(&self, ctx: &mut PaintCtx) {
-            let metrics = ctx.text_metrics("hi", 14.0);
-            assert_eq!(metrics, ctx.text_metrics("hi", 14.0));
+            let metrics = ctx.measure_text("hi", 14.0);
+            assert_eq!(metrics, ctx.measure_text("hi", 14.0));
             assert!(metrics.width.is_finite() && metrics.width >= 0.0);
             assert!(metrics.height.is_finite() && metrics.height >= 0.0);
+
+            let font = ctx.text_metrics(14.0);
+            assert_eq!(font, ctx.text_metrics(14.0));
+            assert!(font.ascent > 0.0 && font.descent >= 0.0);
+            assert!((font.ascent + font.descent - font.height).abs() < 1e-4);
+
+            ctx.draw_text_tl("hi", (0.0, 0.0), 14.0, Color::RED);
 
             let mut g = Painter::new(ctx);
             assert_eq!(g.text_width("", 14.0), 0.0);
@@ -589,5 +596,104 @@ fn hit_shapes_share_paint_and_hit_geometry() {
     assert!(
         r.contains(Point::new(25.0, 5.0), 6.0),
         "tolerance on all sides"
+    );
+}
+
+#[test]
+fn screen_space_stroke_keeps_pixel_width_under_zoom() {
+    struct T;
+    impl View for T {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn layout_style(&self) -> LayoutStyle {
+            LayoutStyle::default()
+                .width(Length::Px(200.0))
+                .height(Length::Px(200.0))
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            let mut g = Painter::new(ctx);
+            g.with_transform(Transform::scale(2.0, 2.0), |g| {
+                g.line(
+                    Point::new(10.0, 10.0),
+                    Point::new(60.0, 10.0),
+                    BrushStroke::new(2.0),
+                    Color::RED,
+                );
+                g.line(
+                    Point::new(10.0, 40.0),
+                    Point::new(60.0, 40.0),
+                    BrushStroke::screen(2.0),
+                    Color::BLUE,
+                );
+            });
+        }
+    }
+
+    let list = paint(T, 200.0, 200.0);
+    let local: Vec<_> = list
+        .quads()
+        .filter(|q| (q.color.r, q.color.g, q.color.b) == (1.0, 0.0, 0.0))
+        .collect();
+    let screen: Vec<_> = list
+        .quads()
+        .filter(|q| (q.color.r, q.color.g, q.color.b) == (0.0, 0.0, 1.0))
+        .collect();
+    assert_eq!((local.len(), screen.len()), (1, 1), "one quad per line");
+    assert!(
+        (local[0].rect.size.height - 4.0).abs() < 0.6,
+        "local stroke scales with zoom: {:?}",
+        local[0].rect
+    );
+    assert!(
+        (screen[0].rect.size.height - 2.0).abs() < 0.6,
+        "screen stroke keeps 2 px: {:?}",
+        screen[0].rect
+    );
+}
+
+#[test]
+fn text_grows_with_with_transform_zoom() {
+    struct T;
+    impl View for T {
+        fn body(&self) -> impl View + 'static {
+            Unit
+        }
+        fn is_leaf(&self) -> bool {
+            true
+        }
+        fn layout_style(&self) -> LayoutStyle {
+            LayoutStyle::default()
+                .width(Length::Px(200.0))
+                .height(Length::Px(200.0))
+        }
+        fn paint_self(&self, ctx: &mut PaintCtx) {
+            let mut g = Painter::new(ctx);
+            g.text_tl("HH", Point::new(0.0, 0.0), 14.0, Color::RED);
+            g.with_transform(Transform::scale(2.0, 2.0), |g| {
+                g.text_tl("HH", Point::new(0.0, 40.0), 14.0, Color::BLUE);
+            });
+        }
+    }
+
+    let list = paint(T, 200.0, 200.0);
+    let mut sizes = Vec::new();
+    for item in list.items() {
+        if let RenderItem::Text(draw) = item {
+            let h = draw
+                .glyphs
+                .iter()
+                .map(|g| g.rect.size.height)
+                .fold(0.0f32, f32::max);
+            sizes.push(h);
+        }
+    }
+    assert_eq!(sizes.len(), 2, "two text draws: {sizes:?}");
+    assert!(
+        sizes[0] > 0.0 && (sizes[1] / sizes[0] - 2.0).abs() < 0.1,
+        "zoomed text must be twice as tall: {sizes:?}"
     );
 }

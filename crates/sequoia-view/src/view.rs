@@ -144,6 +144,15 @@ pub trait View {
         None
     }
 
+    /// Allows the runtime to replay this element's painted subtree from cache
+    /// while its element revision and absolute paint context stay unchanged.
+    ///
+    /// Cache hits skip `paint_self` and `paint_foreground`, so their side
+    /// effects must not be required for later frames.
+    fn cache_layer(&self) -> bool {
+        false
+    }
+
     fn paint_opacity_ctx(&self, _rt: &Runtime, _el: ElementId) -> Option<f32> {
         self.paint_opacity()
     }
@@ -218,6 +227,15 @@ pub trait View {
     }
 
     fn accepts_tab(&self) -> bool {
+        false
+    }
+
+    /// Whether this view edits text when focused.
+    ///
+    /// Hosts use this to keep single-key accelerators (Delete, Backspace,
+    /// letter keys) from stealing input while a text field or text area has
+    /// focus. Command shortcuts such as Ctrl+S still fire.
+    fn accepts_text_input(&self) -> bool {
         false
     }
 
@@ -446,9 +464,35 @@ impl EventCtx<'_> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TextMetrics {
+    /// Width of the measured text. Zero for [`PaintCtx::text_metrics`], which
+    /// measures the font rather than a specific string.
     pub width: f32,
 
+    /// Height of the measured text block, or the line-box height for
+    /// [`PaintCtx::text_metrics`].
     pub height: f32,
+
+    /// Distance from the top of the line box to the baseline.
+    pub ascent: f32,
+
+    /// Distance from the baseline to the bottom of the line box.
+    pub descent: f32,
+
+    /// Extra leading outside ascent and descent. Sequoia line boxes are tight,
+    /// so this is currently always `0.0`.
+    pub line_gap: f32,
+}
+
+fn metrics_from_shaped(shaped: &ShapedText) -> TextMetrics {
+    let line_height = shaped.line_height();
+    let ascent = shaped.first_baseline();
+    TextMetrics {
+        width: shaped.width(),
+        height: shaped.height(),
+        ascent,
+        descent: (line_height - ascent).max(0.0),
+        line_gap: 0.0,
+    }
 }
 
 pub struct PaintCtx<'a> {
@@ -504,21 +548,42 @@ impl PaintCtx<'_> {
         self.element
     }
 
-    pub fn text_metrics(&mut self, text: &str, size: f32) -> TextMetrics {
+    /// Measures a specific string.
+    pub fn measure_text(&mut self, text: &str, size: f32) -> TextMetrics {
         if text.is_empty() || !(size > 0.0) {
             return TextMetrics::default();
         }
         let shaped = self.text.shape(text, size);
+        metrics_from_shaped(&shaped)
+    }
+
+    /// Returns vertical metrics for the default font at `size`.
+    ///
+    /// Use this instead of guessing a baseline offset: center a line box with
+    /// `rect.top() + (rect.height() - metrics.height) * 0.5`, then draw it at
+    /// that top edge with [`Self::draw_text_tl`].
+    pub fn text_metrics(&mut self, size: f32) -> TextMetrics {
+        if !(size > 0.0) {
+            return TextMetrics::default();
+        }
+        let shaped = self.text.shape("Mg", size);
         TextMetrics {
-            width: shaped.width(),
-            height: shaped.height(),
+            width: 0.0,
+            ..metrics_from_shaped(&shaped)
         }
     }
 
+    /// Baseline placed in the vertical center of a line box whose top is
+    /// `rect_top` and whose height is `rect_h`.
+    ///
+    /// Prefer [`Self::text_metrics`] when the real font ascent is needed.
     pub fn baseline_centered(rect_top: f32, rect_h: f32, size: f32) -> f32 {
         rect_top + rect_h * 0.5 + size * 0.35
     }
 
+    /// Approximate baseline for a line box whose top is `rect_top`.
+    ///
+    /// Prefer [`Self::text_metrics`] when the real font ascent is needed.
     pub fn baseline_top(rect_top: f32, size: f32) -> f32 {
         rect_top + size * 1.35 * 0.5 + size * 0.35
     }
@@ -581,8 +646,25 @@ impl PaintCtx<'_> {
         );
     }
 
+    /// Draws a single line with `origin` at the **text baseline**.
+    ///
+    /// The y coordinate is not a top edge: glyphs extend above it by the font
+    /// ascent. Use [`Self::draw_text_tl`] when positioning from the top-left of
+    /// a layout rectangle, or [`Self::text_metrics`] to center a line box.
     pub fn draw_text(&mut self, text: &str, origin: (f32, f32), size: f32, color: Color) {
         self.draw_text_weighted(text, origin, size, FontWeight::NORMAL, color);
+    }
+
+    /// Draws a single line with `top_left` at the top-left of its line box.
+    ///
+    /// This is the counterpart of [`Self::draw_text`], whose origin is the
+    /// baseline, and matches [`crate::Painter::text_tl`].
+    pub fn draw_text_tl(&mut self, text: &str, top_left: (f32, f32), size: f32, color: Color) {
+        if text.is_empty() || !(size > 0.0) {
+            return;
+        }
+        let ascent = self.text_metrics(size).ascent;
+        self.draw_text(text, (top_left.0, top_left.1 + ascent), size, color);
     }
 
     pub fn draw_text_weighted(

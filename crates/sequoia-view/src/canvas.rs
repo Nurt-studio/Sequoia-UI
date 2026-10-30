@@ -178,6 +178,20 @@ impl Canvas {
         self.flex(1.0)
     }
 
+    pub fn fill_width(mut self) -> Self {
+        self.style = self.style.width(Length::Fill(1.0));
+        self
+    }
+
+    pub fn fill_height(mut self) -> Self {
+        self.style = self.style.height(Length::Fill(1.0));
+        self
+    }
+
+    pub fn fill_size(self) -> Self {
+        self.fill_width().fill_height()
+    }
+
     pub fn on_draw(mut self, draw: impl Fn(&mut Painter) + 'static) -> Self {
         self.draw = Rc::new(draw);
         self
@@ -514,6 +528,18 @@ mod tests {
 
     fn vp(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect::from_xywh(x, y, w, h)
+    }
+
+    #[test]
+    fn fill_helpers_override_canvas_size() {
+        let c = Canvas::new()
+            .width(10.0)
+            .height(20.0)
+            .fill_width()
+            .fill_height();
+        let style = c.layout_style();
+        assert_eq!(style.width, Length::Fill(1.0));
+        assert_eq!(style.height, Length::Fill(1.0));
     }
 
     #[test]

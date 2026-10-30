@@ -16,7 +16,7 @@ pub(crate) fn text_wrap_limit(style: LayoutStyle, available: f32) -> Option<f32>
     let outer = match style.width {
         Length::Px(px) => px,
         Length::Percent(percent) if available.is_finite() => available * percent / 100.0,
-        Length::Fill(_) if available.is_finite() => available,
+        Length::Fill(_) | Length::Fit if available.is_finite() => available,
         _ => f32::INFINITY,
     };
     let limit =
@@ -1101,11 +1101,14 @@ impl View for Text {
 
         #[cfg(debug_assertions)]
         {
-            if wrap_at.is_none() && !content.is_empty() {
-                if shaped.width() > content_rect.size.width + 1.0 && content_rect.size.width > 0.0 {
-                    use std::sync::Once;
-                    static WARN_ONCE: Once = Once::new();
-                    WARN_ONCE.call_once(|| {
+            if wrap_at.is_none()
+                && !content.is_empty()
+                && shaped.width() > content_rect.size.width + 1.0
+                && content_rect.size.width > 0.0
+            {
+                use std::sync::Once;
+                static WARN_ONCE: Once = Once::new();
+                WARN_ONCE.call_once(|| {
                         log::warn!(
                             "sequoia-view: Text `{}` overflows box ({:.1}px > {:.1}px) without truncate — add `.truncate_fill()` or `.truncate(w)`. \
                              (This warning once per process; subsequent overflows are silent.)",
@@ -1114,7 +1117,6 @@ impl View for Text {
                             content_rect.size.width,
                         );
                     });
-                }
             }
         }
 
@@ -1168,6 +1170,56 @@ impl View for Fragment {
     }
     fn hit_testable(&self) -> bool {
         false
+    }
+}
+
+/// Opts a subtree into the runtime layer cache.
+///
+/// The runtime replays the child's painted output while the child's element
+/// revision and absolute paint context are unchanged. Mutating a signal read
+/// during build/paint bumps the revision and forces a repaint. Backdrop,
+/// filter, and opacity spans are captured and rebased with the layer; embedded
+/// surfaces and paint-time callbacks still bypass the cache.
+///
+/// Paint-time side effects are not replayed. Do not wrap views that register
+/// shapes, sample the clock or pointer position, or rely on `paint_self` being
+/// called on every frame.
+#[derive(Clone)]
+pub struct Cached {
+    child: AnyView,
+}
+
+impl Cached {
+    pub fn new<V: View + 'static>(child: V) -> Self {
+        Self {
+            child: AnyView::new(child),
+        }
+    }
+}
+
+impl View for Cached {
+    fn body(&self) -> impl View + 'static {
+        Unit
+    }
+
+    fn children_override(&self) -> Option<Vec<AnyView>> {
+        Some(vec![self.child.clone()])
+    }
+
+    fn layout_style(&self) -> LayoutStyle {
+        LayoutStyle {
+            width: Length::Fit,
+            height: Length::Fit,
+            ..LayoutStyle::default().hit_testable(false)
+        }
+    }
+
+    fn hit_testable(&self) -> bool {
+        false
+    }
+
+    fn cache_layer(&self) -> bool {
+        true
     }
 }
 

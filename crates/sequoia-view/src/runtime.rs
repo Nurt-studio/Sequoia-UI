@@ -30,8 +30,10 @@ use sequoia_style::{Theme, VisualState};
 use sequoia_text::TextSystem;
 
 use crate::any::{AnyView, ErasedView};
+use crate::cache::{LayerCache, LayerKey, LayerStamp};
 use crate::clock::FrameClock;
 use crate::live::{AnimSpec, AnimState, Live, Prop, SpringSpec};
+use crate::paint_region::CullCtx;
 use crate::surface::SurfaceDraw;
 use crate::view::{EventCtx, PaintCtx, View};
 
@@ -39,6 +41,25 @@ use crate::view::{EventCtx, PaintCtx, View};
 pub struct ElementId {
     pub(crate) index: u32,
     pub(crate) generation: u32,
+}
+
+impl ElementId {
+    /// Stable key that includes the arena generation, for cache invalidation.
+    pub fn key(self) -> u64 {
+        (u64::from(self.generation) << 32) | u64::from(self.index)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PaintPass<'a> {
+    env: &'a Environment,
+    hover_chain: &'a [ElementId],
+}
+
+impl PaintPass<'_> {
+    fn hovered_subtree(&self, id: ElementId) -> bool {
+        self.hover_chain.contains(&id)
+    }
 }
 
 pub trait ViewState: 'static + Default {}
@@ -91,6 +112,7 @@ struct Element {
     watcher: Option<Watcher>,
     reads: ReadSet,
     dirty: Dirty,
+    revision: u64,
     rect: Cell<Rect>,
 }
 
@@ -225,9 +247,17 @@ struct Inner {
 
     clock: Cell<FrameClock>,
 
+    damage: RefCell<crate::damage::DamageTracker>,
+
+    layers: RefCell<LayerCache>,
+    layer_hits: Cell<u64>,
+    layer_misses: Cell<u64>,
+
     states: RefCell<HashMap<ElementId, Box<dyn Any>>>,
 
     layout_epoch: Cell<u64>,
+
+    layout_dirty: Cell<bool>,
 
     scoped_cancels: RefCell<HashMap<ElementId, Vec<Box<dyn FnOnce()>>>>,
 }
@@ -241,13 +271,16 @@ impl Inner {
         if flags.is_empty() {
             return;
         }
-        let newly = {
+        if flags.needs_repaint() {
+            self.bump_revision(id);
+        }
+        let (newly, rect) = {
             let mut arena = self.arena.borrow_mut();
             match arena.get_mut(id) {
                 Some(e) => {
                     let was = e.dirty;
                     e.dirty |= flags;
-                    was.is_empty()
+                    (was.is_empty(), e.rect.get())
                 }
                 None => return,
             }
@@ -256,8 +289,35 @@ impl Inner {
             self.queue.borrow_mut().push(id);
         }
 
-        if let Some(h) = self.redraw.borrow().as_ref() {
+        {
+            let mut damage = self.damage.borrow_mut();
+            damage.mark(flags);
+            if flags.needs_repaint() {
+                damage.mark_rect(rect);
+            }
+        }
+
+        if flags.needs_repaint()
+            && let Some(h) = self.redraw.borrow().as_ref()
+        {
             h();
+        }
+    }
+
+    fn bump_revision(&self, id: ElementId) {
+        let mut arena = self.arena.borrow_mut();
+        let mut cur = Some(id);
+        let mut walked = 0u32;
+        while let Some(c) = cur {
+            let Some(e) = arena.get_mut(c) else {
+                break;
+            };
+            e.revision = e.revision.wrapping_add(1);
+            cur = e.parent;
+            walked += 1;
+            if walked > 4096 {
+                break;
+            }
         }
     }
 }
@@ -306,8 +366,13 @@ impl Runtime {
                 wrap_cache: RefCell::new(HashMap::new()),
                 live_anims: RefCell::new(HashMap::new()),
                 clock: Cell::new(FrameClock::new()),
+                damage: RefCell::new(crate::damage::DamageTracker::new()),
+                layers: RefCell::new(LayerCache::new(128)),
+                layer_hits: Cell::new(0),
+                layer_misses: Cell::new(0),
                 states: RefCell::new(HashMap::new()),
                 layout_epoch: Cell::new(0),
+                layout_dirty: Cell::new(true),
                 scoped_cancels: RefCell::new(HashMap::new()),
             }),
         }
@@ -338,7 +403,12 @@ impl Runtime {
     }
 
     pub fn set_root_fill(&self, enabled: bool) {
+        if self.inner.root_fill.get() == enabled {
+            return;
+        }
         self.inner.root_fill.set(enabled);
+        self.inner.layout_dirty.set(true);
+        self.mark_full_damage();
     }
 
     pub fn scale(&self) -> f32 {
@@ -351,7 +421,11 @@ impl Runtime {
         } else {
             1.0
         };
+        if self.inner.scale.get() == s {
+            return;
+        }
         self.inner.scale.set(s);
+        self.mark_full_damage();
     }
 
     pub fn safe_insets(&self) -> Edges {
@@ -359,17 +433,27 @@ impl Runtime {
     }
 
     pub fn set_safe_insets(&self, insets: Edges) {
+        if self.inner.safe_insets.get() == insets {
+            return;
+        }
         self.inner.safe_insets.set(insets);
+        self.inner.layout_dirty.set(true);
+        self.mark_full_damage();
     }
 
     pub fn set_environment(&self, env: Environment) {
         *self.inner.environment.borrow_mut() = env.clone();
+        self.inner.layout_dirty.set(true);
+        self.mark_full_damage();
         let weak = Rc::downgrade(&self.inner);
         *self.inner.env_listener.borrow_mut() = Some(env.on_change(move || {
-            if let Some(inner) = weak.upgrade()
-                && let Some(h) = inner.redraw.borrow().as_ref()
-            {
-                h();
+            if let Some(inner) = weak.upgrade() {
+                inner.layout_dirty.set(true);
+                inner.layers.borrow_mut().invalidate_all();
+                inner.damage.borrow_mut().mark_full();
+                if let Some(h) = inner.redraw.borrow().as_ref() {
+                    h();
+                }
             }
         }));
     }
@@ -379,13 +463,95 @@ impl Runtime {
     }
 
     fn request_redraw(&self) {
+        self.inner.damage.borrow_mut().mark(Dirty::PAINT);
         if let Some(h) = self.inner.redraw.borrow().as_ref() {
             h();
         }
     }
 
     pub fn request_frame(&self) {
+        self.inner.damage.borrow_mut().request_frame();
         self.request_redraw();
+    }
+
+    /// Mark an element as damaged. Uses its current bounds for partial repaint.
+    pub(crate) fn mark_damage(&self, el: ElementId, flags: Dirty) {
+        let repaint = flags.needs_repaint();
+        if repaint {
+            self.inner.bump_revision(el);
+        }
+        let rect = if repaint { self.rect_of(el) } else { None };
+        let mut damage = self.inner.damage.borrow_mut();
+        damage.mark(flags);
+        if let Some(rect) = rect {
+            damage.mark_rect(rect);
+        }
+    }
+
+    /// Mark the whole viewport as damaged (resize, DPI, theme, root swap).
+    pub fn mark_full_damage(&self) {
+        self.inner.layers.borrow_mut().invalidate_all();
+        self.inner.damage.borrow_mut().mark_full();
+    }
+
+    /// Drops all cached layer snapshots.
+    pub fn clear_layer_cache(&self) {
+        self.inner.layers.borrow_mut().invalidate_all();
+    }
+
+    /// Returns `(hits, misses)` for the layer cache.
+    pub fn layer_cache_stats(&self) -> (u64, u64) {
+        (self.inner.layer_hits.get(), self.inner.layer_misses.get())
+    }
+
+    pub fn needs_frame(&self) -> bool {
+        self.inner.damage.borrow().needs_frame()
+    }
+
+    pub fn damage_flags(&self) -> Dirty {
+        self.inner.damage.borrow().flags()
+    }
+
+    pub fn damage_rect(&self) -> Option<Rect> {
+        self.inner.damage.borrow().paint_region()
+    }
+
+    /// Returns the disjoint damage regions for the next frame.
+    ///
+    /// `None` means a full repaint. Overlapping marks are merged, and a
+    /// bounded set of regions is kept so a backend can scissor each one
+    /// without unbounded work.
+    pub fn damage_regions(&self) -> Option<Vec<Rect>> {
+        self.inner.damage.borrow().paint_regions()
+    }
+
+    pub fn damage_stats(&self) -> (u64, u64) {
+        let damage = self.inner.damage.borrow();
+        (damage.frames_painted(), damage.frames_skipped())
+    }
+
+    /// Paint only when something changed since the previous frame.
+    ///
+    /// A frame is skipped when there is no pending animation request and the
+    /// accumulated flags do not require pixels (`Dirty::needs_repaint`).
+    /// Bookkeeping-only flags (`HIT_TEST`, `DATA`) are discarded by the skip.
+    /// Returns [`FrameOutcome::Skipped`] without building a render list.
+    pub fn paint_if_dirty(
+        &self,
+        list: &mut RenderList,
+        text: &mut TextSystem,
+    ) -> crate::damage::FrameOutcome {
+        let had_motion = self.inner.damage.borrow_mut().take_motion();
+        if !had_motion && self.inner.damage.borrow().is_empty() {
+            self.inner.damage.borrow_mut().record_skipped();
+            return crate::damage::FrameOutcome::Skipped;
+        }
+        if had_motion {
+            self.inner.layers.borrow_mut().invalidate_all();
+        }
+        self.paint_region(list, text, CullCtx::ENABLED);
+        self.inner.damage.borrow_mut().after_paint();
+        crate::damage::FrameOutcome::Painted
     }
 
     /// Snapshot of the frame clock used by every view animation.
@@ -416,6 +582,7 @@ impl Runtime {
         }
         c.set_reduced_motion(reduced);
         self.inner.clock.set(c);
+        self.inner.layout_dirty.set(true);
         self.request_redraw();
     }
 
@@ -447,18 +614,35 @@ impl Runtime {
         c.set_manual(true);
         c.advance_by(dt);
         self.inner.clock.set(c);
+        self.invalidate_animated_layout();
     }
 
     pub fn reset_clock(&self) {
         let mut c = self.inner.clock.get();
         c.reset();
         self.inner.clock.set(c);
+        self.invalidate_animated_layout();
+    }
+
+    fn has_layout_animation(&self) -> bool {
+        self.inner
+            .live_anims
+            .borrow()
+            .keys()
+            .any(|(_, prop)| *prop == Prop::WIDTH.0 || *prop == Prop::HEIGHT.0)
+    }
+
+    fn invalidate_animated_layout(&self) {
+        if self.has_layout_animation() {
+            self.inner.layout_dirty.set(true);
+        }
     }
 
     fn advance_clock(&self) {
         let mut c = self.inner.clock.get();
         c.advance();
         self.inner.clock.set(c);
+        self.invalidate_animated_layout();
     }
 
     pub fn live_f32(
@@ -725,6 +909,7 @@ impl Runtime {
             }
         }
         self.inner.root.set(Some(id));
+        self.mark_full_damage();
     }
 
     pub fn with_state<S: Default + 'static, R>(
@@ -830,6 +1015,7 @@ impl Runtime {
             }
             let Some(v) = self.view_rc(id) else { continue };
             self.build_with(id, v);
+            self.mark_damage(id, Dirty::PAINT);
             let mut s = self.inner.stats.get();
             s.rebuilds += 1;
             self.inner.stats.set(s);
@@ -1022,9 +1208,33 @@ impl Runtime {
         any.downcast::<T>().ok()
     }
 
+    /// Whether the next [`Runtime::layout`] call has work to do.
+    ///
+    /// True for structural rebuilds and pending layout marks.
+    /// Paint-only damage leaves the layout clean.
+    pub fn layout_dirty(&self) -> bool {
+        self.inner.layout_dirty.get() || self.has_pending_layout()
+    }
+
+    pub(crate) fn invalidate_layout(&self) {
+        self.inner.layout_dirty.set(true);
+    }
+
+    /// Solves layout for `bounds`.
+    ///
+    /// The pass is skipped when the viewport and [`Runtime::layout_dirty`] are
+    /// clean. Structural changes, scroll offsets, layout animations, and new
+    /// viewports mark layout dirty.
     pub fn layout(&self, bounds: Rect, text: &mut TextSystem) {
         const MAX_SETTLE_PASSES: u8 = 4;
+        if self.inner.viewport.get() == bounds
+            && !self.inner.layout_dirty.get()
+            && !self.has_pending_layout()
+        {
+            return;
+        }
         for pass in 0..MAX_SETTLE_PASSES {
+            self.inner.layout_dirty.set(false);
             self.layout_once(bounds, text);
             if !self.has_pending_layout() {
                 return;
@@ -1058,6 +1268,12 @@ impl Runtime {
             return;
         };
         self.inner.wrap_cache.borrow_mut().clear();
+        if self.inner.viewport.get() != bounds {
+            self.inner.layers.borrow_mut().invalidate_all();
+            let mut damage = self.inner.damage.borrow_mut();
+            damage.mark_full();
+            damage.mark_layout();
+        }
         self.inner.viewport.set(bounds);
 
         self.inner.window_size.set(bounds.size);
@@ -1084,6 +1300,17 @@ impl Runtime {
     }
 
     pub fn paint(&self, list: &mut RenderList, text: &mut TextSystem) {
+        self.paint_region(list, text, CullCtx::ENABLED);
+    }
+
+    /// Paint with recoverable culling driven by `cull`.
+    ///
+    /// `paint` keeps the enabled culling path that this runtime used before
+    /// the damage work, so existing benchmarks and callers do not pay for
+    /// off-screen shaping. `CullCtx::DISABLED` is available for callers that
+    /// need a full CPU pass; RenderList still drops items fully outside the
+    /// active clip at push time, so the visible output is the same.
+    pub fn paint_region(&self, list: &mut RenderList, text: &mut TextSystem, cull: CullCtx) {
         self.inner.surfaces.borrow_mut().clear();
 
         let doomed = self.inner.overlays.borrow().transient_ids();
@@ -1093,7 +1320,22 @@ impl Runtime {
         let Some(root) = self.inner.root.get() else {
             return;
         };
-        self.paint_rec(root, Vec2::ZERO, 1.0, Transform::IDENTITY, list, text);
+        let env = self.inner.environment.borrow().clone();
+        let hover_chain = self.hover_chain();
+        let pass = PaintPass {
+            env: &env,
+            hover_chain: &hover_chain,
+        };
+        self.paint_rec(
+            root,
+            Vec2::ZERO,
+            1.0,
+            Transform::IDENTITY,
+            list,
+            text,
+            cull,
+            pass,
+        );
 
         {
             let viewport = self.inner.viewport.get();
@@ -1117,7 +1359,16 @@ impl Runtime {
                 .get(id)
                 .and_then(|e| e.element.get());
             if let Some(el) = el {
-                self.paint_rec(el, Vec2::ZERO, 1.0, Transform::IDENTITY, list, text);
+                self.paint_rec(
+                    el,
+                    Vec2::ZERO,
+                    1.0,
+                    Transform::IDENTITY,
+                    list,
+                    text,
+                    cull,
+                    pass,
+                );
             }
         }
 
@@ -1170,26 +1421,10 @@ impl Runtime {
             self.inner.interact.set(st);
         }
         if old_hover != st.hovered {
-            let needs = [old_hover, st.hovered].iter().flatten().any(|&el| {
-                let mut cur = Some(el);
-                while let Some(e) = cur {
-                    if self
-                        .view_rc(e)
-                        .map(|v| v.has_visual_state_erased())
-                        .unwrap_or(false)
-                    {
-                        return true;
-                    }
-                    cur = self.parent_of(e);
-                }
-                false
-            });
-            if needs {
-                for el in [old_hover, st.hovered].iter().flatten() {
-                    self.inner.mark(*el, Dirty::PAINT);
-                }
-                self.request_redraw();
+            for el in [old_hover, st.hovered].iter().flatten() {
+                self.inner.mark(*el, Dirty::PAINT);
             }
+            self.request_redraw();
         }
 
         if self.subtree_wants_hover(st.hovered) {
@@ -1662,6 +1897,10 @@ impl Runtime {
         }
         entry.element.set(Some(el));
         let id = self.inner.overlays.borrow_mut().insert(entry);
+        self.inner
+            .damage
+            .borrow_mut()
+            .mark(Dirty::PAINT | Dirty::OVERLAY);
         if !transient {
             self.request_redraw();
         }
@@ -2197,17 +2436,55 @@ impl Runtime {
         None
     }
 
-    fn hover_in_subtree(&self, el: ElementId) -> bool {
-        let st = self.inner.interact.get();
-        let Some(h) = st.hovered else { return false };
-        let mut cur = Some(h);
+    fn interaction_target_within(
+        &self,
+        subtree: ElementId,
+        target: Option<ElementId>,
+    ) -> Option<u64> {
+        let target = target?;
+        let mut cur = Some(target);
+        let mut walked = 0u32;
         while let Some(e) = cur {
-            if e == el {
-                return true;
+            if e == subtree {
+                return Some(target.key());
             }
             cur = self.parent_of(e);
+            walked += 1;
+            if walked > 4096 {
+                break;
+            }
         }
-        false
+        None
+    }
+
+    fn hover_chain(&self) -> Vec<ElementId> {
+        let Some(hovered) = self.inner.interact.get().hovered else {
+            return Vec::new();
+        };
+        let arena = self.inner.arena.borrow();
+        let mut chain = Vec::new();
+        let mut cur = Some(hovered);
+        let mut walked = 0;
+        while let Some(e) = cur {
+            chain.push(e);
+            cur = arena.get(e).and_then(|el| el.parent);
+            walked += 1;
+            if walked > 4096 {
+                break;
+            }
+        }
+        chain
+    }
+
+    /// Whether the focused element is a text input.
+    ///
+    /// Hosts use this to suppress plain-key accelerators while the user is
+    /// typing. Command shortcuts remain available.
+    pub fn text_input_focused(&self) -> bool {
+        let st = self.inner.interact.get();
+        st.focus
+            .and_then(|f| self.view_rc(f))
+            .is_some_and(|v| v.accepts_text_input_erased())
     }
 
     pub fn focus_in_subtree(&self, el: ElementId) -> bool {
@@ -2307,8 +2584,13 @@ impl Runtime {
 
     pub fn set_focus(&self, el: Option<ElementId>) {
         let mut st = self.inner.interact.get();
+        let old = st.focus;
         st.focus = el;
         self.inner.interact.set(st);
+        for previous in [old, el].into_iter().flatten() {
+            self.mark_damage(previous, Dirty::PAINT);
+        }
+        self.request_redraw();
         self.dismiss_focus_lost(el);
     }
 
@@ -2349,10 +2631,36 @@ impl Runtime {
     fn view_state(&self, el: ElementId) -> (VisualState, bool) {
         let st = self.inner.interact.get();
         let mut vs = VisualState::default();
-        vs.hovered = st.hovered == Some(el);
+        vs.hovered = self.hovered_within(el, st.hovered);
         vs.pressed = st.pressed == Some(el);
         vs.focused = st.focus == Some(el);
         (vs, st.hovered == Some(el))
+    }
+
+    /// True when the pointer is over `el` or over one of its descendants.
+    ///
+    /// A container must keep its hover state while the pointer is on a child,
+    /// including children that live in an overlay layer. The hover chain for
+    /// overlay elements walks up to the overlay root just like the main tree,
+    /// so checking ancestors fixes hover inside menus and popovers.
+    fn hovered_within(&self, el: ElementId, hovered: Option<ElementId>) -> bool {
+        let Some(mut cur) = hovered else {
+            return false;
+        };
+        let mut walked = 0u32;
+        loop {
+            if cur == el {
+                return true;
+            }
+            let Some(parent) = self.parent_of(cur) else {
+                return false;
+            };
+            cur = parent;
+            walked += 1;
+            if walked > 4096 {
+                return false;
+            }
+        }
     }
 
     pub fn visual_state(&self, el: ElementId) -> VisualState {
@@ -2541,7 +2849,7 @@ impl Runtime {
         let type_name = self.type_name_of(root).unwrap_or_else(|| "?".into());
         log::warn!(
             "sequoia-view: root `{type_name}` has no fill_size (width_fill={fill_w}, height_fill={fill_h}); \
-             measured {measured:?} with window {:?} — unpainted background. Add `.fill_size()` to the root.",
+             measured {measured:?} with window {:?} â€” unpainted background. Add `.fill_size()` to the root.",
             bounds.size
         );
         false
@@ -3209,11 +3517,21 @@ impl Runtime {
                 },
                 ctx,
             );
+            let true_main_intrinsic = match cstyle.axis {
+                Axis::Horizontal => m_true.width,
+                Axis::Vertical => m_true.height,
+            };
             let true_cross_intrinsic = match cstyle.axis {
                 Axis::Horizontal => m_true.height,
                 Axis::Vertical => m_true.width,
             };
-            cross = cross.max(resolve_cross(cross_len, true_cross_intrinsic, avail_cross));
+            // Content that grows on the main axis when the cross axis is
+            // constrained has reflowed (auto-wrapped text). Its unconstrained
+            // cross size is not a meaningful minimum, or wrapping could never
+            // take effect.
+            if main_intrinsic <= true_main_intrinsic + 0.01 {
+                cross = cross.max(resolve_cross(cross_len, true_cross_intrinsic, avail_cross));
+            }
         }
 
         let main_auto =
@@ -4771,6 +5089,8 @@ impl Runtime {
         parent_transform: Transform,
         list: &mut RenderList,
         text: &mut TextSystem,
+        cull: CullCtx,
+        pass: PaintPass<'_>,
     ) {
         let depth = list.clip_depth();
         let opacity_depth = list.opacity_depth();
@@ -4783,6 +5103,8 @@ impl Runtime {
                 parent_transform,
                 &mut *list,
                 &mut *text,
+                cull,
+                pass,
             )
         })) {
             Ok(()) => {}
@@ -4804,6 +5126,8 @@ impl Runtime {
         parent_transform: Transform,
         list: &mut RenderList,
         text: &mut TextSystem,
+        cull: CullCtx,
+        pass: PaintPass<'_>,
     ) {
         let Some(v) = self.view_rc(id) else { return };
         let base_rect = {
@@ -4870,24 +5194,19 @@ impl Runtime {
             list.push_opacity(opacity);
         }
 
-        const CULL_MARGIN: f32 = 32.0;
-        let culled = match list.active_clip() {
-            Some(c) => !c.intersects(paint_bounds.inflate(CULL_MARGIN, CULL_MARGIN)),
-            None => false,
-        };
-        if culled {
-            if v.clip_self_erased() {
-                if pushes_opacity {
-                    list.pop_opacity();
-                }
-                if pushes_transform {
-                    list.pop_transform();
-                }
-                return;
+        let clip = list.active_clip();
+        let clip_self = v.clip_self_erased();
+        if cull.fully_clipped(paint_bounds, clip, clip_self) {
+            if pushes_opacity {
+                list.pop_opacity();
             }
-            for c in self.children(id) {
-                self.paint_rec(c, acc, scale, total_transform, list, text);
+            if pushes_transform {
+                list.pop_transform();
             }
+            return;
+        }
+        if !cull.intersects(paint_bounds, clip) {
+            self.paint_children(id, acc, scale, total_transform, list, text, cull, pass);
             if pushes_opacity {
                 list.pop_opacity();
             }
@@ -4897,8 +5216,8 @@ impl Runtime {
             return;
         }
 
-        let should_clip = v.clip_self_erased()
-            || v.layout_style_ctx_erased(self, id).overflow == Overflow::Hidden;
+        let should_clip =
+            clip_self || v.layout_style_ctx_erased(self, id).overflow == Overflow::Hidden;
         if should_clip {
             let clip_rect = if pushes_transform { paint_bounds } else { rect };
             let r = v.clip_radius_erased();
@@ -4909,7 +5228,67 @@ impl Runtime {
             }
         }
 
-        if let Some(target) = v.surface_target_erased() {
+        let surface_target = v.surface_target_erased();
+        let foreground_filter = v.foreground_filter_erased().filter(|f| !f.is_empty());
+        let cacheable =
+            v.cache_layer_erased() && surface_target.is_none() && foreground_filter.is_none();
+
+        let cache = if cacheable {
+            let revision = self
+                .inner
+                .arena
+                .borrow()
+                .get(id)
+                .map(|e| e.revision)
+                .unwrap_or(0);
+            let key = LayerKey {
+                element_id: id.key(),
+                revision,
+            };
+            let interact = self.inner.interact.get();
+            let stamp = LayerStamp {
+                rect,
+                scale,
+                transform: total_transform,
+                clip: list.active_clip(),
+                rounded_clip: list.active_rounded_clip(),
+                opacity: list.active_opacity(),
+                text_atlas: text.atlas().id(),
+                text_epoch: text.atlas().epoch(),
+                window: self.inner.window.get(),
+                hovered: self.interaction_target_within(id, interact.hovered),
+                pressed: self.interaction_target_within(id, interact.pressed),
+                focused: self.interaction_target_within(id, interact.focus),
+                captured: self.interaction_target_within(id, interact.captured),
+                cull,
+            };
+            if let Some(hit) = self.inner.layers.borrow().get_stamped(key, &stamp) {
+                self.inner
+                    .layer_hits
+                    .set(self.inner.layer_hits.get().wrapping_add(1));
+                list.append(&hit);
+                if should_clip {
+                    list.pop_clip();
+                }
+                if pushes_opacity {
+                    list.pop_opacity();
+                }
+                if pushes_transform {
+                    list.pop_transform();
+                }
+                return;
+            }
+            self.inner
+                .layer_misses
+                .set(self.inner.layer_misses.get().wrapping_add(1));
+            self.inner.layers.borrow_mut().invalidate_element(id.key());
+            let surfaces = self.inner.surfaces.borrow().len();
+            Some((key, stamp, list.mark(), surfaces))
+        } else {
+            None
+        };
+
+        if let Some(target) = surface_target {
             let clipped = match list.active_clip() {
                 Some(c) => c.intersect(rect),
                 None => rect,
@@ -4923,31 +5302,26 @@ impl Runtime {
             }
         }
 
-        let filter_handle = v
-            .foreground_filter_erased()
-            .filter(|f| !f.is_empty())
-            .and_then(|f| {
-                let r = if pushes_transform { paint_bounds } else { rect };
-                list.push_filter_begin(r, 0.0, f.blur_px(), f.span_mask())
-            });
+        let filter_handle = foreground_filter.and_then(|f| {
+            let r = if pushes_transform { paint_bounds } else { rect };
+            list.push_filter_begin(r, 0.0, f.blur_px(), f.span_mask())
+        });
 
         let depth = list.clip_depth();
 
         let (state, _) = self.view_state(id);
-        let env = self.inner.environment.borrow().clone();
+        let hovered_subtree = pass.hovered_subtree(id);
         {
-            let type_name = v.type_name().to_string();
-
             let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 let mut ctx = PaintCtx {
                     list: &mut *list,
                     text: &mut *text,
-                    environment: &env,
+                    environment: pass.env,
                     rect,
                     element: id,
                     state,
                     window: self.inner.window.get(),
-                    hovered_subtree: self.hover_in_subtree(id),
+                    hovered_subtree,
                     runtime: self,
                     shapes: &self.inner.shapes,
                     draw_offset: Vec2::ZERO,
@@ -4956,25 +5330,26 @@ impl Runtime {
                 v.paint_self_erased(&mut ctx);
             }));
             if res.is_err() {
-                self.record_error(id, type_name, "paint_self panicked".to_string());
+                self.record_error(
+                    id,
+                    v.type_name().to_string(),
+                    "paint_self panicked".to_string(),
+                );
             }
         }
-        for c in self.children(id) {
-            self.paint_rec(c, acc, scale, total_transform, list, text);
-        }
+        self.paint_children(id, acc, scale, total_transform, list, text, cull, pass);
 
         {
-            let type_name = v.type_name().to_string();
             let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 let mut ctx = PaintCtx {
                     list: &mut *list,
                     text: &mut *text,
-                    environment: &env,
+                    environment: pass.env,
                     rect,
                     element: id,
                     state,
                     window: self.inner.window.get(),
-                    hovered_subtree: self.hover_in_subtree(id),
+                    hovered_subtree,
                     runtime: self,
                     shapes: &self.inner.shapes,
                     draw_offset: Vec2::ZERO,
@@ -4983,11 +5358,25 @@ impl Runtime {
                 v.paint_foreground_erased(&mut ctx);
             }));
             if res.is_err() {
-                self.record_error(id, type_name, "paint_foreground panicked".to_string());
+                self.record_error(
+                    id,
+                    v.type_name().to_string(),
+                    "paint_foreground panicked".to_string(),
+                );
             }
         }
         if let Some(h) = filter_handle {
             list.push_filter_end(h);
+        }
+
+        if let Some((key, stamp, mark, surfaces)) = cache
+            && text.atlas().epoch() == stamp.text_epoch
+            && self.inner.surfaces.borrow().len() == surfaces
+            && let Some(captured) = list.suffix(mark)
+        {
+            let mut layers = self.inner.layers.borrow_mut();
+            layers.invalidate_element(key.element_id);
+            layers.insert_stamped(key, captured, stamp);
         }
 
         list.truncate_clips(depth);
@@ -5002,11 +5391,48 @@ impl Runtime {
         }
     }
 
+    fn paint_children(
+        &self,
+        id: ElementId,
+        acc: Vec2,
+        scale: f32,
+        transform: Transform,
+        list: &mut RenderList,
+        text: &mut TextSystem,
+        cull: CullCtx,
+        pass: PaintPass<'_>,
+    ) {
+        const INLINE: usize = 16;
+        let mut stack = [ElementId {
+            index: 0,
+            generation: 0,
+        }; INLINE];
+        let n = {
+            let arena = self.inner.arena.borrow();
+            let Some(el) = arena.get(id) else { return };
+            let n = el.children.len();
+            if n <= INLINE {
+                stack[..n].copy_from_slice(&el.children);
+            }
+            n
+        };
+        if n <= INLINE {
+            for c in &stack[..n] {
+                self.paint_rec(*c, acc, scale, transform, list, text, cull, pass);
+            }
+        } else {
+            for c in self.children(id) {
+                self.paint_rec(c, acc, scale, transform, list, text, cull, pass);
+            }
+        }
+    }
+
     fn view_rc(&self, id: ElementId) -> Option<Rc<dyn ErasedView>> {
         self.inner.arena.borrow().get(id)?.view.clone()
     }
 
     fn invalidate_measure_chain(&self, id: ElementId) {
+        self.inner.layout_dirty.set(true);
         self.inner
             .layout_epoch
             .set(self.inner.layout_epoch.get().wrapping_add(1));
@@ -5060,6 +5486,7 @@ impl Runtime {
                 watcher: Some(watcher),
                 reads: ReadSet::empty(),
                 dirty: Dirty::empty(),
+                revision: 0,
                 rect: Cell::new(Rect::ZERO),
             });
             if let Some(p) = parent
@@ -5076,6 +5503,7 @@ impl Runtime {
     }
 
     fn build_with(&self, el: ElementId, value: Rc<dyn ErasedView>) {
+        self.inner.bump_revision(el);
         self.invalidate_measure_chain(el);
         let v = value;
 
@@ -5357,6 +5785,7 @@ impl Runtime {
                 let _ = std::panic::catch_unwind(AssertUnwindSafe(cancel));
             }
         }
+        self.inner.layers.borrow_mut().invalidate_element(id.key());
         self.inner.arena.borrow_mut().free_slot(slot);
 
         let anchored = self.inner.overlays.borrow().anchored_to(id);
@@ -5466,6 +5895,255 @@ mod tests {
             filled_root_size(capped, bounds, measured),
             Size::new(400.0, 300.0)
         );
+    }
+
+    #[test]
+    fn paint_dirty_does_not_rebuild_but_layout_dirty_does() {
+        let rt = Runtime::new();
+        rt.mount(crate::Unit);
+        let root = rt.root().unwrap();
+
+        rt.mark_damage(root, Dirty::PAINT);
+        assert!(rt.damage_flags().contains(Dirty::PAINT));
+        assert!(!rt.damage_flags().needs_layout());
+        rt.tick();
+        assert_eq!(
+            rt.stats().rebuilds,
+            0,
+            "paint-only damage skips settle rebuild"
+        );
+
+        rt.request_rebuild(root);
+        rt.tick();
+        assert_eq!(rt.stats().rebuilds, 1, "layout damage rebuilds the element");
+    }
+
+    #[test]
+    fn layout_is_skipped_when_clean_and_reruns_when_dirty() {
+        #[derive(Clone)]
+        struct Counted(Rc<Cell<u32>>);
+
+        impl View for Counted {
+            fn body(&self) -> impl View + 'static {
+                crate::Unit
+            }
+
+            fn layout_style(&self) -> LayoutStyle {
+                self.0.set(self.0.get() + 1);
+                LayoutStyle::default()
+            }
+        }
+
+        let calls = Rc::new(Cell::new(0));
+        let rt = Runtime::new();
+        rt.mount(Counted(calls.clone()));
+        let root = rt.root().unwrap();
+        let mut text = TextSystem::new();
+        let bounds = Rect::from_xywh(0.0, 0.0, 200.0, 120.0);
+
+        rt.layout(bounds, &mut text);
+        let first = calls.get();
+        assert!(first > 0);
+
+        rt.layout(bounds, &mut text);
+        assert_eq!(calls.get(), first, "clean layout is skipped");
+
+        rt.mark_damage(root, Dirty::PAINT);
+        rt.layout(bounds, &mut text);
+        assert_eq!(calls.get(), first, "paint damage does not relayout");
+
+        rt.request_rebuild(root);
+        rt.tick();
+        rt.layout(bounds, &mut text);
+        assert!(calls.get() > first, "layout dirty rebuilds and relayouts");
+
+        let second = calls.get();
+        rt.layout(Rect::from_xywh(0.0, 0.0, 320.0, 180.0), &mut text);
+        assert!(calls.get() > second, "viewport change relayouts");
+    }
+
+    #[test]
+    fn animated_layout_props_relayout_on_clock_advance() {
+        use crate::layout_live::AnimatedSize;
+        use crate::live::SignalLiveExt;
+
+        #[derive(Clone)]
+        struct AnimatedRoot {
+            width: sequoia_reactive::Signal<f32>,
+        }
+
+        impl View for AnimatedRoot {
+            fn body(&self) -> impl View + 'static {
+                AnimatedSize::width(
+                    crate::Unit,
+                    self.width
+                        .clone()
+                        .animate(AnimSpec::linear(std::time::Duration::from_secs(10))),
+                )
+            }
+        }
+
+        let width = sequoia_reactive::Signal::new(80.0f32);
+        let rt = Runtime::new();
+        rt.set_manual_clock(true);
+        rt.mount(AnimatedRoot {
+            width: width.clone(),
+        });
+        let root = rt.root().unwrap();
+        let child = rt.children(root)[0];
+        let mut text = TextSystem::new();
+        let bounds = Rect::from_xywh(0.0, 0.0, 400.0, 200.0);
+
+        rt.layout(bounds, &mut text);
+        assert!((rt.rect_of(child).unwrap().size.width - 80.0).abs() < 0.01);
+
+        width.set(200.0);
+        rt.tick();
+        rt.layout(bounds, &mut text);
+        let start = rt.rect_of(child).unwrap().size.width;
+
+        rt.advance_for_test(std::time::Duration::from_secs(5));
+        rt.layout(bounds, &mut text);
+        let mid = rt.rect_of(child).unwrap().size.width;
+        assert!(mid > start, "animated width should grow: {start} -> {mid}");
+        assert!(mid < 200.0, "animation should still be in flight: {mid}");
+    }
+
+    #[test]
+    fn cached_layer_invalidates_when_child_rebuilds() {
+        use crate::views::{Cached, Panel};
+        use sequoia_core::Color;
+
+        #[derive(Clone)]
+        struct ColorBox(Signal<Color>);
+
+        impl View for ColorBox {
+            fn body(&self) -> impl View + 'static {
+                Panel::new().background(self.0.get()).size(40.0, 30.0)
+            }
+        }
+
+        let color = Signal::new(Color::RED);
+        let rt = Runtime::new();
+        rt.mount(Cached::new(ColorBox(color.clone())));
+        let mut text = TextSystem::new();
+        let bounds = Rect::from_xywh(0.0, 0.0, 200.0, 200.0);
+        rt.layout(bounds, &mut text);
+
+        let mut first = RenderList::new();
+        rt.paint(&mut first, &mut text);
+        assert_eq!(first.quads().next().unwrap().color, Color::RED);
+
+        let mut second = RenderList::new();
+        rt.paint(&mut second, &mut text);
+        assert_eq!(rt.layer_cache_stats(), (1, 1));
+
+        color.set(Color::BLUE);
+        rt.tick();
+        rt.layout(bounds, &mut text);
+        let mut third = RenderList::new();
+        rt.paint(&mut third, &mut text);
+        assert_eq!(third.quads().next().unwrap().color, Color::BLUE);
+        assert_eq!(rt.layer_cache_stats().1, 2, "signal change misses");
+    }
+
+    #[test]
+    fn cached_layer_misses_for_another_text_system() {
+        use crate::views::{Cached, Panel};
+
+        let rt = Runtime::new();
+        rt.mount(Cached::new(
+            Panel::new()
+                .background(sequoia_core::Color::RED)
+                .size(40.0, 30.0),
+        ));
+        let bounds = Rect::from_xywh(0.0, 0.0, 200.0, 200.0);
+        let mut first_text = TextSystem::new();
+        rt.layout(bounds, &mut first_text);
+        let mut first = RenderList::new();
+        rt.paint(&mut first, &mut first_text);
+        let mut second = RenderList::new();
+        rt.paint(&mut second, &mut first_text);
+        assert_eq!(rt.layer_cache_stats(), (1, 1));
+
+        let mut second_text = TextSystem::new();
+        let mut third = RenderList::new();
+        rt.paint(&mut third, &mut second_text);
+        assert_eq!(
+            rt.layer_cache_stats(),
+            (1, 2),
+            "different atlas ids cannot replay cached glyph UVs"
+        );
+    }
+
+    #[test]
+    fn cached_layer_replays_filtered_subtrees() {
+        use crate::filter_view::Filtered;
+        use crate::views::{Cached, Panel};
+        use sequoia_core::Color;
+        use sequoia_style::Filter;
+
+        let rt = Runtime::new();
+        rt.mount(Cached::new(Filtered::new(
+            Panel::new().background(Color::RED).size(40.0, 30.0),
+            Filter::blur(8.0),
+        )));
+        let mut text = TextSystem::new();
+        let bounds = Rect::from_xywh(0.0, 0.0, 200.0, 200.0);
+        rt.layout(bounds, &mut text);
+
+        let mut first = RenderList::new();
+        rt.paint(&mut first, &mut text);
+        assert_eq!(rt.layer_cache_stats(), (0, 1), "first pass fills the cache");
+        assert_eq!(first.filter_spans().len(), 1);
+
+        let mut second = RenderList::new();
+        rt.paint(&mut second, &mut text);
+        assert_eq!(
+            rt.layer_cache_stats(),
+            (1, 1),
+            "filtered subtree replays from the layer cache"
+        );
+        assert_eq!(
+            second.filter_spans(),
+            first.filter_spans(),
+            "filter span survives append with the same absolute range"
+        );
+    }
+
+    #[test]
+    fn cached_layer_replays_until_revision_changes() {
+        use crate::views::{Cached, Panel};
+
+        let rt = Runtime::new();
+        rt.mount(Cached::new(
+            Panel::new()
+                .background(sequoia_core::Color::RED)
+                .size(40.0, 30.0),
+        ));
+        let mut text = TextSystem::new();
+        rt.layout(Rect::from_xywh(0.0, 0.0, 200.0, 200.0), &mut text);
+
+        let mut first = RenderList::new();
+        rt.paint(&mut first, &mut text);
+        let (hits, misses) = rt.layer_cache_stats();
+        assert_eq!((hits, misses), (0, 1), "first pass fills the cache");
+
+        let mut second = RenderList::new();
+        rt.paint(&mut second, &mut text);
+        assert_eq!(second.len(), first.len(), "cached output is replayed");
+        assert_eq!(rt.layer_cache_stats(), (1, 1), "second pass hits");
+
+        let child = rt.children(rt.root().unwrap())[0];
+        rt.mark_damage(child, Dirty::PAINT);
+        let mut third = RenderList::new();
+        rt.paint(&mut third, &mut text);
+        assert_eq!(
+            rt.layer_cache_stats(),
+            (1, 2),
+            "child revision bump invalidates the ancestor layer"
+        );
+        assert_eq!(third.len(), first.len());
     }
 
     #[test]

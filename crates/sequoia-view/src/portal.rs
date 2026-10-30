@@ -306,6 +306,14 @@ impl Popper {
         self
     }
 
+    /// Anchors the overlay to the popper's own layout box.
+    ///
+    /// The popper is usually a zero-sized box in its parent, so this anchors
+    /// the overlay near wherever the `Popper` happens to sit in the tree, not
+    /// to the control the user clicked. For a menu or tooltip under a button,
+    /// store the button's `ElementId` (for example `ctx.element()` from its
+    /// paint pass) and use [`Self::anchor_view`] instead; that stays correct
+    /// when the button moves or the layout changes.
     pub fn anchor_self(mut self) -> Self {
         self.anchor_self = true;
         self
@@ -316,6 +324,24 @@ impl Popper {
         self.anchor_self = false;
         self.placement = crate::overlay::Placement::Cursor;
         self
+    }
+
+    /// Anchors the overlay to a fixed screen-space point.
+    ///
+    /// Unlike [`Self::at_cursor`], the point does not follow later pointer
+    /// movement. Use this for a context menu that should stay where the user
+    /// clicked. The default placement is [`crate::overlay::Placement::Cursor`],
+    /// so the overlay's top-left sits at the point.
+    pub fn anchor_point(mut self, x: f32, y: f32) -> Self {
+        self.anchor = Anchor::Point(sequoia_core::Point::new(x, y));
+        self.anchor_self = false;
+        self.placement = crate::overlay::Placement::Cursor;
+        self
+    }
+
+    /// Anchors the overlay to a fixed screen-space `Point`.
+    pub fn anchor_static(self, point: sequoia_core::Point) -> Self {
+        self.anchor_point(point.x, point.y)
     }
 
     pub fn placement(mut self, placement: crate::overlay::Placement) -> Self {
@@ -575,6 +601,19 @@ mod tests {
         let p = Popper::new(open).at_cursor();
         assert!(matches!(p.anchor, Anchor::Cursor));
         assert!(matches!(p.placement, crate::overlay::Placement::Cursor));
+    }
+
+    #[test]
+    fn popper_anchor_point_stays_static() {
+        let open = Signal::new(false);
+        let p = Popper::new(open).anchor_point(12.0, 34.0);
+        assert!(
+            matches!(p.anchor, Anchor::Point(pt) if pt == sequoia_core::Point::new(12.0, 34.0))
+        );
+        assert!(matches!(p.placement, crate::overlay::Placement::Cursor));
+
+        let p = Popper::new(Signal::new(false)).anchor_static(sequoia_core::Point::new(5.0, 6.0));
+        assert!(matches!(p.anchor, Anchor::Point(pt) if pt == sequoia_core::Point::new(5.0, 6.0)));
     }
 
     #[test]
