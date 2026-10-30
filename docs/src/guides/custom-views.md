@@ -133,7 +133,7 @@ impl Leaf for Label {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        ctx.draw_text(
+        ctx.draw_text_tl(
             &self.text,
             (ctx.rect.left() + 8.0, ctx.rect.top() + 6.0),
             14.0,
@@ -164,11 +164,30 @@ Common drawing calls:
 - `bordered_quad(rect, background, radius, width, border)` fills a rounded
   rectangle with a border.
 - `paint_box(style)` paints a full `BoxStyle`.
-- `draw_text(text, origin, size, color)` draws a single line.
+- `draw_text(text, origin, size, color)` draws a single line. `origin` is the
+  text **baseline**, not the top-left corner.
+- `draw_text_tl(text, top_left, size, color)` draws a single line from the
+  top-left of its line box; use it when positioning text from `ctx.rect`.
+- `text_metrics(size)` returns the line-box `ascent`, `descent`, `line_gap`,
+  and `height` for vertical centering.
+- `measure_text(text, size)` returns the width and height of a specific string.
 - `draw_text_wrapped(...)` draws wrapped text inside a width.
 - `disk(center, radius, color)` draws a filled circle.
 - `image(rect, uv, source)` draws a bitmap.
 - `push_backdrop` / `push_rounded_clip` control the paint list below the leaf.
+
+To center text vertically, use the line-box metrics instead of a magic
+constant:
+
+```rust
+# use sequoia_ui::prelude::*;
+# fn center(ctx: &mut PaintCtx, label: &str) {
+let metrics = ctx.text_metrics(14.0);
+let top = ctx.rect.top() + (ctx.rect.size.height - metrics.height) * 0.5;
+ctx.draw_text_tl(label, (ctx.rect.left(), top), 14.0, Color::WHITE);
+# }
+# let _ = center;
+```
 
 Read signals in `paint` with `get_untracked`. Painting must not create reactive
 dependencies; subscribe in `track` (or in `body` for a composite) instead.

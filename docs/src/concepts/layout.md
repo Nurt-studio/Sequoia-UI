@@ -39,6 +39,11 @@ let _ = inspector;
   size.
 - `overflow` controls whether content draws outside the view. Use `Hidden` or
   `Scroll` when a child must be clipped.
+- `Edges` is `#[non_exhaustive]`, so build it with a constructor instead of a
+  struct literal. Use `Edges::uniform`, `xy`, or `symmetric` for even sides and
+  `Edges::trbl(top, right, bottom, left)` for asymmetric ones (CSS order).
+  `Edges::only(left, top, right, bottom)` is the same constructor in field
+  order.
 
 ## Lengths
 
@@ -61,6 +66,15 @@ size and does not grow unless a flex weight is set.
 
 When the available space is unbounded, `Percent` and `Fill` fall back to the
 intrinsic size. A view can only fill space that its parent actually bounds.
+
+Built-in views expose `fill_width()`, `fill_height()`, and `fill_size()` as
+shorthands for `Length::Fill(1.0)` on one or both axes. They are available on
+`Row`, `Column`, `Stack`, `Grid`, `Wrap`, `Container`, `ScrollView`, `Canvas`,
+and the other layout primitives. A few wrappers expose only `fill_size()`
+(for example `Responsive`, `DockView`, and `DockFloatLayer`), so use that when
+you need both axes. `ScrollView` and `Canvas` already fill both axes by default;
+the explicit methods are still useful when an ancestor or a later builder
+would otherwise reset their size.
 
 ## Rows and columns
 
