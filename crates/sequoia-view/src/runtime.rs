@@ -1411,7 +1411,17 @@ impl Runtime {
         if hitable { Some(el) } else { None }
     }
 
+    /// Moves the pointer without keyboard modifiers.
+    ///
+    /// Prefer [`Runtime::pointer_move_with_mods`] on platforms that track
+    /// modifier state.
     pub fn pointer_move(&self, pos: Point, text: &mut TextSystem) {
+        self.pointer_move_with_mods(pos, Modifiers::NONE, text);
+    }
+
+    /// Moves the pointer and reports the current keyboard modifiers on the
+    /// resulting [`PointerEvent::Move`].
+    pub fn pointer_move_with_mods(&self, pos: Point, modifiers: Modifiers, text: &mut TextSystem) {
         let mut st = self.inner.interact.get();
         st.cursor = pos;
         st.pointer_seen = true;
@@ -1432,12 +1442,9 @@ impl Runtime {
         }
 
         if self.inner.pending_drag.borrow().is_some() || self.inner.active_drag.borrow().is_some() {
-            self.poll_pending(pos, Modifiers::NONE, text);
+            self.poll_pending(pos, modifiers, text);
         }
-        let ev = Event::Pointer(PointerEvent::Move {
-            pos,
-            modifiers: Modifiers::NONE,
-        });
+        let ev = Event::Pointer(PointerEvent::Move { pos, modifiers });
         match st.captured {
             Some(c) => {
                 let _ = self.dispatch_single(c, &ev, pos, text);

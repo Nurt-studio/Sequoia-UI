@@ -304,6 +304,31 @@ fn canvas_cursor_reaches_runtime() {
 }
 
 #[test]
+fn pointer_move_reports_keyboard_modifiers() {
+    let seen: Signal<Option<Modifiers>> = Signal::new(None);
+    struct Demo {
+        seen: Signal<Option<Modifiers>>,
+    }
+    impl View for Demo {
+        fn body(&self) -> impl View + 'static {
+            let seen = self.seen.clone();
+            Canvas::new().on_pointer(move |_, ev, _| {
+                if let PointerEvent::Move { modifiers, .. } = ev {
+                    seen.set(Some(*modifiers));
+                }
+            })
+        }
+    }
+    let h = Harness::new(Demo { seen: seen.clone() });
+    h.layout(200.0, 200.0);
+    h.pointer_move_mods(10.0, 10.0, Modifiers::SHIFT | Modifiers::CONTROL);
+    assert_eq!(
+        seen.get_untracked(),
+        Some(Modifiers::SHIFT | Modifiers::CONTROL)
+    );
+}
+
+#[test]
 fn lod_tiers_hide_detail_when_zoomed_out() {
     let zoom: Signal<f32> = Signal::new(1.0);
     struct Demo {

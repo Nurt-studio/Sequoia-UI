@@ -1465,7 +1465,8 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                     let s = ws.scale;
                     ws.cursor = Point::new(position.x as f32 / s, position.y as f32 / s);
 
-                    ws.rt.pointer_move(ws.cursor, &mut ws.text);
+                    ws.rt
+                        .pointer_move_with_mods(ws.cursor, ws.mods, &mut ws.text);
                     sync_cursor(&ws.window, &mut ws.last_cursor, &ws.rt);
                 }
 

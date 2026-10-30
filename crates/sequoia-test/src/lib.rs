@@ -212,8 +212,13 @@ impl Harness {
     }
 
     pub fn pointer_move(&self, x: f32, y: f32) {
+        self.pointer_move_mods(x, y, Modifiers::NONE);
+    }
+
+    pub fn pointer_move_mods(&self, x: f32, y: f32, mods: Modifiers) {
         let mut text = sequoia_text::TextSystem::new();
-        self.rt.pointer_move(Point::new(x, y), &mut text);
+        self.rt
+            .pointer_move_with_mods(Point::new(x, y), mods, &mut text);
     }
 
     pub fn pointer_down(&self, x: f32, y: f32) {
