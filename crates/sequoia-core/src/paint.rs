@@ -1021,6 +1021,20 @@ pub struct RenderList {
     filters: Vec<FilterSpan>,
 }
 
+/// Snapshot of a `RenderList` used to capture a suffix for layer caching.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderMark {
+    items: usize,
+    item_clips: usize,
+    item_transforms: usize,
+    backdrops: usize,
+    filters: usize,
+    opacity_spans: usize,
+    clip_depth: usize,
+    opacity_depth: usize,
+    transform_depth: usize,
+}
+
 impl RenderList {
     pub fn new() -> Self {
         Self::default()
@@ -1775,6 +1789,110 @@ impl RenderList {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+
+    /// Records the current end of the list for [`RenderList::suffix`].
+    pub fn mark(&self) -> RenderMark {
+        RenderMark {
+            items: self.items.len(),
+            item_clips: self.item_clips.len(),
+            item_transforms: self.item_transforms.len(),
+            backdrops: self.backdrops.len(),
+            filters: self.filters.len(),
+            opacity_spans: self.opacity_spans.len(),
+            clip_depth: self.clip_stack.len(),
+            opacity_depth: self.opacity_stack.len(),
+            transform_depth: self.transform_stack.len(),
+        }
+    }
+
+    /// Captures everything added since `mark`.
+    ///
+    /// Backdrop, filter, and opacity spans are rebased to the start of the
+    /// suffix so [`RenderList::append`] can replay them. Returns `None` if the
+    /// clip/transform/opacity stacks are left open or the mark is out of
+    /// bounds.
+    pub fn suffix(&self, mark: RenderMark) -> Option<Self> {
+        if mark.items > self.items.len()
+            || mark.item_clips > self.item_clips.len()
+            || mark.item_transforms > self.item_transforms.len()
+            || mark.backdrops > self.backdrops.len()
+            || mark.filters > self.filters.len()
+            || mark.opacity_spans > self.opacity_spans.len()
+            || mark.clip_depth != self.clip_stack.len()
+            || mark.opacity_depth != self.opacity_stack.len()
+            || mark.transform_depth != self.transform_stack.len()
+        {
+            return None;
+        }
+        let base = mark.items;
+        Some(Self {
+            items: self.items[mark.items..].to_vec(),
+            clip_stack: Vec::new(),
+            opacity_stack: Vec::new(),
+            opacity_spans: self.opacity_spans[mark.opacity_spans..]
+                .iter()
+                .map(|span| OpacitySpan {
+                    start: span.start.saturating_sub(base),
+                    end: span.end.saturating_sub(base),
+                    ..*span
+                })
+                .collect(),
+            transform_stack: Vec::new(),
+            item_clips: self.item_clips[mark.item_clips..].to_vec(),
+            item_transforms: self.item_transforms[mark.item_transforms..].to_vec(),
+            backdrops: self.backdrops[mark.backdrops..]
+                .iter()
+                .map(|span| BackdropSpan {
+                    at: span.at.saturating_sub(base),
+                    ..*span
+                })
+                .collect(),
+            filters: self.filters[mark.filters..]
+                .iter()
+                .map(|span| FilterSpan {
+                    start: span.start.saturating_sub(base),
+                    end: span.end.saturating_sub(base),
+                    ..*span
+                })
+                .collect(),
+        })
+    }
+
+    /// Appends a cached suffix produced by [`RenderList::suffix`].
+    ///
+    /// Parent clip/transform/opacity state is not replayed: the captured items
+    /// already contain their resolved clips and transforms. Backdrop, filter,
+    /// and opacity spans are shifted by the current item count.
+    pub fn append(&mut self, other: &Self) {
+        debug_assert!(
+            other.clip_stack.is_empty()
+                && other.transform_stack.is_empty()
+                && other.opacity_stack.is_empty(),
+            "append expects a replayable layer suffix"
+        );
+        let base = self.items.len();
+        self.items.extend_from_slice(&other.items);
+        self.item_clips.extend_from_slice(&other.item_clips);
+        self.item_transforms
+            .extend_from_slice(&other.item_transforms);
+        self.backdrops
+            .extend(other.backdrops.iter().map(|span| BackdropSpan {
+                at: span.at + base,
+                ..*span
+            }));
+        self.filters
+            .extend(other.filters.iter().map(|span| FilterSpan {
+                start: span.start + base,
+                end: span.end + base,
+                ..*span
+            }));
+        self.opacity_spans
+            .extend(other.opacity_spans.iter().map(|span| OpacitySpan {
+                start: span.start + base,
+                end: span.end + base,
+                ..*span
+            }));
+    }
 }
 
 #[cfg(test)]
@@ -1911,6 +2029,107 @@ mod tests {
         list.clear();
         assert_eq!(list.opacity_depth(), 0, "clear also resets opacity");
         assert!(list.opacity_spans().is_empty());
+    }
+
+    #[test]
+    fn render_list_suffix_and_append_replay_items() {
+        let mut list = RenderList::new();
+        list.push_quad(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        let mark = list.mark();
+        list.push_clip(Rect::from_xywh(0.0, 0.0, 20.0, 20.0));
+        list.push_quad(Rect::from_xywh(5.0, 5.0, 10.0, 10.0), Color::GREEN, 2.0);
+        list.pop_clip();
+
+        let suffix = list.suffix(mark).expect("plain items are replayable");
+        assert_eq!(suffix.len(), 1);
+        assert_eq!(suffix.item_clips().len(), 1);
+        assert_eq!(suffix.item_transforms().len(), 1);
+
+        let mut out = RenderList::new();
+        out.append(&suffix);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.item_clips().len(), 1);
+        assert_eq!(out.item_transforms().len(), 1);
+        assert_eq!(
+            out.quads().next().unwrap().rect,
+            suffix.quads().next().unwrap().rect
+        );
+    }
+
+    #[test]
+    fn render_list_suffix_rebases_composited_spans() {
+        let mut list = RenderList::new();
+        list.push_quad(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        let mark = list.mark();
+
+        list.push_backdrop(
+            Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+            0.0,
+            4.0,
+            Color::BLACK,
+            0.0,
+            SpanMask::None,
+        );
+        let filter = list
+            .push_filter_begin(
+                Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+                0.0,
+                4.0,
+                SpanMask::None,
+            )
+            .expect("visible filter opens a span");
+        list.push_opacity(0.5);
+        list.push_quad(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::GREEN, 0.0);
+        list.pop_opacity();
+        list.push_filter_end(filter);
+
+        let suffix = list.suffix(mark).expect("closed spans are replayable");
+        assert_eq!(suffix.backdrops().len(), 1);
+        assert_eq!(suffix.backdrops()[0].at, 0, "backdrop rebased to suffix");
+        assert_eq!(suffix.filter_spans().len(), 1);
+        assert_eq!(
+            (suffix.filter_spans()[0].start, suffix.filter_spans()[0].end),
+            (0, 1)
+        );
+        assert_eq!(suffix.opacity_spans().len(), 1);
+        assert_eq!(
+            (
+                suffix.opacity_spans()[0].start,
+                suffix.opacity_spans()[0].end
+            ),
+            (0, 1)
+        );
+
+        let mut out = RenderList::new();
+        out.push_quad(Rect::from_xywh(0.0, 0.0, 1.0, 1.0), Color::BLUE, 0.0);
+        out.push_quad(Rect::from_xywh(0.0, 0.0, 1.0, 1.0), Color::BLUE, 0.0);
+        out.append(&suffix);
+        assert_eq!(out.backdrops()[0].at, 2);
+        assert_eq!(out.filter_spans()[0].start, 2);
+        assert_eq!(out.filter_spans()[0].end, 3);
+        assert_eq!(out.opacity_spans()[0].start, 2);
+        assert_eq!(out.opacity_spans()[0].end, 3);
+    }
+
+    #[test]
+    fn render_list_suffix_rejects_open_groups() {
+        let mut list = RenderList::new();
+        let mark = list.mark();
+        list.push_opacity(0.5);
+        list.push_quad(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        assert!(
+            list.suffix(mark).is_none(),
+            "an open opacity group cannot be replayed"
+        );
+        list.pop_opacity();
+
+        let mark = list.mark();
+        list.push_clip(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
+        list.push_quad(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::RED, 0.0);
+        assert!(
+            list.suffix(mark).is_none(),
+            "an open clip cannot be replayed"
+        );
     }
 
     #[test]

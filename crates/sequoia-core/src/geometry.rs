@@ -483,6 +483,19 @@ impl Edges {
         }
     }
 
+    /// Builds asymmetric edges in CSS order: top, right, bottom, left.
+    ///
+    /// This is the counterpart of [`Self::only`], which takes the fields in
+    /// left, top, right, bottom order.
+    pub const fn trbl(top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
     pub const fn left(v: f32) -> Self {
         Self {
             left: v,
@@ -877,6 +890,10 @@ mod tests {
         assert_eq!(
             Edges::from((1.0f32, 2.0, 3.0, 4.0)),
             Edges::only(1.0, 2.0, 3.0, 4.0)
+        );
+        assert_eq!(
+            Edges::trbl(1.0, 2.0, 3.0, 4.0),
+            Edges::only(4.0, 1.0, 2.0, 3.0)
         );
         assert_eq!(Edges::from(8), Edges::all(8.0));
         assert_eq!(

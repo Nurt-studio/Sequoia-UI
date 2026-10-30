@@ -10,7 +10,7 @@ pub mod window;
 
 pub use crate::brush::{
     Fill, GradientKind, GradientStop as BrushStop, GradientStops, MAX_GRADIENT_STOPS,
-    Stroke as BrushStroke,
+    Stroke as BrushStroke, StrokeSpace,
 };
 
 pub use crate::dirty::Dirty;
@@ -28,7 +28,7 @@ pub use crate::window::WindowId;
 
 pub mod prelude {
     pub use crate::brush::GradientStop as CoreGradientStop;
-    pub use crate::brush::{Fill, GradientKind, GradientStops, Stroke as BrushStroke};
+    pub use crate::brush::{Fill, GradientKind, GradientStops, Stroke as BrushStroke, StrokeSpace};
     pub use crate::dirty::Dirty;
     pub use crate::geometry::{
         Constraints, Edges, Length, LengthExt, Point, Rect, Size, Transform, Vec2,

@@ -281,33 +281,75 @@ impl From<Color> for Fill {
     }
 }
 
+/// Whether a stroke width is expressed in local coordinates or screen pixels.
+///
+/// Local widths scale with `Painter::with_transform` (so a 1 px outline gets
+/// thicker when a canvas is zoomed in). Screen widths stay constant on screen,
+/// which is what selection outlines and drag handles usually want.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StrokeSpace {
+    #[default]
+    Local,
+
+    Screen,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stroke {
     pub width: f32,
     pub rounded: bool,
+    pub space: StrokeSpace,
 }
 
 impl Stroke {
-    pub fn new(width: f32) -> Self {
-        Self {
-            width: if width.is_finite() {
-                width.max(0.0)
-            } else {
-                0.0
-            },
-            rounded: false,
+    fn sanitize_width(width: f32) -> f32 {
+        if width.is_finite() {
+            width.max(0.0)
+        } else {
+            0.0
         }
     }
 
+    pub fn new(width: f32) -> Self {
+        Self {
+            width: Self::sanitize_width(width),
+            rounded: false,
+            space: StrokeSpace::Local,
+        }
+    }
+
+    /// A local-space stroke whose width scales with the painter transform.
     pub fn round(width: f32) -> Self {
         Self {
-            width: if width.is_finite() {
-                width.max(0.0)
-            } else {
-                0.0
-            },
+            width: Self::sanitize_width(width),
             rounded: true,
+            space: StrokeSpace::Local,
         }
+    }
+
+    /// A stroke whose width is in screen pixels and ignores the transform scale.
+    pub fn screen(width: f32) -> Self {
+        Self {
+            width: Self::sanitize_width(width),
+            rounded: false,
+            space: StrokeSpace::Screen,
+        }
+    }
+
+    /// A rounded, screen-space stroke.
+    pub fn screen_round(width: f32) -> Self {
+        Self {
+            width: Self::sanitize_width(width),
+            rounded: true,
+            space: StrokeSpace::Screen,
+        }
+    }
+
+    /// Converts this stroke to screen-space pixels.
+    pub fn in_screen_space(mut self) -> Self {
+        self.space = StrokeSpace::Screen;
+        self
     }
 
     pub fn is_visible(self) -> bool {
