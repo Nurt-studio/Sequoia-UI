@@ -1293,14 +1293,41 @@ impl RenderList {
             self.item_transforms.push(t);
             return;
         }
-        let Some(rect) = self.clip_rect(rect) else {
-            return;
-        };
         let has_border = border_width > 0.0 && border_color.a > 0.0;
+        // Cropping the quad to the clip rect saves fill for plain boxes, but it
+        // also moves the geometry: the radius and the border are derived from
+        // `rect`, so a rounded or bordered quad would draw its corners and edge
+        // along the clip boundary instead of being cut off by it. Only crop
+        // when that cannot change pixels.
+        let plain = radius <= 0.0 && !has_border;
+        let rect = if plain {
+            match self.clip_rect(rect) {
+                Some(cropped) => cropped,
+                None => return,
+            }
+        } else {
+            if let Some(clip) = self.active_clip()
+                && !rect.intersects(clip)
+            {
+                return;
+            }
+            rect
+        };
         if rect.is_empty() || (color.a <= 0.0 && !has_border) {
             return;
         }
-        let rounded = self.active_rounded_clip();
+        // Plain fills were cropped above, so the shader needs no clip for them.
+        // Rounded or bordered quads keep their real geometry instead and carry
+        // the clip as item state, so corners and edges are cut off by the clip
+        // rather than redrawn along it.
+        let rounded = if plain {
+            self.active_rounded_clip()
+        } else {
+            self.active_clip().map(|clip| {
+                let radius = self.active_rounded_clip().map(|c| c.radius).unwrap_or(0.0);
+                RoundedClip::new(clip, radius)
+            })
+        };
         self.items.push(RenderItem::Quad(Quad {
             rect,
             color,
@@ -2249,6 +2276,53 @@ mod tests {
     }
 
     #[test]
+    fn clipped_rounded_quad_keeps_its_geometry() {
+        let clip = Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+        let object = Rect::from_xywh(60.0, 20.0, 100.0, 80.0);
+
+        let mut list = RenderList::new();
+        list.push_clip(clip);
+        list.push_bordered_quad(object, Color::RED, 12.0, 2.0, Color::WHITE);
+        assert_eq!(list.len(), 1);
+        let q = list.quads().next().unwrap();
+        assert_eq!(
+            q.rect, object,
+            "rounded geometry is cut by the clip, not resized to it"
+        );
+        assert_eq!(q.radius, 12.0, "corner radius survives the clip");
+        assert_eq!(q.border_width, 2.0, "border stays on the real edge");
+        let item_clip = list.item_rounded_clip(0).expect("clip stored for the shader");
+        assert_eq!(item_clip.rect, clip);
+
+        let mut outside = RenderList::new();
+        outside.push_clip(clip);
+        outside.push_bordered_quad(
+            Rect::from_xywh(200.0, 200.0, 50.0, 50.0),
+            Color::RED,
+            8.0,
+            1.0,
+            Color::WHITE,
+        );
+        assert!(
+            outside.is_empty(),
+            "rounded quad fully outside the clip is still culled"
+        );
+
+        let mut plain = RenderList::new();
+        plain.push_clip(clip);
+        plain.push_quad(
+            Rect::from_xywh(50.0, 50.0, 100.0, 100.0),
+            Color::RED,
+            0.0,
+        );
+        assert_eq!(
+            plain.quads().next().unwrap().rect,
+            Rect::from_xywh(50.0, 50.0, 50.0, 50.0),
+            "plain fills keep the cheap crop"
+        );
+    }
+
+    #[test]
     fn nested_clip_intersects() {
         let mut list = RenderList::new();
         list.push_clip(Rect::from_xywh(0.0, 0.0, 100.0, 100.0));
@@ -2806,7 +2880,7 @@ mod tests {
         assert_eq!(
             list.backdrops()[0].draw.mask,
             SpanMask::Uniform(0.5),
-            "maska w markerze t�'a"
+            "mask in the marker layer"
         );
     }
 
