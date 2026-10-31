@@ -82,6 +82,8 @@ pub struct GpuRenderer {
     pub(crate) image_cap: usize,
     pub(crate) last_frame: Option<Instant>,
     pub(crate) frame_index: u64,
+    pub(crate) trace_acquires: u64,
+    pub(crate) trace_atlas_recreates: u64,
     pub(crate) redraw: Cell<bool>,
     pub(crate) skipped: Cell<Option<FrameSkip>>,
     pub(crate) stats: RenderStats,
@@ -441,6 +443,8 @@ impl GpuRenderer {
             image_cap: INITIAL_IMAGE_CAPACITY,
             last_frame: None,
             frame_index: 0,
+            trace_acquires: 0,
+            trace_atlas_recreates: 0,
             redraw: Cell::new(false),
             skipped: Cell::new(None),
             stats: RenderStats::default(),
@@ -499,6 +503,63 @@ impl GpuRenderer {
     pub fn stats(&self) -> RenderStats {
         self.stats
     }
+
+    /// Human-readable summary of the GPU allocations this renderer owns.
+    ///
+    /// Covers our own textures and instance buffers, not driver-private
+    /// staging memory, so a report that keeps growing points at resources being
+    /// recreated every frame.
+    pub fn memory_report(&self) -> String {
+        fn mb(bytes: f64) -> f64 {
+            bytes / 1_048_576.0
+        }
+        fn tex(size: (u32, u32)) -> f64 {
+            mb(size.0 as f64 * size.1 as f64 * 4.0)
+        }
+        let mut surfaces = 0.0;
+        for s in self.surface_tex.values() {
+            surfaces += tex(s.size) * if s.msaa.is_some() { 2.0 } else { 1.0 };
+        }
+        let mut images = 0.0;
+        for i in self.images.values() {
+            images += tex((i.width, i.height));
+        }
+        let mut groups = 0.0;
+        for g in &self.group_layers {
+            groups += tex(g.size);
+        }
+        let frame = self.frame_target.as_ref().map(|t| tex(t.size)).unwrap_or(0.0);
+        let backdrop = self
+            .backdrop_tex
+            .as_ref()
+            .map(|b| tex(b.size) * 3.0)
+            .unwrap_or(0.0);
+        let depth = self
+            .depth_tex
+            .as_ref()
+            .map(|(_, _, size)| tex(*size))
+            .unwrap_or(0.0);
+        let atlas = self.atlas_synced.map(|(_, w, h)| tex((w, h))).unwrap_or(0.0);
+        let bufs = mb((self.capacity * QUAD_BYTES
+            + self.glyph_capacity * GLYPH_BYTES
+            + self.image_cap * BLIT_BYTES
+            + self.frame_cap * QUAD_BYTES
+            + self.blit_cap * BLIT_BYTES
+            + self.present_cap * BLIT_BYTES
+            + self.gradient_cap * GRADIENT_BYTES
+            + self.backdrop_cap * BACKDROP_BYTES) as f64);
+        format!(
+            "gpu: target={frame:.1} backdrop={backdrop:.1} depth={depth:.1} atlas={atlas:.1} \
+             groups={groups:.1}(n={}) surfaces={surfaces:.1}(n={}) images={images:.1}(n={}) \
+             bufs={bufs:.1}MB acq={} atlas_new={}",
+            self.group_layers.len(),
+            self.surface_tex.len(),
+            self.images.len(),
+            self.trace_acquires,
+            self.trace_atlas_recreates,
+        )
+    }
+
 
     /// Returns the accumulated render statistics and resets the counters.
     pub fn take_stats(&mut self) -> RenderStats {
@@ -613,6 +674,8 @@ impl GpuRenderer {
         surfaces: &[SurfaceDraw],
         damage: Option<&[Rect]>,
     ) -> Result<(), RenderError> {
+        const MAX_SURFACE_ACQUIRE_ATTEMPTS: u32 = 4;
+
         if self.config.width == 0 || self.config.height == 0 {
             return Ok(());
         }
@@ -624,21 +687,30 @@ impl GpuRenderer {
         self.sync_atlas(atlas);
 
         let mut reconfigured = false;
+        let mut attempts = 0u32;
         let frame = loop {
+            self.trace_acquires = self.trace_acquires.wrapping_add(1);
             match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame) => break frame,
                 wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                     if reconfigured {
                         break frame;
                     }
+                    attempts += 1;
                     drop(frame);
                     self.surface.configure(&self.device, &self.config);
                     reconfigured = true;
                 }
-                wgpu::CurrentSurfaceTexture::Outdated => {
-                    self.surface.configure(&self.device, &self.config);
-                }
-                wgpu::CurrentSurfaceTexture::Lost => {
+                wgpu::CurrentSurfaceTexture::Outdated
+                | wgpu::CurrentSurfaceTexture::Lost => {
+                    // A configure allocates a fresh set of swapchain images, so
+                    // retrying without a bound would churn memory every frame
+                    // when the surface never reports a usable image.
+                    attempts += 1;
+                    if attempts > MAX_SURFACE_ACQUIRE_ATTEMPTS {
+                        self.skipped.set(Some(FrameSkip::Timeout));
+                        return Ok(());
+                    }
                     self.surface.configure(&self.device, &self.config);
                 }
                 wgpu::CurrentSurfaceTexture::Timeout => {

@@ -460,6 +460,14 @@ impl crate::renderer::GpuRenderer {
         };
 
         if needs_recreate {
+            // Release the previous atlas before allocating the new one: glyph
+            // atlases reach 2048² (16 MB) and a plain drop only frees the GPU
+            // allocation after the queue drains, so growth would briefly hold
+            // two full atlases.
+            self.trace_atlas_recreates = self.trace_atlas_recreates.wrapping_add(1);
+            if let Some((old, _)) = self.atlas_tex.take() {
+                old.destroy();
+            }
             let tex = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("sequoia-atlas"),
                 size: wgpu::Extent3d {
