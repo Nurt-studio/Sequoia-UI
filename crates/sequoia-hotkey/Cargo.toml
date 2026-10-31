@@ -15,18 +15,18 @@ sequoia-input = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 
-# Audyt P3: cargo NIE pozwala nadpisać `workspace.lints` w crate przy
-# `lints.workspace = true` — dlatego hotkey powtarza tabelę ręcznie,
-# z `unsafe_code = "allow"` (jedyne dopuszczone `unsafe` w workspace:
-# FFI Win32 RegisterHotKey/UnregisterHotKey — patrz src/lib.rs).
+# P3 audit: cargo does NOT allow overriding `workspace.lints` in a crate with
+# `lints.workspace = true` — therefore hotkey repeats the table manually,
+# with `unsafe_code = "allow"` (the only permitted `unsafe` in the workspace:
+# Win32 FFI RegisterHotKey/UnregisterHotKey — see src/lib.rs).
 [lints.rust]
 unsafe_code = "allow"
-# Jak w workspace: bez `missing_docs` (szum ~4300 ostrzeżeń).
+# As in the workspace: no `missing_docs` (noise from ~4300 warnings).
 missing_docs = "allow"
 unreachable_pub = "warn"
 
 [lints.clippy]
-# Jak w workspace (patrz komentarz w Cargo.toml roota).
+# As in the workspace (see the comment in the root Cargo.toml).
 all = { level = "warn", priority = -1 }
 pedantic = { level = "allow", priority = -1 }
 neg_cmp_op_on_partial_ord = "allow"
