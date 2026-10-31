@@ -28,6 +28,7 @@ pub mod utils;
 mod tests;
 
 pub use color::{ColorSpace, linear_to_srgb, srgb_to_linear};
+pub use gpu::shaders::compose_user_shader;
 pub use renderer::GpuRenderer;
 pub use surface::{PendingFrames, Revision, WgpuFrame, WgpuRenderer, WgpuSurface};
 pub use types::{

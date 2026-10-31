@@ -25,4 +25,3 @@ pub(super) fn body_alignment(_state: &EditorState) -> impl View + 'static {
 }
 
 // ---------------------------- position / size ----------------------------
-

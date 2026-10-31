@@ -167,7 +167,8 @@ impl View for CommandPalette {
 
 // -------------------------- Help Overlay --------------------------
 
-
 pub(crate) fn command_palette(state: &EditorState) -> impl View + 'static {
-    CommandPalette { state: state.clone() }
+    CommandPalette {
+        state: state.clone(),
+    }
 }

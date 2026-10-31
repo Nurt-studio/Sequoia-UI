@@ -860,6 +860,7 @@ fn backdrop_segments_accumulate_with_absolute_ranges() {
                 GuiRun::Glyphs(s, l) => assert!((s + l) as usize <= all_glyphs.len()),
                 GuiRun::Images(s, l) => assert!((s + l) as usize <= all_images.len()),
                 GuiRun::Gradients(s, l) => assert!((s + l) as usize <= all_gradients.len()),
+                GuiRun::Shader(_, _, _, _) => {}
             }
         }
     }

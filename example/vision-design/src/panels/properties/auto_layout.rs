@@ -85,11 +85,11 @@ pub(super) fn body_auto_layout(state: &EditorState) -> impl View + 'static {
                 .gap(6.0)
                 .align_items(Align::Center)
                 .child(
-                    Container::new()
-                        .width(24.0)
-                        .height(28.0)
-                        .center()
-                        .child(Text::new("↔").size(14.0).color(colors::active().icon_inactive)),
+                    Container::new().width(24.0).height(28.0).center().child(
+                        Text::new("↔")
+                            .size(14.0)
+                            .color(colors::active().icon_inactive),
+                    ),
                 )
                 .child_flex(drag_num(state.sel_pad_h.clone(), 0.0, 200.0, 0), 1.0),
         )
@@ -98,11 +98,11 @@ pub(super) fn body_auto_layout(state: &EditorState) -> impl View + 'static {
                 .gap(6.0)
                 .align_items(Align::Center)
                 .child(
-                    Container::new()
-                        .width(24.0)
-                        .height(28.0)
-                        .center()
-                        .child(Text::new("↕").size(14.0).color(colors::active().icon_inactive)),
+                    Container::new().width(24.0).height(28.0).center().child(
+                        Text::new("↕")
+                            .size(14.0)
+                            .color(colors::active().icon_inactive),
+                    ),
                 )
                 .child_flex(drag_num(state.sel_pad_v.clone(), 0.0, 200.0, 0), 1.0),
         );
@@ -132,10 +132,13 @@ pub(super) fn body_auto_layout(state: &EditorState) -> impl View + 'static {
         col = col.child(bottom);
     }
     if let Some(h) = hint {
-        col = col.child(Text::new(h).size(10.0).color(colors::active().icon_inactive));
+        col = col.child(
+            Text::new(h)
+                .size(10.0)
+                .color(colors::active().icon_inactive),
+        );
     }
     col
 }
 
 // ---------------------------- Constraints (child in auto-layout parent) ---
-

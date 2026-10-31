@@ -1,11 +1,10 @@
 use std::cell::RefCell;
 
-
 use super::CanvasSignals;
 use crate::canvas::GUIDE_TOL_PX;
-use crate::core::geometry::{apply_resize, snap, Handle};
+use crate::core::geometry::{Handle, apply_resize, snap};
 use crate::core::layer::Layer;
-use crate::core::snap::{compute_snap_and_guides, Guides};
+use crate::core::snap::{Guides, compute_snap_and_guides};
 
 #[derive(Clone)]
 pub(crate) enum DragMode {

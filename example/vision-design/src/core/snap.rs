@@ -78,4 +78,3 @@ pub(crate) fn compute_snap_and_guides(
     }
     (best_dx, best_dy, guides)
 }
-

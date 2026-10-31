@@ -16,11 +16,11 @@ pub(crate) fn mono_label(text: &'static str) -> impl View + 'static {
 
 /// 16×28 label with an icon (e.g. opacity / radius).
 pub(crate) fn icon_label(icon: &'static str) -> impl View + 'static {
-    Container::new()
-        .width(16.0)
-        .height(28.0)
-        .center()
-        .child(Icon::new(icon).size(13.0).color(colors::active().icon_inactive))
+    Container::new().width(16.0).height(28.0).center().child(
+        Icon::new(icon)
+            .size(13.0)
+            .color(colors::active().icon_inactive),
+    )
 }
 
 /// 28 px number field: value centered in the whole field.

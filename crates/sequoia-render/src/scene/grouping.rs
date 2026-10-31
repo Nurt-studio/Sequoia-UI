@@ -43,6 +43,7 @@ pub(crate) fn group_runs(
         image_keys,
         gradients,
         runs,
+        None,
     )
 }
 
@@ -67,8 +68,10 @@ pub(crate) fn group_runs_with_opacity(
     image_keys: &mut Vec<u64>,
     gradients: &mut Vec<GpuGradient>,
     runs: &mut Vec<GuiRun>,
+    shaders: Option<&mut ShaderGroupData>,
 ) -> (usize, usize, usize, usize, usize) {
     let opacity = |index: usize| opacities.get(index).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+    let mut shader_data = shaders;
     quads.clear();
     glyphs.clear();
     images.clear();
@@ -387,6 +390,65 @@ pub(crate) fn group_runs_with_opacity(
                 }
             }
 
+            RenderItem::Shader(s) => {
+                let Some(data) = shader_data.as_deref_mut() else {
+                    culled += 1;
+                    continue;
+                };
+                if cull_rect_t(s.rect, index) {
+                    culled += 1;
+                    continue;
+                }
+                let (clip_rect, clip_radius) = gpu_clip(index);
+                let (transform_a, transform_b) = gpu_transform(index);
+                let opacity = (s.opacity * opacity(index)).clamp(0.0, 1.0);
+                if opacity <= 0.0 {
+                    culled += 1;
+                    continue;
+                }
+                let start = data.instances.len() as u32;
+                let uniform_offset = data.uniforms.len() as u32;
+                data.uniforms.extend_from_slice(&s.uniforms);
+                data.uniforms
+                    .resize(uniform_offset as usize + SHADER_UNIFORM_STRIDE, 0);
+                data.instances.push(GpuShaderInstance {
+                    rect: [
+                        s.rect.left() * scale,
+                        s.rect.top() * scale,
+                        s.rect.size.width * scale,
+                        s.rect.size.height * scale,
+                    ],
+                    uv: s.uv,
+                    clip_rect,
+                    clip_radius,
+                    opacity,
+                    transform_a,
+                    transform_b,
+                    shader_id: s.shader.get(),
+                    uniform_offset,
+                    _pad: [0.0; 2],
+                });
+                let shader_id = s.shader;
+                let blend = s.blend;
+                match runs.last_mut() {
+                    Some(GuiRun::Shader(run_start, len, id, mode))
+                        if *run_start + *len == start && *id == shader_id && *mode == blend =>
+                    {
+                        *len += 1;
+                    }
+                    _ => runs.push(GuiRun::Shader(start, 1, shader_id, blend)),
+                }
+            }
+
+            RenderItem::Blit { target, .. } => {
+                log::warn!("RenderItem::Blit({target:?}) ignored in Stage 1");
+            }
+            RenderItem::TargetBegin { id, .. } => {
+                log::warn!("RenderItem::TargetBegin({id:?}) ignored in Stage 1");
+            }
+            RenderItem::TargetEnd { id } => {
+                log::warn!("RenderItem::TargetEnd({id:?}) ignored in Stage 1");
+            }
             _ => {}
         }
     }
@@ -407,12 +469,26 @@ pub(crate) fn shift_gui_runs(
     image_base: u32,
     gradient_base: u32,
 ) -> Vec<GuiRun> {
+    shift_gui_runs_with_shaders(runs, quad_base, glyph_base, image_base, gradient_base, 0)
+}
+
+pub(crate) fn shift_gui_runs_with_shaders(
+    runs: &[GuiRun],
+    quad_base: u32,
+    glyph_base: u32,
+    image_base: u32,
+    gradient_base: u32,
+    shader_base: u32,
+) -> Vec<GuiRun> {
     runs.iter()
         .map(|run| match *run {
             GuiRun::Quads(start, len) => GuiRun::Quads(start + quad_base, len),
             GuiRun::Glyphs(start, len) => GuiRun::Glyphs(start + glyph_base, len),
             GuiRun::Images(start, len) => GuiRun::Images(start + image_base, len),
             GuiRun::Gradients(start, len) => GuiRun::Gradients(start + gradient_base, len),
+            GuiRun::Shader(start, len, shader, blend) => {
+                GuiRun::Shader(start + shader_base, len, shader, blend)
+            }
         })
         .collect()
 }
@@ -422,6 +498,7 @@ pub(crate) fn gui_run_draws(runs: &[GuiRun], image_draws: &[(u32, wgpu::BindGrou
     for run in runs {
         match *run {
             GuiRun::Quads(_, _) | GuiRun::Glyphs(_, _) | GuiRun::Gradients(_, _) => draws += 1,
+            GuiRun::Shader(_, _, _, _) => draws += 1,
             GuiRun::Images(start, len) => {
                 let end = start + len;
                 draws += image_draws

@@ -4,8 +4,8 @@ use sequoia_ui::prelude::*;
 use crate::components::menu::{menu_row as mrow, menu_sep as msep};
 use sequoia_ui::view::{Fill, GradientStops};
 
-use crate::theme::colors;
 use crate::state::{EditorState, Menu};
+use crate::theme::colors;
 
 // ---------------------------------------------------------------- logo
 
@@ -26,8 +26,6 @@ fn logo() -> impl View + 'static {
             g.text_center(g.rect(), "VD", 8.0, Color::WHITE);
         })
 }
-
-
 
 fn mdrop_content(open: Signal<bool>, rows: Vec<AnyView>) -> impl View + 'static {
     DismissableLayer::wrap(

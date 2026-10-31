@@ -68,7 +68,8 @@ impl View for TextEditOverlay {
 
 // -------------------------- Command Palette --------------------------
 
-
 pub(crate) fn text_edit_overlay(state: &EditorState) -> impl View + 'static {
-    TextEditOverlay { state: state.clone() }
+    TextEditOverlay {
+        state: state.clone(),
+    }
 }

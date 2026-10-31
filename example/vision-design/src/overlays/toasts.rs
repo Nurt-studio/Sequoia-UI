@@ -64,7 +64,8 @@ impl View for ToastsView {
 
 // -------------------------- inline text editor --------------------------
 
-
 pub(crate) fn toasts(state: &EditorState) -> impl View + 'static {
-    ToastsView { state: state.clone() }
+    ToastsView {
+        state: state.clone(),
+    }
 }

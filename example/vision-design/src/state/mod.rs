@@ -504,7 +504,7 @@ impl EditorState {
             crate::theme::colors::DAY
         }
     }
-    
+
     pub(crate) fn open_node_graph(&self, env: &Environment) {
         let Some(windows) = env.get::<Windows>() else {
             self.toast_warn("Nie znaleziono usługi okien");

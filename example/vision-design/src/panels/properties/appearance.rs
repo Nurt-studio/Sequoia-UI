@@ -17,4 +17,3 @@ pub(super) fn body_appearance(state: &EditorState) -> impl View + 'static {
 }
 
 // ---------------------------- text ----------------------------
-

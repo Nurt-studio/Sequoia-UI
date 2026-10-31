@@ -133,4 +133,3 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         },
     ]
 }
-

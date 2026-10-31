@@ -1,8 +1,8 @@
 use sequoia_ui::prelude::*;
 
+use crate::overlays::color_well;
 use crate::state::{EditorState, PickerTarget};
 use crate::theme::colors;
-use crate::overlays::color_well;
 
 use super::controls::{hex_field, swatch};
 
@@ -78,4 +78,3 @@ pub(super) fn body_fill(state: &EditorState) -> impl View + 'static {
             )),
         ]))
 }
-

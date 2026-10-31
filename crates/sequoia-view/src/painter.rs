@@ -521,6 +521,53 @@ impl<'a, 'b> Painter<'a, 'b> {
         rect
     }
 
+    /// Pushes a raw shader draw with no texture inputs.
+    ///
+    /// **Temporary Stage 1 API.** Only the built-in `"passthrough"` shader is
+    /// resolved by name; other names log a warning and draw nothing. This method
+    /// is replaced by `shader<S: SequoiShader>` in Stage 2 and removed in Stage 3.
+    pub fn shader_raw(&mut self, name: &str, rect: Rect, uniforms: &[u8]) -> Rect {
+        self.shader_raw_with_blend(name, rect, uniforms, sequoia_core::BlendMode::Normal)
+    }
+
+    /// Pushes a raw shader draw with an explicit blend mode.
+    ///
+    /// **Temporary Stage 1 API.**
+    pub fn shader_raw_with_blend(
+        &mut self,
+        name: &str,
+        rect: Rect,
+        uniforms: &[u8],
+        blend: sequoia_core::BlendMode,
+    ) -> Rect {
+        use sequoia_core::{ShaderDraw, ShaderId, TexInput};
+        use std::sync::Arc;
+
+        if name != "passthrough" {
+            log::warn!(
+                "Painter::shader_raw: only `passthrough` is available in stage 1 (got `{name}`)"
+            );
+            return Rect::ZERO;
+        }
+        if rect.is_empty() {
+            return Rect::ZERO;
+        }
+
+        // `passthrough` is registered first by `GpuRenderer::new_with_options`,
+        // so it always has `ShaderId(0)`.
+        let draw = ShaderDraw {
+            rect,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            shader: ShaderId::new(0),
+            uniforms: Arc::from(uniforms),
+            textures: Arc::from(Vec::<(u32, TexInput)>::new()),
+            blend,
+            opacity: 1.0,
+        };
+        self.ctx.list.push_shader(draw);
+        rect
+    }
+
     pub fn grid(&mut self, step: f32, color: Color) -> u32 {
         self.grid_offset(step, Vec2::ZERO, color)
     }

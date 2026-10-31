@@ -3,8 +3,7 @@
 //! The `Gpu*` structs mirror the layout expected by the WGSL shader and are
 //! uploaded directly as vertex instance data.
 
-#[allow(unused_imports)]
-use std::any::Any;
+use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
 
@@ -55,6 +54,39 @@ pub(crate) struct BlitQuad {
     pub(crate) transform_b: [f32; 2],
     pub(crate) opacity: f32,
     pub(crate) nearest: f32,
+}
+
+/// Instance data for a custom shader draw.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub(crate) struct GpuShaderInstance {
+    pub(crate) rect: [f32; 4],
+    pub(crate) uv: [f32; 4],
+    pub(crate) clip_rect: [f32; 4],
+    pub(crate) clip_radius: f32,
+    pub(crate) opacity: f32,
+    pub(crate) transform_a: [f32; 4],
+    pub(crate) transform_b: [f32; 2],
+    pub(crate) shader_id: u32,
+    pub(crate) uniform_offset: u32,
+    pub(crate) _pad: [f32; 2],
+}
+
+/// CPU-side shader instances and their dynamic uniform payloads.
+#[derive(Default)]
+pub(crate) struct ShaderGroupData {
+    pub(crate) instances: Vec<GpuShaderInstance>,
+    pub(crate) uniforms: Vec<u8>,
+}
+
+/// Per-shader render state.
+#[allow(dead_code)]
+pub(crate) struct UserShaderEntry {
+    pub(crate) pipelines: HashMap<sequoia_core::BlendMode, wgpu::RenderPipeline>,
+    #[allow(dead_code)]
+    pub(crate) bgl: wgpu::BindGroupLayout,
+    #[allow(dead_code)]
+    pub(crate) module: wgpu::ShaderModule,
 }
 
 /// Instance data for a gradient fill with up to four color stops.
@@ -178,6 +210,12 @@ pub(crate) const BACKDROP_BYTES: usize = 20 * 4;
 
 pub(crate) const GRADIENT_BYTES: usize = 44 * 4;
 
+pub(crate) const SHADER_BYTES: usize = 96;
+
+pub(crate) const SHADER_UNIFORM_STRIDE: usize = 256;
+
+pub(crate) const INITIAL_SHADER_CAPACITY: usize = 64;
+
 pub(crate) const MAX_BACKDROP_BLUR_PX: f32 = 64.0;
 
 /// Spacing between adjacent Gaussian taps, as a fraction of the blur radius.
@@ -237,6 +275,8 @@ pub(crate) enum GuiRun {
     Glyphs(u32, u32),
     Images(u32, u32),
     Gradients(u32, u32),
+    /// Shader instance range followed by shader handle and blend mode.
+    Shader(u32, u32, sequoia_core::ShaderId, sequoia_core::BlendMode),
 }
 
 /// Drawing plan for a scene segment followed by an optional backdrop marker.
@@ -471,6 +511,7 @@ pub enum RenderError {
     CreateSurface(wgpu::CreateSurfaceError),
     Device(wgpu::RequestDeviceError),
     Surface,
+    ShaderCompile(String),
 }
 
 impl std::fmt::Display for RenderError {
@@ -480,6 +521,7 @@ impl std::fmt::Display for RenderError {
             Self::CreateSurface(e) => write!(f, "surface creation failed: {e}"),
             Self::Device(e) => write!(f, "device creation failed: {e}"),
             Self::Surface => write!(f, "surface state error"),
+            Self::ShaderCompile(e) => write!(f, "shader compilation failed: {e}"),
         }
     }
 }

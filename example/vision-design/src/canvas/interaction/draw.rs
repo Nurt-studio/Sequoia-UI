@@ -3,7 +3,7 @@ use sequoia_ui::prelude::*;
 use super::CanvasSignals;
 use crate::core::geometry::snap;
 use crate::core::hit_test::find_parent_frame;
-use crate::core::layer::{next_id, pick_hex_for, Layer};
+use crate::core::layer::{Layer, next_id, pick_hex_for};
 
 /// Drawing a new shape (F/R/O) before committing.
 pub(crate) struct DrawSession {

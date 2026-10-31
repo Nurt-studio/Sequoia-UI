@@ -21,7 +21,11 @@ pub(crate) fn icon_button(
                 on_click();
             }
         })
-        .child(Icon::new(icon).size(15.0).color(colors::active().icon_inactive));
+        .child(
+            Icon::new(icon)
+                .size(15.0)
+                .color(colors::active().icon_inactive),
+        );
     if disabled {
         AnyView::new(Opacity::new(btn, 0.32))
     } else {
@@ -46,7 +50,11 @@ pub(crate) fn icon_button_env(
                 on_click(env);
             }
         })
-        .child(Icon::new(icon).size(15.0).color(colors::active().icon_inactive));
+        .child(
+            Icon::new(icon)
+                .size(15.0)
+                .color(colors::active().icon_inactive),
+        );
     if disabled {
         AnyView::new(Opacity::new(btn, 0.32))
     } else {
@@ -66,7 +74,11 @@ pub(crate) fn small_icon_button(
         .radius(5.0)
         .hover(colors::active().bg_lighter)
         .on_click(on_click)
-        .child(Icon::new(icon).size(12.0).color(colors::active().icon_inactive))
+        .child(
+            Icon::new(icon)
+                .size(12.0)
+                .color(colors::active().icon_inactive),
+        )
 }
 
 /// 26×26 with a text glyph (e.g. zoom −/+).

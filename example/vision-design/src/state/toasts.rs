@@ -29,5 +29,4 @@ impl EditorState {
     pub(crate) fn dismiss_toast(&self, id: u64) {
         self.toasts.update(|ts| ts.retain(|t| t.id != id));
     }
-
 }

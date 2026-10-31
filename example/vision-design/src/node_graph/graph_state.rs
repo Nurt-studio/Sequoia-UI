@@ -1,7 +1,7 @@
+use super::model::*;
+use sequoia_ui::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
-use sequoia_ui::prelude::*;
-use super::model::*;
 
 #[derive(Clone)]
 pub(crate) enum GraphDrag {

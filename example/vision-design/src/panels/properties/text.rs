@@ -43,4 +43,3 @@ pub(super) fn body_text(state: &EditorState) -> impl View + 'static {
 }
 
 // ---------------------------- Auto Layout (frame) ----------------------------
-

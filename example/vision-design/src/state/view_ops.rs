@@ -1,4 +1,3 @@
-
 use super::EditorState;
 use crate::core::layer::Layer;
 use crate::document::auto_layout::apply_auto_layout_frame;

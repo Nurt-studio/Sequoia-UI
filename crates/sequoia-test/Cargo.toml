@@ -19,7 +19,10 @@ sequoia-elements = { workspace = true }
 
 [dev-dependencies]
 sequoia-async = { workspace = true }
+sequoia-platform = { workspace = true }
+sequoia-render = { workspace = true }
 sequoia-style = { workspace = true }
 sequoia-ui = { workspace = true }
+
 [lints]
 workspace = true

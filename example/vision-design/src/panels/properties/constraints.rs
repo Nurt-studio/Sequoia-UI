@@ -80,4 +80,3 @@ pub(super) fn body_constraints(state: &EditorState) -> impl View + 'static {
 }
 
 // ---------------------------- Fill / Stroke ----------------------------
-

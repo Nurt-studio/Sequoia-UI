@@ -74,4 +74,3 @@ pub(super) fn empty_box() -> impl View + 'static {
                 ),
         )
 }
-

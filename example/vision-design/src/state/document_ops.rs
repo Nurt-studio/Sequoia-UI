@@ -101,6 +101,7 @@ impl EditorState {
         let mut next = ls.iter().map(|l| l.id).max().unwrap_or(0) + 1;
 
         let mut remap: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+        #[allow(clippy::explicit_counter_loop)]
         for l in &clip {
             remap.insert(l.id, next);
             next += 1;
@@ -231,5 +232,4 @@ impl EditorState {
             self.toast(if l.locked { "Locked" } else { "Unlocked" });
         }
     }
-
 }

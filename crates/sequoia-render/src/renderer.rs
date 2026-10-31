@@ -17,6 +17,7 @@ use winit::window::Window;
 
 use crate::gpu::pipelines::*;
 use crate::gpu::resources::vertex_buffer;
+use crate::gpu::shaders::compose_user_shader;
 use crate::pass::opacity::*;
 use crate::scene::grouping::*;
 use crate::scene::instances::*;
@@ -24,7 +25,7 @@ use crate::scene::planning::*;
 use crate::surface::*;
 use crate::types::*;
 use crate::utils::*;
-use sequoia_core::{Color, Rect, RenderList};
+use sequoia_core::{Color, Rect, RenderList, ShaderId};
 use sequoia_view::SurfaceDraw;
 
 /// Owns the wgpu device and window surface and renders frames into it.
@@ -105,6 +106,16 @@ pub struct GpuRenderer {
     pub(crate) scratch_cached: Vec<CachedJob>,
     pub(crate) scratch_regions: Vec<(Region, Rc<SurfaceBinding>)>,
     pub(crate) atlas_scratch: Vec<u8>,
+    pub(crate) user_shaders: HashMap<ShaderId, UserShaderEntry>,
+    pub(crate) by_name: HashMap<String, ShaderId>,
+    pub(crate) next_shader_id: u32,
+    pub(crate) shader_data: ShaderGroupData,
+    pub(crate) shader_buf: wgpu::Buffer,
+    pub(crate) shader_cap: usize,
+    pub(crate) uniform_ring: wgpu::Buffer,
+    pub(crate) uniform_cap: usize,
+    pub(crate) shader_bgl: wgpu::BindGroupLayout,
+    pub(crate) shader_bind_group: wgpu::BindGroup,
 }
 
 fn create_instance(backend: GpuBackend) -> wgpu::Instance {
@@ -389,6 +400,65 @@ impl GpuRenderer {
 
         let gradient_pipeline = create_gradient_pipeline(&device, &shader, &layout, format, blend);
 
+        let shader_bgl = create_user_shader_bind_group_layout(&device);
+        let shader_buf = vertex_buffer(
+            &device,
+            "sequoia-shaders",
+            (INITIAL_SHADER_CAPACITY * SHADER_BYTES) as u64,
+        );
+        let uniform_ring = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sequoia-shader-uniforms"),
+            size: (INITIAL_SHADER_CAPACITY * SHADER_UNIFORM_STRIDE) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let shader_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sequoia-shader-bg"),
+            layout: &shader_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &uniform_ring,
+                        offset: 0,
+                        size: Some(wgpu::BufferSize::new(SHADER_UNIFORM_STRIDE as u64).unwrap()),
+                    }),
+                },
+            ],
+        });
+
+        // Built-in passthrough shader (id 0).
+        let passthrough_src = compose_user_shader(
+            "fn fs_user(frag: ShaderVarying) -> vec4<f32> { return uniforms.values[0]; }",
+        );
+        let passthrough_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("passthrough"),
+            source: wgpu::ShaderSource::Wgsl(passthrough_src.clone().into()),
+        });
+        let passthrough_layout = create_user_shader_pipeline_layout(&device, &shader_bgl);
+        let passthrough_pipeline = create_user_shader_pipeline(
+            &device,
+            &passthrough_module,
+            &passthrough_layout,
+            format,
+            premultiplied_blend(),
+        );
+        let mut passthrough_pipelines = HashMap::new();
+        passthrough_pipelines.insert(sequoia_core::BlendMode::Normal, passthrough_pipeline);
+        let passthrough_entry = UserShaderEntry {
+            pipelines: passthrough_pipelines,
+            bgl: shader_bgl.clone(),
+            module: passthrough_module,
+        };
+        let mut passthrough_shaders = HashMap::new();
+        passthrough_shaders.insert(ShaderId::new(0), passthrough_entry);
+        let mut passthrough_names = HashMap::new();
+        passthrough_names.insert("passthrough".to_string(), ShaderId::new(0));
+
         Ok(Self {
             device,
             queue,
@@ -466,6 +536,16 @@ impl GpuRenderer {
             scratch_cached: Vec::new(),
             scratch_regions: Vec::new(),
             atlas_scratch: Vec::new(),
+            user_shaders: passthrough_shaders,
+            by_name: passthrough_names,
+            next_shader_id: 1,
+            shader_data: ShaderGroupData::default(),
+            shader_buf,
+            shader_cap: INITIAL_SHADER_CAPACITY,
+            uniform_ring,
+            uniform_cap: INITIAL_SHADER_CAPACITY,
+            shader_bgl,
+            shader_bind_group,
         })
     }
 
@@ -528,7 +608,11 @@ impl GpuRenderer {
         for g in &self.group_layers {
             groups += tex(g.size);
         }
-        let frame = self.frame_target.as_ref().map(|t| tex(t.size)).unwrap_or(0.0);
+        let frame = self
+            .frame_target
+            .as_ref()
+            .map(|t| tex(t.size))
+            .unwrap_or(0.0);
         let backdrop = self
             .backdrop_tex
             .as_ref()
@@ -539,7 +623,10 @@ impl GpuRenderer {
             .as_ref()
             .map(|(_, _, size)| tex(*size))
             .unwrap_or(0.0);
-        let atlas = self.atlas_synced.map(|(_, w, h)| tex((w, h))).unwrap_or(0.0);
+        let atlas = self
+            .atlas_synced
+            .map(|(_, w, h)| tex((w, h)))
+            .unwrap_or(0.0);
         let bufs = mb((self.capacity * QUAD_BYTES
             + self.glyph_capacity * GLYPH_BYTES
             + self.image_cap * BLIT_BYTES
@@ -559,7 +646,6 @@ impl GpuRenderer {
             self.trace_atlas_recreates,
         )
     }
-
 
     /// Returns the accumulated render statistics and resets the counters.
     pub fn take_stats(&mut self) -> RenderStats {
@@ -617,6 +703,62 @@ impl GpuRenderer {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
+    }
+
+    /// Compiles and registers a user shader from WGSL source.
+    pub fn register_shader(
+        &mut self,
+        name: impl Into<String>,
+        wgsl: impl AsRef<str>,
+    ) -> Result<ShaderId, RenderError> {
+        let name = name.into();
+        let wgsl = wgsl.as_ref();
+        {
+            let module = wgpu::naga::front::wgsl::parse_str(wgsl)
+                .map_err(|e| RenderError::ShaderCompile(e.to_string()))?;
+            let mut validator = wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            );
+            validator
+                .validate(&module)
+                .map_err(|e| RenderError::ShaderCompile(e.to_string()))?;
+        }
+        let module = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&name),
+                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+            });
+        // Build pipeline for Normal blend mode only in stage 1.
+        let pipeline_layout = create_user_shader_pipeline_layout(&self.device, &self.shader_bgl);
+        let pipeline = create_user_shader_pipeline(
+            &self.device,
+            &module,
+            &pipeline_layout,
+            self.render_format,
+            premultiplied_blend(),
+        );
+        let mut pipelines = HashMap::new();
+        pipelines.insert(sequoia_core::BlendMode::Normal, pipeline);
+        let id = ShaderId::new(self.next_shader_id);
+        self.next_shader_id += 1;
+        self.user_shaders.insert(
+            id,
+            UserShaderEntry {
+                pipelines,
+                bgl: self.shader_bgl.clone(),
+                module,
+            },
+        );
+        self.by_name.insert(name, id);
+        Ok(id)
+    }
+
+    /// Looks up a previously registered shader by name.
+    #[must_use]
+    pub fn shader_id(&self, name: &str) -> Option<ShaderId> {
+        self.by_name.get(name).copied()
     }
 
     /// Renders `list` into the window surface.
@@ -701,8 +843,7 @@ impl GpuRenderer {
                     self.surface.configure(&self.device, &self.config);
                     reconfigured = true;
                 }
-                wgpu::CurrentSurfaceTexture::Outdated
-                | wgpu::CurrentSurfaceTexture::Lost => {
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     // A configure allocates a fresh set of swapchain images, so
                     // retrying without a bound would churn memory every frame
                     // when the surface never reports a usable image.
@@ -1082,6 +1223,7 @@ impl GpuRenderer {
         let image_keys = &mut self.scratch_image_keys;
         let gradients = &mut self.scratch_gradients;
         let runs = &mut self.scratch_runs;
+        self.shader_data = ShaderGroupData::default();
         let mut backdrop_plans: Vec<BackdropSegPlan> = Vec::new();
         let mut backdrop_insts: Vec<GpuBackdrop> = Vec::new();
         let mut comp_plans: Vec<CompPlan> = Vec::new();
@@ -1135,6 +1277,7 @@ impl GpuRenderer {
                     image_keys,
                     gradients,
                     runs,
+                    Some(&mut self.shader_data),
                 );
                 self.stats.dropped_quads += dq as u64;
                 self.stats.dropped_glyphs += dg as u64;
@@ -1205,6 +1348,7 @@ impl GpuRenderer {
                         &mut seg_keys,
                         &mut seg_gradients,
                         &mut seg_runs,
+                        None,
                     );
                     stats.dropped_quads += dq as u64;
                     stats.dropped_glyphs += dg as u64;
@@ -1449,6 +1593,57 @@ impl GpuRenderer {
         if !gradients.is_empty() {
             self.queue
                 .write_buffer(&self.gradient_buf, 0, bytemuck::cast_slice(gradients));
+        }
+        // Upload shader instances + uniforms.
+        let shader_instances = &self.shader_data.instances;
+        let shader_uniforms = &self.shader_data.uniforms;
+        Self::ensure_capacity(
+            &self.device,
+            &mut self.shader_buf,
+            &mut self.shader_cap,
+            shader_instances.len(),
+            SHADER_BYTES,
+        );
+        if shader_instances.len() > self.uniform_cap {
+            let new_cap = shader_instances
+                .len()
+                .max(self.uniform_cap.saturating_mul(2).max(1));
+            self.uniform_ring = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("sequoia-shader-uniforms"),
+                size: (new_cap * SHADER_UNIFORM_STRIDE) as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.uniform_cap = new_cap;
+            // Recreate bind group with new buffer.
+            self.shader_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sequoia-shader-bg"),
+                layout: &self.shader_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.uniform_ring,
+                            offset: 0,
+                            size: Some(
+                                wgpu::BufferSize::new(SHADER_UNIFORM_STRIDE as u64).unwrap(),
+                            ),
+                        }),
+                    },
+                ],
+            });
+        }
+        if !shader_instances.is_empty() {
+            self.queue
+                .write_buffer(&self.shader_buf, 0, bytemuck::cast_slice(shader_instances));
+        }
+        if !shader_uniforms.is_empty() {
+            self.queue
+                .write_buffer(&self.uniform_ring, 0, shader_uniforms);
         }
 
         let image_draws = &mut self.scratch_image_draws;
@@ -1746,6 +1941,10 @@ impl GpuRenderer {
                                     &self.glyph_buf,
                                     &self.image_buf,
                                     &self.gradient_buf,
+                                    &self.shader_buf,
+                                    &self.shader_data.instances,
+                                    &self.shader_bind_group,
+                                    &self.user_shaders,
                                     &seg.runs,
                                     image_draws,
                                     seg.all_opaque,
@@ -1829,6 +2028,10 @@ impl GpuRenderer {
                                     &self.glyph_buf,
                                     &self.image_buf,
                                     &self.gradient_buf,
+                                    &self.shader_buf,
+                                    &self.shader_data.instances,
+                                    &self.shader_bind_group,
+                                    &self.user_shaders,
                                     &fplan.runs,
                                     image_draws,
                                     fplan.all_opaque,
@@ -1884,6 +2087,10 @@ impl GpuRenderer {
                                     &self.glyph_buf,
                                     &self.image_buf,
                                     &self.gradient_buf,
+                                    &self.shader_buf,
+                                    &self.shader_data.instances,
+                                    &self.shader_bind_group,
+                                    &self.user_shaders,
                                     &fplan.runs,
                                     image_draws,
                                     fplan.all_opaque,
@@ -1933,6 +2140,10 @@ impl GpuRenderer {
                         &self.glyph_buf,
                         &self.image_buf,
                         &self.gradient_buf,
+                        &self.shader_buf,
+                        &self.shader_data.instances,
+                        &self.shader_bind_group,
+                        &self.user_shaders,
                         &plan.runs,
                         image_draws,
                         plan.all_opaque,
@@ -2039,6 +2250,10 @@ impl GpuRenderer {
                 glyph_buf: &self.glyph_buf,
                 image_buf: &self.image_buf,
                 gradient_buf: &self.gradient_buf,
+                shader_buf: &self.shader_buf,
+                shader_instances: &self.shader_data.instances,
+                shader_bind_group: &self.shader_bind_group,
+                user_shaders: &self.user_shaders,
                 backdrop_buf: &self.backdrop_buf,
             };
             draw_opacity_draws(
@@ -2134,6 +2349,32 @@ impl GpuRenderer {
                             pass.set_bind_group(0, &self.bind_group, &[]);
                             pass.set_vertex_buffer(0, self.gradient_buf.slice(..));
                             pass.draw(0..4, start..start + len);
+                        }
+                        GuiRun::Shader(start, len, shader_id, blend) => {
+                            let Some(entry) = self.user_shaders.get(&shader_id) else {
+                                continue;
+                            };
+                            let Some(pipeline) = entry
+                                .pipelines
+                                .get(&blend)
+                                .or_else(|| entry.pipelines.get(&sequoia_core::BlendMode::Normal))
+                            else {
+                                continue;
+                            };
+                            pass.set_pipeline(pipeline);
+                            pass.set_vertex_buffer(0, self.shader_buf.slice(..));
+                            for index in start..start + len {
+                                let Some(instance) = self.shader_data.instances.get(index as usize)
+                                else {
+                                    break;
+                                };
+                                pass.set_bind_group(
+                                    0,
+                                    &self.shader_bind_group,
+                                    &[instance.uniform_offset],
+                                );
+                                pass.draw(0..4, index..index + 1);
+                            }
                         }
                     }
                 }

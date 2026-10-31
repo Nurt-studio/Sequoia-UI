@@ -1,9 +1,9 @@
+use super::graph_state::{GraphDrag, NodeGraphState};
+use super::model::*;
+use crate::theme::colors;
 use sequoia_ui::core::Length;
 use sequoia_ui::prelude::*;
 use sequoia_ui::view::{BrushStroke, Fill, Painter};
-use crate::theme::colors;
-use super::graph_state::{GraphDrag, NodeGraphState};
-use super::model::*;
 
 // ── view ─────────────────────────────────────────────────
 #[derive(Clone)]
@@ -57,8 +57,7 @@ fn draw_graph(p: &mut Painter, st: &NodeGraphState) {
     draw_dot_grid(p, pan_x, pan_y, zoom, size);
 
     // world transform
-    let transform =
-        Transform::translate(-pan_x, -pan_y).then(Transform::uniform(zoom));
+    let transform = Transform::translate(-pan_x, -pan_y).then(Transform::uniform(zoom));
 
     p.with_transform(transform, |p| {
         let nodes = st.nodes.get_untracked();
@@ -91,16 +90,15 @@ fn draw_graph(p: &mut Painter, st: &NodeGraphState) {
             cur_wx,
             cur_wy,
         }) = st.drag.borrow().as_ref()
+            && let Some(fn_) = nodes.iter().find(|n| n.id == *from_node)
         {
-            if let Some(fn_) = nodes.iter().find(|n| n.id == *from_node) {
-                let anchor = fn_.port_pos(*from_side, *from_port);
-                let cursor = Point::new(*cur_wx, *cur_wy);
-                let (p1, p2) = match from_side {
-                    PortSide::Output => (anchor, cursor),
-                    PortSide::Input => (cursor, anchor),
-                };
-                draw_bezier(p, p1, p2, colors::active().sel, true);
-            }
+            let anchor = fn_.port_pos(*from_side, *from_port);
+            let cursor = Point::new(*cur_wx, *cur_wy);
+            let (p1, p2) = match from_side {
+                PortSide::Output => (anchor, cursor),
+                PortSide::Input => (cursor, anchor),
+            };
+            draw_bezier(p, p1, p2, colors::active().sel, true);
         }
 
         // nodes (the selected one is drawn last)
@@ -230,12 +228,7 @@ fn bezier_eval(t: f32, p0: Point, p1: Point, p2: Point, p3: Point) -> Point {
 }
 
 // ── pointer events ───────────────────────────────────────
-fn handle_pointer(
-    st: &NodeGraphState,
-    pos: Point,
-    ev: &PointerEvent,
-    ctx: &mut EventCtx,
-) {
+fn handle_pointer(st: &NodeGraphState, pos: Point, ev: &PointerEvent, ctx: &mut EventCtx) {
     let zoom = st.zoom.get_untracked();
     let (wx, wy) = st.screen_to_world(pos.x, pos.y);
 
@@ -244,8 +237,8 @@ fn handle_pointer(
         PointerEvent::Wheel {
             delta, modifiers, ..
         } => {
-            let ctrl = modifiers.contains(Modifiers::CONTROL)
-                || modifiers.contains(Modifiers::SUPER);
+            let ctrl =
+                modifiers.contains(Modifiers::CONTROL) || modifiers.contains(Modifiers::SUPER);
             if ctrl {
                 let factor = if delta.y > 0.0 { 1.15 } else { 1.0 / 1.15 };
                 let new_z = (zoom * factor).clamp(0.15, 5.0);
@@ -369,9 +362,7 @@ fn handle_pointer(
                     st.bump();
                     ctx.handled();
                 }
-                Some(GraphDrag::Connect {
-                    cur_wx, cur_wy, ..
-                }) => {
+                Some(GraphDrag::Connect { cur_wx, cur_wy, .. }) => {
                     *cur_wx = wx;
                     *cur_wy = wy;
                     drop(drag);
@@ -426,11 +417,7 @@ fn handle_pointer(
                             },
                         };
                         // do not add duplicates
-                        let exists = st
-                            .connections
-                            .get_untracked()
-                            .iter()
-                            .any(|c| *c == conn);
+                        let exists = st.connections.get_untracked().contains(&conn);
                         if !exists {
                             st.connections.update(|cs| cs.push(conn));
                         }

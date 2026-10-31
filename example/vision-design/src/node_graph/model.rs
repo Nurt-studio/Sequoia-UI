@@ -66,10 +66,7 @@ impl GraphNode {
     }
 
     pub(crate) fn contains(&self, wx: f32, wy: f32) -> bool {
-        wx >= self.x
-            && wx <= self.x + NODE_W
-            && wy >= self.y
-            && wy <= self.y + self.height()
+        wx >= self.x && wx <= self.x + NODE_W && wy >= self.y && wy <= self.y + self.height()
     }
 }
 
@@ -82,11 +79,7 @@ pub(crate) struct GraphConnection {
 }
 
 // ── port geometry ────────────────────────────────────────
-pub(crate) fn find_port(
-    nodes: &[GraphNode],
-    wx: f32,
-    wy: f32,
-) -> Option<(u64, PortSide, usize)> {
+pub(crate) fn find_port(nodes: &[GraphNode], wx: f32, wy: f32) -> Option<(u64, PortSide, usize)> {
     for node in nodes.iter().rev() {
         for (i, _) in node.inputs.iter().enumerate() {
             let p = node.port_pos(PortSide::Input, i);

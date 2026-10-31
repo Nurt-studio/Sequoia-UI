@@ -1,8 +1,8 @@
 //! Toolbar 1:1 with CSS: .toolbar / .tool-group / .tool-sep / .tool-btn(+.active::after) / .spacer
 use sequoia_ui::prelude::*;
 
-use crate::theme::colors;
 use crate::state::EditorState;
+use crate::theme::colors;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ToolDef {

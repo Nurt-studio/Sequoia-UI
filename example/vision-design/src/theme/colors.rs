@@ -60,7 +60,7 @@ pub(crate) const DAY: Palette = Palette {
 };
 
 thread_local! {
-    static ACTIVE: Cell<Palette> = Cell::new(NIGHT);
+    static ACTIVE: Cell<Palette> = const { Cell::new(NIGHT) };
 }
 
 /// Returns the active theme palette (read when building views).

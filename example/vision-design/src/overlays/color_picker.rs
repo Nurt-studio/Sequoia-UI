@@ -4,8 +4,8 @@ use std::rc::Rc;
 use sequoia_ui::prelude::*;
 use sequoia_ui::view::{BrushStroke, Fill, GradientStops};
 
-use crate::theme::colors;
 use crate::state::{ColorPickerState, EditorState, PickerTarget};
+use crate::theme::colors;
 
 const SV_W: f32 = 220.0;
 const SV_H: f32 = 140.0;
@@ -336,7 +336,11 @@ impl Leaf for PickerHeader {
         let h = ctx.rect.size.height;
 
         ctx.quad(ctx.rect, Color::hex(0x2C2C2E), 0.0);
-        ctx.quad(Rect::from_xywh(l, t + h - 1.0, w, 1.0), colors::active().stroke, 0.0);
+        ctx.quad(
+            Rect::from_xywh(l, t + h - 1.0, w, 1.0),
+            colors::active().stroke,
+            0.0,
+        );
 
         let title = match self.state.target.get_untracked() {
             PickerTarget::Fill => "Fill Color",

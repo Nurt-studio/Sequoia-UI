@@ -2,10 +2,8 @@ use sequoia_ui::prelude::*;
 
 use crate::components::menu::{menu_row, menu_sep};
 
-use crate::theme::colors;
 use crate::state::EditorState;
-
-
+use crate::theme::colors;
 
 #[derive(Clone)]
 struct ContextMenuView {

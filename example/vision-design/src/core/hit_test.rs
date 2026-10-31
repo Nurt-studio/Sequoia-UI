@@ -1,5 +1,5 @@
 //! Hit tests for layers and handles.
-use crate::core::geometry::{Handle, HANDLE_TOL_PX};
+use crate::core::geometry::{HANDLE_TOL_PX, Handle};
 use crate::core::layer::Layer;
 
 pub(crate) fn find_parent_frame(ls: &[Layer], wx: f32, wy: f32) -> Option<u64> {
@@ -14,7 +14,6 @@ pub(crate) fn find_parent_frame(ls: &[Layer], wx: f32, wy: f32) -> Option<u64> {
     }
     found
 }
-
 
 pub(crate) fn hit_handle(l: &Layer, wx: f32, wy: f32, zoom: f32) -> Option<Handle> {
     let tol = HANDLE_TOL_PX / zoom;
@@ -58,4 +57,3 @@ pub(crate) fn hit_layer(layers: &[Layer], wx: f32, wy: f32) -> Option<u64> {
     }
     None
 }
-

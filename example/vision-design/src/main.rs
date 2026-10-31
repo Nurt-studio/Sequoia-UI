@@ -7,11 +7,11 @@ mod canvas;
 mod components;
 mod core;
 mod document;
+mod node_graph;
 mod overlays;
 mod panels;
 mod state;
 mod theme;
-mod node_graph;
 
 use sequoia_ui::prelude::*;
 

@@ -158,6 +158,7 @@ pub struct App {
     worker_threads: usize,
     accelerators: Vec<Accelerator>,
     global_hotkeys: Vec<(Key, Modifiers, Rc<dyn Fn()>)>,
+    shaders: Vec<(String, String)>,
 }
 
 impl Default for App {
@@ -171,6 +172,7 @@ impl Default for App {
             worker_threads: executor::default_threads(),
             accelerators: Vec::new(),
             global_hotkeys: Vec::new(),
+            shaders: Vec::new(),
         }
     }
 }
@@ -267,6 +269,54 @@ impl App {
             }
         }
         self
+    }
+
+    /// Registers a custom fragment shader by name with WGSL source.
+    #[must_use]
+    pub fn shader(mut self, name: impl Into<String>, wgsl: impl Into<String>) -> Self {
+        self.shaders.push((name.into(), wgsl.into()));
+        self
+    }
+
+    /// Reads a WGSL shader file and registers it under `name`.
+    #[must_use]
+    pub fn shader_file(self, name: impl Into<String>, path: impl AsRef<std::path::Path>) -> Self {
+        let path = path.as_ref();
+        match std::fs::read_to_string(path) {
+            Ok(wgsl) => self.shader(name, wgsl),
+            Err(e) => {
+                log::error!(
+                    "sequoia-platform: failed to read shader file `{}`: {e}",
+                    path.display()
+                );
+                self
+            }
+        }
+    }
+
+    /// Recursively registers every `.wgsl` file in `dir`.
+    ///
+    /// The shader name is the relative path from `dir` without the `.wgsl`
+    /// extension, using `/` as separator (e.g. `effects/invert`).
+    #[must_use]
+    pub fn shader_dir(mut self, dir: impl AsRef<std::path::Path>) -> Self {
+        let dir = dir.as_ref();
+        match collect_shaders_dir(dir, dir, &mut self.shaders) {
+            Ok(()) => {}
+            Err(e) => {
+                log::error!(
+                    "sequoia-platform: failed to read shader directory `{}`: {e}",
+                    dir.display()
+                );
+            }
+        }
+        self
+    }
+
+    /// Returns the registered shaders as `(name, wgsl)` pairs.
+    #[must_use]
+    pub fn shaders(&self) -> &[(String, String)] {
+        &self.shaders
     }
 
     pub fn font(self, name: impl Into<String>, data: Vec<u8>) -> Self {
@@ -510,6 +560,7 @@ impl App {
             last_input: None,
             id_map: HashMap::new(),
             error: None,
+            shaders: self.shaders,
         };
         event_loop
             .run_app(&mut handler)
@@ -1064,6 +1115,7 @@ struct PlatformApp {
 
     id_map: HashMap<WindowId, WinitWindowId>,
     error: Option<AppError>,
+    shaders: Vec<(String, String)>,
 }
 
 impl PlatformApp {
@@ -1169,6 +1221,13 @@ impl PlatformApp {
                     AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
                 })?;
         gpu.set_clear_color(window_clear_color(self.theme, s.transparent));
+        for (name, wgsl) in &self.shaders {
+            if let Err(e) = gpu.register_shader(name, wgsl) {
+                log::error!(
+                    "sequoia-platform: failed to register shader `{name}` on window {id}: {e}"
+                );
+            }
+        }
 
         {
             let info = gpu.adapter_info();
@@ -1841,6 +1900,31 @@ fn pacing_control_flow(deadline: Option<Instant>) -> ControlFlow {
         Some(deadline) if deadline > Instant::now() => ControlFlow::WaitUntil(deadline),
         _ => ControlFlow::Wait,
     }
+}
+
+fn collect_shaders_dir(
+    root: &std::path::Path,
+    current: &std::path::Path,
+    out: &mut Vec<(String, String)>,
+) -> std::io::Result<()> {
+    if !current.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_shaders_dir(root, &path, out)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("wgsl")
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            let name = rel.with_extension("").to_string_lossy().replace('\\', "/");
+            if let Ok(wgsl) = std::fs::read_to_string(&path) {
+                out.push((name, wgsl));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

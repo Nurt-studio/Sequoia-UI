@@ -26,7 +26,11 @@ impl View for Section {
                         Row::new()
                             .gap(8.0)
                             .align_items(Align::Center)
-                            .child(Text::new(chev).size(14.0).color(colors::active().icon_inactive))
+                            .child(
+                                Text::new(chev)
+                                    .size(14.0)
+                                    .color(colors::active().icon_inactive),
+                            )
                             .child(
                                 Text::new(self.title)
                                     .size(13.0)
@@ -44,7 +48,11 @@ impl View for Section {
     }
 }
 
-pub(super) fn section(title: &'static str, open: Signal<bool>, body: impl View + 'static) -> AnyView {
+pub(super) fn section(
+    title: &'static str,
+    open: Signal<bool>,
+    body: impl View + 'static,
+) -> AnyView {
     AnyView::new(Section {
         title,
         open,
@@ -53,4 +61,3 @@ pub(super) fn section(title: &'static str, open: Signal<bool>, body: impl View +
 }
 
 // ---------------------------- alignment ----------------------------
-

@@ -108,7 +108,6 @@ pub(crate) fn install(app: App, state: &EditorState) -> App {
         .accelerator(Key::from_char('0'), Modifiers::SHIFT, {
             let st = state.clone();
             move || st.reset_view()
-        })
-;
+        });
     app
 }

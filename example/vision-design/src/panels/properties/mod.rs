@@ -125,7 +125,11 @@ fn sel_head(state: &EditorState) -> impl View + 'static {
                 .radius(6.0)
                 .background(colors::active().bg_lighter)
                 .border(1.0, colors::active().stroke_soft)
-                .child(Icon::new("tool/rect").size(14.0).color(colors::active().icon_active)),
+                .child(
+                    Icon::new("tool/rect")
+                        .size(14.0)
+                        .color(colors::active().icon_active),
+                ),
         )
         .child_flex(
             TextField::new(state.sel_name.clone())
@@ -142,7 +146,6 @@ fn sel_head(state: &EditorState) -> impl View + 'static {
                 .color(colors::active().icon_inactive),
         )
 }
-
 
 struct RightBody {
     state: EditorState,

@@ -40,6 +40,10 @@ pub(crate) struct OpacityDrawContext<'a> {
     pub(crate) glyph_buf: &'a wgpu::Buffer,
     pub(crate) image_buf: &'a wgpu::Buffer,
     pub(crate) gradient_buf: &'a wgpu::Buffer,
+    pub(crate) shader_buf: &'a wgpu::Buffer,
+    pub(crate) shader_instances: &'a [GpuShaderInstance],
+    pub(crate) shader_bind_group: &'a wgpu::BindGroup,
+    pub(crate) user_shaders: &'a std::collections::HashMap<sequoia_core::ShaderId, UserShaderEntry>,
     pub(crate) backdrop_buf: &'a wgpu::Buffer,
 }
 
@@ -212,6 +216,10 @@ pub(crate) fn draw_opacity_draws(
                     ctx.glyph_buf,
                     ctx.image_buf,
                     ctx.gradient_buf,
+                    ctx.shader_buf,
+                    ctx.shader_instances,
+                    ctx.shader_bind_group,
+                    ctx.user_shaders,
                     runs,
                     image_draws,
                     *all_opaque,

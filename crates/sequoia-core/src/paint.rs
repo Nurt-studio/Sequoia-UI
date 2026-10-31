@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::geometry::{Rect, Transform, Vec2};
+use crate::geometry::{Rect, Size, Transform, Vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
@@ -881,6 +881,167 @@ impl GradientDraw {
     }
 }
 
+/// Stable handle for a shader registered with the renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ShaderId(pub u32);
+
+impl ShaderId {
+    /// Wraps a raw shader index.
+    ///
+    /// Handles returned by shader registration are the only valid values.
+    #[must_use]
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// Returns the raw numeric handle.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Identifier for an offscreen render target created by [`RenderList::begin_target`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RenderTargetId(pub u64);
+
+impl RenderTargetId {
+    /// Wraps a raw target identifier.
+    #[must_use]
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// Returns the raw target identifier.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// How a shader draw is composited with the destination.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BlendMode {
+    /// Standard source-over compositing (premultiplied alpha).
+    #[default]
+    Normal,
+
+    /// Adds source and destination.
+    Add,
+
+    Multiply,
+    Screen,
+    Subtract,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+
+    /// Selects the source where the destination is opaque.
+    AlphaMask,
+}
+
+impl BlendMode {
+    /// Stable GPU representation used by shader pipelines.
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        match self {
+            Self::Normal => 0,
+            Self::Add => 1,
+            Self::Multiply => 2,
+            Self::Screen => 3,
+            Self::Subtract => 4,
+            Self::Overlay => 5,
+            Self::Darken => 6,
+            Self::Lighten => 7,
+            Self::ColorDodge => 8,
+            Self::ColorBurn => 9,
+            Self::HardLight => 10,
+            Self::SoftLight => 11,
+            Self::Difference => 12,
+            Self::Exclusion => 13,
+            Self::Hue => 14,
+            Self::Saturation => 15,
+            Self::Color => 16,
+            Self::Luminosity => 17,
+            Self::AlphaMask => 18,
+        }
+    }
+}
+
+/// Texture made available to a shader draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TexInput {
+    /// Output of an earlier offscreen target.
+    Target(RenderTargetId),
+
+    /// Bitmap image handle.
+    Image(u64),
+}
+
+/// A custom-shader rectangle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShaderDraw {
+    pub rect: Rect,
+
+    pub uv: [f32; 4],
+
+    pub shader: ShaderId,
+
+    /// Raw uniform bytes exposed to the shader as `uniforms.values`.
+    ///
+    /// The renderer truncates payloads to [`MAX_SHADER_UNIFORM_BYTES`] and
+    /// zero-fills the remainder.
+    pub uniforms: Arc<[u8]>,
+
+    /// Binding index and texture source pairs.
+    pub textures: Arc<[(u32, TexInput)]>,
+
+    pub blend: BlendMode,
+
+    pub opacity: f32,
+}
+
+/// Copy of an offscreen target into the current paint target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlitDraw {
+    pub rect: Rect,
+
+    pub uv: [f32; 4],
+
+    pub target: RenderTargetId,
+
+    pub opacity: f32,
+}
+
+/// Maximum number of uniform bytes available to one shader draw.
+pub const MAX_SHADER_UNIFORM_BYTES: usize = 16 * 4 * 4;
+
+/// Marker that starts drawing into an offscreen target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TargetBegin {
+    pub target: RenderTargetId,
+
+    pub size: Size,
+}
+
+/// Marker that finishes drawing into an offscreen target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TargetEnd {
+    pub target: RenderTargetId,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum RenderItem {
@@ -895,6 +1056,29 @@ pub enum RenderItem {
     Waveform(WaveformDraw),
 
     Gradient(GradientDraw),
+
+    /// Custom GPU shader draw.
+    Shader(ShaderDraw),
+
+    /// Offscreen target copy.
+    Blit {
+        rect: Rect,
+        uv: [f32; 4],
+        target: RenderTargetId,
+        blend: BlendMode,
+    },
+
+    /// Starts an offscreen pass.
+    TargetBegin {
+        id: RenderTargetId,
+        size: Size,
+        blend: BlendMode,
+    },
+
+    /// Ends an offscreen pass.
+    TargetEnd {
+        id: RenderTargetId,
+    },
 }
 
 pub const MAX_WAVEFORM_BARS: usize = 8192;
@@ -1019,6 +1203,8 @@ pub struct RenderList {
     backdrops: Vec<BackdropSpan>,
 
     filters: Vec<FilterSpan>,
+
+    next_target: u64,
 }
 
 /// Snapshot of a `RenderList` used to capture a suffix for layer caching.
@@ -1050,6 +1236,7 @@ impl RenderList {
         self.item_transforms.clear();
         self.backdrops.clear();
         self.filters.clear();
+        self.next_target = 0;
     }
 
     pub fn push_opacity(&mut self, opacity: f32) {
@@ -1542,6 +1729,107 @@ impl RenderList {
         &self.items
     }
 
+    /// Pushes a custom-shader rectangle.
+    ///
+    /// The draw's uniform payload is truncated to [`MAX_SHADER_UNIFORM_BYTES`].
+    /// Duplicate texture bindings keep the last source for each index.
+    pub fn push_shader(&mut self, mut draw: ShaderDraw) {
+        if !self.opacity_visible() || draw.rect.is_empty() {
+            return;
+        }
+        draw.opacity = if draw.opacity.is_finite() {
+            draw.opacity.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if draw.opacity <= 0.0 {
+            return;
+        }
+        if draw.uniforms.len() > MAX_SHADER_UNIFORM_BYTES {
+            draw.uniforms = Arc::from(&draw.uniforms[..MAX_SHADER_UNIFORM_BYTES]);
+        }
+        if !draw.textures.is_empty() {
+            let mut textures = draw.textures.to_vec();
+            textures.sort_by_key(|(binding, _)| *binding);
+            textures.dedup_by_key(|(binding, _)| *binding);
+            draw.textures = Arc::from(textures);
+        }
+        let t = self.active_transform();
+        if let Some(local) = self.active_clip_for(t)
+            && !draw.rect.intersects(local)
+        {
+            return;
+        }
+        let rounded = self.active_rounded_clip();
+        self.items.push(RenderItem::Shader(draw));
+        self.item_clips.push(rounded);
+        self.item_transforms.push(t);
+    }
+
+    /// Pushes a copy of an offscreen target into the current target.
+    pub fn push_blit(
+        &mut self,
+        rect: Rect,
+        uv: [f32; 4],
+        target: RenderTargetId,
+        blend: BlendMode,
+    ) {
+        if !self.opacity_visible() || rect.is_empty() {
+            return;
+        }
+        let t = self.active_transform();
+        let (rect, uv) = if t.is_identity() {
+            let Some(cropped) = self.clip_rect(rect) else {
+                return;
+            };
+            if cropped.is_empty() {
+                return;
+            }
+            let uv = clip_uv(rect, uv, cropped);
+            (cropped, uv)
+        } else {
+            if let Some(local) = self.active_clip_for(t)
+                && !rect.intersects(local)
+            {
+                return;
+            }
+            (rect, uv)
+        };
+        let rounded = self.active_rounded_clip();
+        self.items.push(RenderItem::Blit {
+            rect,
+            uv,
+            target,
+            blend,
+        });
+        self.item_clips.push(rounded);
+        self.item_transforms.push(t);
+    }
+
+    /// Starts an offscreen pass and returns its handle.
+    pub fn begin_target(&mut self, size: Size, blend: BlendMode) -> RenderTargetId {
+        let id = RenderTargetId::new(self.next_target);
+        self.next_target += 1;
+        self.items.push(RenderItem::TargetBegin { id, size, blend });
+        self.item_clips.push(None);
+        self.item_transforms.push(Transform::default());
+        id
+    }
+
+    /// Ends an offscreen pass started with [`RenderList::begin_target`].
+    pub fn end_target(&mut self, id: RenderTargetId) {
+        self.items.push(RenderItem::TargetEnd { id });
+        self.item_clips.push(None);
+        self.item_transforms.push(Transform::default());
+    }
+
+    pub fn shaders(&self) -> impl Iterator<Item = &ShaderDraw> {
+        self.items.iter().filter_map(|i| match i {
+            RenderItem::Shader(s) => Some(s),
+            _ => None,
+        })
+    }
+
     pub fn push_gradient(
         &mut self,
         rect: Rect,
@@ -1740,55 +2028,35 @@ impl RenderList {
     pub fn quads(&self) -> impl Iterator<Item = &Quad> {
         self.items.iter().filter_map(|i| match i {
             RenderItem::Quad(q) => Some(q),
-            RenderItem::Text(_)
-            | RenderItem::Image(_)
-            | RenderItem::Shadow(_)
-            | RenderItem::Waveform(_)
-            | RenderItem::Gradient(_) => None,
+            _ => None,
         })
     }
 
     pub fn images(&self) -> impl Iterator<Item = &ImageDraw> {
         self.items.iter().filter_map(|i| match i {
             RenderItem::Image(d) => Some(d),
-            RenderItem::Quad(_)
-            | RenderItem::Text(_)
-            | RenderItem::Shadow(_)
-            | RenderItem::Waveform(_)
-            | RenderItem::Gradient(_) => None,
+            _ => None,
         })
     }
 
     pub fn shadows(&self) -> impl Iterator<Item = &Shadow> {
         self.items.iter().filter_map(|i| match i {
             RenderItem::Shadow(s) => Some(s),
-            RenderItem::Quad(_)
-            | RenderItem::Text(_)
-            | RenderItem::Image(_)
-            | RenderItem::Waveform(_)
-            | RenderItem::Gradient(_) => None,
+            _ => None,
         })
     }
 
     pub fn waveforms(&self) -> impl Iterator<Item = &WaveformDraw> {
         self.items.iter().filter_map(|i| match i {
             RenderItem::Waveform(w) => Some(w),
-            RenderItem::Quad(_)
-            | RenderItem::Text(_)
-            | RenderItem::Image(_)
-            | RenderItem::Shadow(_)
-            | RenderItem::Gradient(_) => None,
+            _ => None,
         })
     }
 
     pub fn gradients(&self) -> impl Iterator<Item = &GradientDraw> {
         self.items.iter().filter_map(|i| match i {
             RenderItem::Gradient(g) => Some(g),
-            RenderItem::Quad(_)
-            | RenderItem::Text(_)
-            | RenderItem::Image(_)
-            | RenderItem::Shadow(_)
-            | RenderItem::Waveform(_) => None,
+            _ => None,
         })
     }
 
@@ -1882,6 +2150,7 @@ impl RenderList {
                     ..*span
                 })
                 .collect(),
+            next_target: self.next_target,
         })
     }
 
@@ -2291,7 +2560,9 @@ mod tests {
         );
         assert_eq!(q.radius, 12.0, "corner radius survives the clip");
         assert_eq!(q.border_width, 2.0, "border stays on the real edge");
-        let item_clip = list.item_rounded_clip(0).expect("clip stored for the shader");
+        let item_clip = list
+            .item_rounded_clip(0)
+            .expect("clip stored for the shader");
         assert_eq!(item_clip.rect, clip);
 
         let mut outside = RenderList::new();
@@ -2310,11 +2581,7 @@ mod tests {
 
         let mut plain = RenderList::new();
         plain.push_clip(clip);
-        plain.push_quad(
-            Rect::from_xywh(50.0, 50.0, 100.0, 100.0),
-            Color::RED,
-            0.0,
-        );
+        plain.push_quad(Rect::from_xywh(50.0, 50.0, 100.0, 100.0), Color::RED, 0.0);
         assert_eq!(
             plain.quads().next().unwrap().rect,
             Rect::from_xywh(50.0, 50.0, 50.0, 50.0),

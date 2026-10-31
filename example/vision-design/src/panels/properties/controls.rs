@@ -1,19 +1,14 @@
 use sequoia_ui::prelude::*;
 
-use crate::theme::colors;
 use crate::overlays::{parse_hex, rgb_to_hsv, to_hex};
+use crate::theme::colors;
 
 pub(super) use crate::components::number_field::icon_label as glyph;
 pub(super) use crate::components::number_field::mono_label as mono_lbl;
 pub(super) use crate::components::number_field::number_field as drag_num;
 pub(super) use crate::components::segmented::{segment as mode_btn, segment_icon as seg_btn};
 
-
-
-
 // ---------------------------- tab strip ----------------------------
-
-
 
 pub(super) fn align_dot(active: bool, on_click: impl Fn() + 'static) -> impl View + 'static {
     Container::new()
@@ -36,8 +31,6 @@ pub(super) fn align_dot(active: bool, on_click: impl Fn() + 'static) -> impl Vie
         )
 }
 
-
-
 pub(super) fn pin_toggle(sig: Signal<bool>) -> impl View + 'static {
     let on = sig.get();
     let s = sig.clone();
@@ -48,7 +41,11 @@ pub(super) fn pin_toggle(sig: Signal<bool>) -> impl View + 'static {
         .radius(4.0)
         .border(
             1.0,
-            if on { Color::hex(0x0D99FF) } else { colors::active().stroke_soft },
+            if on {
+                Color::hex(0x0D99FF)
+            } else {
+                colors::active().stroke_soft
+            },
         )
         .background(if on {
             Color::hex(0x0D99FF)
@@ -79,7 +76,6 @@ pub(super) fn pin_row(
         )
         .child_flex(drag_num(pad, 0.0, 999.0, 0), 1.0)
 }
-
 
 pub(super) fn swatch(
     color: Color,
@@ -117,8 +113,11 @@ pub(super) fn swatch(
         })
 }
 
-
-pub(super) fn hex_field(hex: Signal<String>, fill: Signal<Color>, hue: Signal<f32>) -> impl View + 'static {
+pub(super) fn hex_field(
+    hex: Signal<String>,
+    fill: Signal<Color>,
+    hue: Signal<f32>,
+) -> impl View + 'static {
     let hex_set = hex.clone();
     TextField::new(hex)
         .font_size(12.0)
@@ -137,9 +136,6 @@ pub(super) fn hex_field(hex: Signal<String>, fill: Signal<Color>, hue: Signal<f3
             }
         })
 }
-
-
-
 
 /// Static export format segment (no click action).
 pub(super) fn fmt_seg(label: &'static str, active: bool) -> impl View + 'static {

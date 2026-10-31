@@ -55,16 +55,11 @@ pub(crate) fn segment(
         .background(segment_bg(active))
         .hover(segment_hover(active))
         .on_click(on_click)
-        .child(
-            Text::new(label)
-                .size(11.0)
-                .semibold()
-                .color(if active {
-                    Color::WHITE
-                } else {
-                    colors::active().icon_inactive
-                }),
-        )
+        .child(Text::new(label).size(11.0).semibold().color(if active {
+            Color::WHITE
+        } else {
+            colors::active().icon_inactive
+        }))
 }
 
 /// 26 px segment with a monospace label (export formats, CSS/Tailwind).

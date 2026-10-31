@@ -4,8 +4,8 @@ use sequoia_ui::prelude::*;
 use crate::components::icon_button::{glyph_button, icon_button, icon_button_env};
 use sequoia_ui::view::{Fill, GradientStops};
 
-use crate::theme::colors;
 use crate::state::EditorState;
+use crate::theme::colors;
 
 const ZOOM_MIN: f32 = 0.10;
 const ZOOM_MAX: f32 = 8.0;
@@ -78,7 +78,6 @@ fn grid_btn(active: bool, on_click: impl Fn() + 'static) -> impl View + 'static 
                 }),
         )
 }
-
 
 /// .doc-name — click turns it into an input
 #[derive(Clone)]

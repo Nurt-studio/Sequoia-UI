@@ -19,9 +19,11 @@ pub use crate::geometry::{
     Constraints, Edges, Length, LengthExt, Point, Rect, Size, Transform, Vec2,
 };
 pub use crate::paint::{
-    BackdropDraw, BackdropSpan, Color, FilterDraw, FilterSpan, GlyphQuad, GradientDraw, ImageDraw,
-    ImageSampling, ImageSource, MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad, RenderItem,
-    RenderList, RoundedClip, Shadow, SpanMask, TextDraw, WaveformDraw,
+    BackdropDraw, BackdropSpan, BlendMode, BlitDraw, Color, FilterDraw, FilterSpan, GlyphQuad,
+    GradientDraw, ImageDraw, ImageSampling, ImageSource, MAX_SHADER_UNIFORM_BYTES,
+    MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad, RenderItem, RenderList, RenderTargetId,
+    RoundedClip, ShaderDraw, ShaderId, Shadow, SpanMask, TargetBegin, TargetEnd, TexInput,
+    TextDraw, WaveformDraw,
 };
 pub use crate::pixel::Pixels;
 pub use crate::window::WindowId;
@@ -34,9 +36,11 @@ pub mod prelude {
         Constraints, Edges, Length, LengthExt, Point, Rect, Size, Transform, Vec2,
     };
     pub use crate::paint::{
-        BackdropDraw, BackdropSpan, Color, FilterDraw, FilterSpan, GlyphQuad, GradientDraw,
-        ImageDraw, ImageSampling, ImageSource, MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad,
-        RenderItem, RenderList, RoundedClip, Shadow, SpanMask, TextDraw, WaveformDraw,
+        BackdropDraw, BackdropSpan, BlendMode, BlitDraw, Color, FilterDraw, FilterSpan, GlyphQuad,
+        GradientDraw, ImageDraw, ImageSampling, ImageSource, MAX_SHADER_UNIFORM_BYTES,
+        MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad, RenderItem, RenderList, RenderTargetId,
+        RoundedClip, ShaderDraw, ShaderId, Shadow, SpanMask, TargetBegin, TargetEnd, TexInput,
+        TextDraw, WaveformDraw,
     };
     pub use crate::pixel::Pixels;
     pub use crate::time::DurationExt;

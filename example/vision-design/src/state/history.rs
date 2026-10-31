@@ -1,5 +1,5 @@
-use crate::core::layer::Layer;
 use super::EditorState;
+use crate::core::layer::Layer;
 
 impl EditorState {
     pub(crate) fn push_history(&self) {
@@ -59,5 +59,4 @@ impl EditorState {
             self.selected_layer.set(None);
         }
     }
-
 }

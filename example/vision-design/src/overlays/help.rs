@@ -93,7 +93,8 @@ impl View for HelpOverlay {
 
 // -------------------------- root --------------------------
 
-
 pub(crate) fn help_overlay(state: &EditorState) -> impl View + 'static {
-    HelpOverlay { state: state.clone() }
+    HelpOverlay {
+        state: state.clone(),
+    }
 }

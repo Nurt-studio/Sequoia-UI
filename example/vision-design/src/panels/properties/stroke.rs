@@ -1,7 +1,7 @@
 use sequoia_ui::prelude::*;
 
-use crate::state::{EditorState, PickerTarget};
 use crate::overlays::color_well;
+use crate::state::{EditorState, PickerTarget};
 
 use super::controls::{drag_num, hex_field};
 
@@ -19,4 +19,3 @@ pub(super) fn body_stroke(state: &EditorState) -> impl View + 'static {
             .child_flex(drag_num(state.sel_stroke_w.clone(), 0.0, 100.0, 0), 1.0),
     )
 }
-

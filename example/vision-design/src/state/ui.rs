@@ -138,4 +138,3 @@ pub(crate) struct ToastEntry {
     pub(crate) msg: String,
     pub(crate) kind: ToastKind,
 }
-

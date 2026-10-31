@@ -15,4 +15,3 @@ pub(super) fn body_position(state: &EditorState) -> impl View + 'static {
             .child_flex(drag_num(state.sel_y.clone(), -9999.0, 9999.0, 0), 1.0),
     )
 }
-

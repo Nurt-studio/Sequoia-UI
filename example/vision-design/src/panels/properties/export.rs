@@ -21,4 +21,3 @@ pub(super) fn body_export(_state: &EditorState) -> impl View + 'static {
 }
 
 // ---------------------------- Inspect tab ----------------------------
-

@@ -12,7 +12,6 @@ pub(crate) struct LayerRow {
     pub(crate) state: EditorState,
 }
 
-
 impl View for LayerRow {
     fn body(&self) -> impl View + 'static {
         let sel = self.state.selected_layer.get() == Some(self.layer.id);
@@ -162,4 +161,3 @@ impl View for LayerRow {
         }
     }
 }
-

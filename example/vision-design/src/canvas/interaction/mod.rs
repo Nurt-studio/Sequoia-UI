@@ -108,9 +108,7 @@ impl Interaction {
 
         match ev {
             PointerEvent::Wheel {
-                delta,
-                modifiers,
-                ..
+                delta, modifiers, ..
             } => {
                 let ctrl =
                     modifiers.contains(Modifiers::CONTROL) || modifiers.contains(Modifiers::SUPER);
@@ -229,12 +227,8 @@ impl Interaction {
                         }
                         *last.borrow_mut() = (Some(id), now);
                         if !layer.locked {
-                            *self.drag.borrow_mut() = Some(DragSession::moving(
-                                layer,
-                                wx,
-                                wy,
-                                layers.clone(),
-                            ));
+                            *self.drag.borrow_mut() =
+                                Some(DragSession::moving(layer, wx, wy, layers.clone()));
                         }
                     } else {
                         signals.selected.set(None);

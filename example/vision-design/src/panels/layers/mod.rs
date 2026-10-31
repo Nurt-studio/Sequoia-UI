@@ -11,9 +11,6 @@ use crate::components::icon_button::small_icon_button;
 use crate::state::EditorState;
 use crate::theme::colors;
 
-
-
-
 fn search_box(state: &EditorState) -> impl View + 'static {
     let query = state.layer_query.clone();
     Container::new()
@@ -27,7 +24,11 @@ fn search_box(state: &EditorState) -> impl View + 'static {
             Row::new()
                 .gap(6.0)
                 .align_items(Align::Center)
-                .child(Icon::new("search").size(12.0).color(colors::active().icon_inactive))
+                .child(
+                    Icon::new("search")
+                        .size(12.0)
+                        .color(colors::active().icon_inactive),
+                )
                 .child_flex(
                     TextField::new(query)
                         .placeholder("Search…")
@@ -89,7 +90,6 @@ impl View for Sec {
             )
     }
 }
-
 
 pub(crate) fn panel_left(state: &EditorState) -> impl View + 'static {
     let page_cnt = {

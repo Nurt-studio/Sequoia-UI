@@ -21,6 +21,10 @@ impl crate::renderer::GpuRenderer {
         glyph_buf: &wgpu::Buffer,
         image_buf: &wgpu::Buffer,
         gradient_buf: &wgpu::Buffer,
+        shader_buf: &wgpu::Buffer,
+        shader_instances: &[GpuShaderInstance],
+        shader_bind_group: &wgpu::BindGroup,
+        user_shaders: &std::collections::HashMap<sequoia_core::ShaderId, UserShaderEntry>,
         runs: &[GuiRun],
         image_draws: &[(u32, wgpu::BindGroup)],
         all_opaque: bool,
@@ -66,6 +70,27 @@ impl crate::renderer::GpuRenderer {
                         }
                         pass.set_bind_group(1, bg, &[]);
                         pass.draw(0..4, *idx..*idx + 1);
+                    }
+                }
+                GuiRun::Shader(start, len, shader_id, blend) => {
+                    let Some(entry) = user_shaders.get(&shader_id) else {
+                        continue;
+                    };
+                    let Some(pipeline) = entry
+                        .pipelines
+                        .get(&blend)
+                        .or_else(|| entry.pipelines.get(&sequoia_core::BlendMode::Normal))
+                    else {
+                        continue;
+                    };
+                    pass.set_pipeline(pipeline);
+                    pass.set_vertex_buffer(0, shader_buf.slice(..));
+                    for index in start..start + len {
+                        let Some(instance) = shader_instances.get(index as usize) else {
+                            break;
+                        };
+                        pass.set_bind_group(0, shader_bind_group, &[instance.uniform_offset]);
+                        pass.draw(0..4, index..index + 1);
                     }
                 }
             }

@@ -127,4 +127,3 @@ pub(crate) fn apply_auto_layout_frame(frame_id: u64, ls: &mut [Layer]) {
         }
     }
 }
-

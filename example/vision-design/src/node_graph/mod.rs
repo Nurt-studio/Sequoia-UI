@@ -2,11 +2,11 @@ pub(crate) mod canvas;
 pub(crate) mod graph_state;
 pub(crate) mod model;
 
-use sequoia_ui::prelude::*;
 use crate::state::EditorState;
 use crate::theme::colors;
 use canvas::GraphCanvas;
 use graph_state::NodeGraphState;
+use sequoia_ui::prelude::*;
 
 /// Main view of the node graph window
 pub(crate) struct NodeGraphView {
@@ -85,18 +85,9 @@ impl View for NodeGraphView {
 }
 
 /// Creates a ready-to-open WindowSpec
-pub(crate) fn node_graph_spec(
-    editor: EditorState,
-) -> sequoia_ui::prelude::WindowSpec {
+pub(crate) fn node_graph_spec(editor: EditorState) -> sequoia_ui::prelude::WindowSpec {
     let graph = NodeGraphState::demo();
-    WindowSpec::new(
-        "Node Graph",
-        NodeGraphView {
-            editor,
-            graph,
-        },
-    )
-    .size(1100.0, 720.0)
+    WindowSpec::new("Node Graph", NodeGraphView { editor, graph }).size(1100.0, 720.0)
 }
 
 #[cfg(test)]
@@ -181,9 +172,11 @@ mod tests {
 
         let conns = graph.connections.get_untracked();
         assert_eq!(conns.len(), 3, "{conns:?}");
-        assert!(conns.iter().any(|c| {
-            c.from_node == 1 && c.from_port == 1 && c.to_node == 3 && c.to_port == 1
-        }));
+        assert!(
+            conns.iter().any(|c| {
+                c.from_node == 1 && c.from_port == 1 && c.to_node == 3 && c.to_port == 1
+            })
+        );
     }
 
     #[test]
@@ -207,9 +200,11 @@ mod tests {
 
         let conns = graph.connections.get_untracked();
         assert_eq!(conns.len(), 3, "{conns:?}");
-        assert!(conns.iter().any(|c| {
-            c.from_node == 1 && c.from_port == 1 && c.to_node == 3 && c.to_port == 1
-        }));
+        assert!(
+            conns.iter().any(|c| {
+                c.from_node == 1 && c.from_port == 1 && c.to_node == 3 && c.to_port == 1
+            })
+        );
     }
 
     #[test]
