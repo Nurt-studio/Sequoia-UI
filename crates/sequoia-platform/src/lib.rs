@@ -47,7 +47,7 @@ pub use sequoia_render::{
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, NamedKey};
 use winit::window::{
@@ -507,6 +507,7 @@ impl App {
             executor,
             initial,
             live: HashMap::new(),
+            last_input: None,
             id_map: HashMap::new(),
             error: None,
         };
@@ -628,6 +629,70 @@ impl PaintGate {
     }
 }
 
+/// Kółko dociera do aplikacji dwiema drogami: jako `WindowEvent::MouseWheel`
+/// (z pozycją kursora) i jako `DeviceEvent::MouseWheel` z raw input.
+///
+/// Na Windows obie niosą to samo zdarzenie, a precyzyjne touchpady potrafią
+/// raportować poziom wyłącznie przez raw input — żadnej z dróg nie można więc
+/// po prostu wyłączyć. Zamiast tego każdą oś liczymy raz: przez tę drogę, która
+/// zgłosiła ją pierwsza, a kopię w drugiej drodze odrzucamy.
+const WHEEL_DUPLICATE_MS: Duration = Duration::from_millis(50);
+
+#[derive(Default)]
+struct WheelDedupe {
+    window: [Option<Instant>; 2],
+    device: [Option<Instant>; 2],
+}
+
+impl WheelDedupe {
+    fn stamp(seen: &mut [Option<Instant>; 2], d: sequoia_core::Vec2, now: Instant) {
+        if d.x != 0.0 {
+            seen[0] = Some(now);
+        }
+        if d.y != 0.0 {
+            seen[1] = Some(now);
+        }
+    }
+
+    fn fresh(seen: &[Option<Instant>; 2], axis: usize, now: Instant) -> bool {
+        seen[axis].is_none_or(|t| now.duration_since(t) >= WHEEL_DUPLICATE_MS)
+    }
+
+    /// Oś zostaje, jeśli druga droga nie zgłosiła jej przed chwilą.
+    fn take(
+        seen: &mut [Option<Instant>; 2],
+        other: &[Option<Instant>; 2],
+        d: sequoia_core::Vec2,
+        now: Instant,
+    ) -> sequoia_core::Vec2 {
+        Self::stamp(seen, d, now);
+        sequoia_core::Vec2::new(
+            if Self::fresh(other, 0, now) { d.x } else { 0.0 },
+            if Self::fresh(other, 1, now) { d.y } else { 0.0 },
+        )
+    }
+
+    fn window(&mut self, d: sequoia_core::Vec2, now: Instant) -> sequoia_core::Vec2 {
+        Self::take(&mut self.window, &self.device, d, now)
+    }
+
+    fn device(&mut self, d: sequoia_core::Vec2, now: Instant) -> sequoia_core::Vec2 {
+        Self::take(&mut self.device, &self.window, d, now)
+    }
+}
+
+/// Converts a wheel delta to logical pixels (one line is 40 px).
+fn wheel_points(delta: winit::event::MouseScrollDelta, scale: f32) -> sequoia_core::Vec2 {
+    match delta {
+        winit::event::MouseScrollDelta::LineDelta(x, y) => {
+            sequoia_core::Vec2::new(x * 40.0, y * 40.0)
+        }
+        winit::event::MouseScrollDelta::PixelDelta(p) => {
+            sequoia_core::Vec2::new(p.x as f32 / scale, p.y as f32 / scale)
+        }
+    }
+}
+
 struct WindowState {
     id: WindowId,
     window: Arc<Window>,
@@ -636,6 +701,7 @@ struct WindowState {
     text: TextSystem,
     cursor: Point,
     mods: Modifiers,
+    wheel_seen: WheelDedupe,
 
     scale: f32,
 
@@ -992,6 +1058,10 @@ struct PlatformApp {
 
     live: HashMap<WinitWindowId, WindowState>,
 
+    /// Last window that received input — the target for device events
+    /// that do not carry a window identifier themselves.
+    last_input: Option<WinitWindowId>,
+
     id_map: HashMap<WindowId, WinitWindowId>,
     error: Option<AppError>,
 }
@@ -1143,6 +1213,7 @@ impl PlatformApp {
             text,
             cursor: Point::ZERO,
             mods: Modifiers::NONE,
+            wheel_seen: WheelDedupe::default(),
             scale,
             last_cursor: None,
             settings: s.clone(),
@@ -1411,6 +1482,9 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             self.close_requested(event_loop, wid);
             return;
         }
+        if is_input_event(&event) {
+            self.last_input = Some(wid);
+        }
 
         let redraw_mode = self.redraw_mode;
         {
@@ -1545,20 +1619,13 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                 }
 
                 WindowEvent::MouseWheel { delta, .. } => {
-                    let s = ws.scale;
-                    let (dx, dy) = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(x, y) => (x * 40.0, y * 40.0),
-
-                        winit::event::MouseScrollDelta::PixelDelta(p) => {
-                            (p.x as f32 / s, p.y as f32 / s)
-                        }
-                    };
-                    ws.rt.wheel(
-                        ws.cursor,
-                        sequoia_core::Vec2::new(dx, dy),
-                        ws.mods,
-                        &mut ws.text,
-                    );
+                    let d = ws
+                        .wheel_seen
+                        .window(wheel_points(delta, ws.scale), Instant::now());
+                    eprintln!("PROBE window applied={d:?}");
+                    if d.x != 0.0 || d.y != 0.0 {
+                        ws.rt.wheel(ws.cursor, d, ws.mods, &mut ws.text);
+                    }
                 }
 
                 WindowEvent::RedrawRequested => {
@@ -1692,6 +1759,34 @@ impl ApplicationHandler<JobWake> for PlatformApp {
         self.update_control_flow(event_loop);
     }
 
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        let DeviceEvent::MouseWheel { delta } = event else {
+            return;
+        };
+        let Some(wid) = self.last_input else {
+            return;
+        };
+        let now = Instant::now();
+        let Some(ws) = self.live.get_mut(&wid) else {
+            return;
+        };
+        // Raw input carries no cursor position - we use the last known one.
+        let d = ws.wheel_seen.device(wheel_points(delta, ws.scale), now);
+        eprintln!("PROBE device applied={d:?}");
+        if d.x == 0.0 && d.y == 0.0 {
+            return;
+        }
+        ws.rt.wheel(ws.cursor, d, ws.mods, &mut ws.text);
+        if !ws.continuous_paced {
+            ws.gate.borrow_mut().request();
+        }
+    }
+
     fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: JobWake) {
         if self.executor.drain() == 0 {
             return;
@@ -1761,6 +1856,68 @@ mod tests {
         assert!(accelerator_allowed(Modifiers::CONTROL, true));
         assert!(accelerator_allowed(Modifiers::ALT, true));
         assert!(accelerator_allowed(Modifiers::SUPER, true));
+    }
+
+    #[test]
+    fn the_same_wheel_turn_is_counted_once() {
+        let t0 = Instant::now();
+        let d = sequoia_core::Vec2::new(-40.0, -40.0);
+        let after = Duration::from_millis(1);
+
+        let mut device_first = WheelDedupe::default();
+        let a = device_first.device(d, t0);
+        let b = device_first.window(d, t0 + after);
+        assert_eq!((a.x, a.y), (-40.0, -40.0), "pierwsza droga liczy całość");
+        assert_eq!((b.x, b.y), (0.0, 0.0), "kopia z okna odrzucona");
+
+        let mut window_first = WheelDedupe::default();
+        let a = window_first.window(d, t0);
+        let b = window_first.device(d, t0 + after);
+        assert_eq!((a.x, a.y), (-40.0, -40.0));
+        assert_eq!((b.x, b.y), (0.0, 0.0), "kopia z raw input odrzucona");
+    }
+
+    #[test]
+    fn raw_input_fills_an_axis_the_window_never_reports() {
+        let t0 = Instant::now();
+        let mut dedupe = WheelDedupe::default();
+        let vertical = dedupe.window(sequoia_core::Vec2::new(0.0, -40.0), t0);
+        let horizontal = dedupe.device(
+            sequoia_core::Vec2::new(-40.0, 0.0),
+            t0 + Duration::from_millis(2),
+        );
+        assert_eq!(vertical.y, -40.0);
+        assert_eq!(horizontal.x, -40.0, "poziom tylko z raw input ma przejść");
+        assert_eq!(horizontal.y, 0.0, "pion policzyło już okno");
+    }
+
+    #[test]
+    fn repeated_window_wheel_steps_are_not_throttled() {
+        let t0 = Instant::now();
+        let mut dedupe = WheelDedupe::default();
+        let a = dedupe.window(sequoia_core::Vec2::new(0.0, -40.0), t0);
+        let b = dedupe.window(
+            sequoia_core::Vec2::new(0.0, -40.0),
+            t0 + Duration::from_millis(8),
+        );
+        assert_eq!(
+            (a.y, b.y),
+            (-40.0, -40.0),
+            "kolejne kroki tej samej drogi nie giną"
+        );
+    }
+
+    #[test]
+    fn wheel_points_matches_line_and_pixel_units() {
+        let line = wheel_points(winit::event::MouseScrollDelta::LineDelta(1.0, -1.0), 1.0);
+        assert_eq!((line.x, line.y), (40.0, -40.0));
+        let pixel = wheel_points(
+            winit::event::MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(
+                20.0, -10.0,
+            )),
+            2.0,
+        );
+        assert_eq!((pixel.x, pixel.y), (10.0, -5.0));
     }
 
     #[test]
