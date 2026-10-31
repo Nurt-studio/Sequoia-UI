@@ -122,7 +122,7 @@ fn when_mounts_and_unmounts_child() {
     open.set(false);
     rt.tick();
 
-    // Bez `.enter()` / `.exit()` nie ma animacji: dziecko znika w kilku klatkach.
+    // Without `.enter()` / `.exit()` there is no animation: the child disappears within a few frames.
     for _ in 0..3 {
         rt.advance_for_test(std::time::Duration::from_millis(10));
         rt.tick();

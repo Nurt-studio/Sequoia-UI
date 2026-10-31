@@ -1,40 +1,40 @@
-//! Model inwalidacji między klatkami.
+//! Cross-frame invalidation model.
 //!
-//! `DamageTracker` akumuluje marki z jednej klatki, żeby runtime mógł:
-//! - **pominąć całą klatkę**, gdy nie ma pracy malowania ani animacji,
-//! - **ograniczyć repaint** do bounding-boxu obrażeń (Phase 2 — scissor),
-//! - **nie pominąć klatki**, gdy trwa animacja (`request_frame`).
+//! `DamageTracker` accumulates marks from a single frame so the runtime can:
+//! - **skip the whole frame** when there is no paint or animation work,
+//! - **limit repaint** to the damage bounding box (Phase 2 — scissor),
+//! - **not skip the frame** while an animation is running (`request_frame`).
 //!
-//! # Co triggeruje klatkę
+//! # What triggers a frame
 //!
-//! - `Runtime::request_rebuild` (sygnały, effecty, stan widoku, mount/unmount)
-//!   → `Dirty::LAYOUT | Dirty::CHILDREN`: rebuild w `settle`, potem pełny paint.
+//! - `Runtime::request_rebuild` (signals, effects, view state, mount/unmount)
+//!   → `Dirty::LAYOUT | Dirty::CHILDREN`: rebuild in `settle`, then full paint.
 //! - `Runtime::mark_damage(.., Dirty::PAINT)` (hover/press/focus)
-//!   → `PAINT` + bounding-box elementu: paint bez rebuild.
-//! - `PaintCtx::request_frame` (animacja) → motion: paint następnej klatki.
-//! - `Runtime::mark_full_damage` (resize, DPI, motyw, nowy root)
-//!   → pełny viewport i unieważnienie cache warstw.
-//! - `Runtime::layout` z innym viewportem → pełny paint + `LAYOUT`.
+//!   → `PAINT` + element bounding box: paint without rebuild.
+//! - `PaintCtx::request_frame` (animation) → motion: paint the next frame.
+//! - `Runtime::mark_full_damage` (resize, DPI, theme, new root)
+//!   → full viewport and layer cache invalidation.
+//! - `Runtime::layout` with a different viewport → full paint + `LAYOUT`.
 //!
-//! `HIT_TEST` i `DATA` są tylko znacznikami księgowymi: nie wymagają pikseli
-//! i same nie tworzą klatki.
+//! `HIT_TEST` and `DATA` are bookkeeping markers only: they require no pixels
+//! and do not create a frame on their own.
 //!
-//! # Fazy klatki
+//! # Frame phases
 //!
-//! 1. `tick()` → `settle()` scala dirty per element i przebudowuje tylko
-//!    elementy z `needs_layout()`. Czysto-paintowe marki nie robią rebuild.
-//! 2. `layout()` rozwiązuje geometrię; zmiana viewportu wymusza pełny paint.
+//! 1. `tick()` → `settle()` coalesces dirty state per element and rebuilds only
+//!    elements with `needs_layout()`. Paint-only marks do not trigger a rebuild.
+//! 2. `layout()` resolves geometry; a viewport change forces a full paint.
 //! 3. `paint_if_dirty()`:
-//!    - bierze `take_motion()` (zużywa request z poprzedniej klatki),
-//!    - jeśli brak motion i brak `needs_repaint()` → `record_skipped`,
+//!    - takes `take_motion()` (consumes the request from the previous frame),
+//!    - if there is no motion and no `needs_repaint()` → `record_skipped`,
 //!      return `Skipped`,
-//!    - inaczej: paint (partial bbox lub full), `after_paint()`, return `Painted`.
+//!    - otherwise: paint (partial bbox or full), `after_paint()`, return `Painted`.
 //!
-//! # Agregacja
+//! # Aggregation
 //!
-//! - wielokrotne marki tego samego elementu: OR flag, element trafia do queue raz,
-//! - wiele elementów: jeden `settle`, jeden paint i jeden bbox (union) na klatkę,
-//! - marki spoza viewportu i tak trafiają do bboxu, dopóki nie ma `full`/layoutu.
+//! - repeated marks of the same element: OR the flag, the element enters the queue once,
+//! - many elements: one `settle`, one paint and one bbox (union) per frame,
+//! - marks outside the viewport still contribute to the bbox until there is `full`/layout.
 
 use sequoia_core::{Dirty, Rect};
 
@@ -52,15 +52,15 @@ pub(crate) const MAX_DAMAGE_REGIONS: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct DamageTracker {
-    // �?" stan bie���cej klatki �?" -
+    // — current frame state —
     flags: Dirty,
     regions: Vec<Rect>,
     full: bool,
 
-    // — "motion" (request_frame z poprzedniej klatki) —
+    // — "motion" (request_frame from the previous frame) —
     motion_pending: bool,
 
-    // — statystyki —
+    // — statistics —
     frames_painted: u64,
     frames_skipped: u64,
 }
@@ -84,7 +84,7 @@ impl DamageTracker {
     }
 
     // ──────────────────────────────────────────────────────────
-    // Markery (wołane w trakcie klatki, przed paint)
+    // Markers (called during a frame, before paint)
     // ──────────────────────────────────────────────────────────
 
     /// Zaznacz konkretny obszar (window coords) jako brudny.
@@ -115,13 +115,13 @@ impl DamageTracker {
         }
     }
 
-    /// Cały viewport do przemalowania (resize, DPI, motyw, mount/unmount root).
+    /// Whole viewport needs repainting (resize, DPI, theme, root mount/unmount).
     pub fn mark_full(&mut self) {
         self.full = true;
         self.flags |= Dirty::PAINT | Dirty::SURFACE;
     }
 
-    /// Zmiana wpłynie na pomiar/układ (nie tylko piksele).
+    /// The change affects measurement/layout (not just pixels).
     pub fn mark_layout(&mut self) {
         self.flags |= Dirty::LAYOUT;
     }
@@ -132,15 +132,15 @@ impl DamageTracker {
     }
 
     // ──────────────────────────────────────────────────────────
-    // Motion (animacje, spinner, scroll velocity)
+    // Motion (animations, spinner, scroll velocity)
     // ──────────────────────────────────────────────────────────
 
-    /// Wołane przez `PaintCtx::request_frame()` — "pomaluj mnie w następnej klatce".
+    /// Called by `PaintCtx::request_frame()` — "paint me in the next frame".
     pub fn request_frame(&mut self) {
         self.motion_pending = true;
     }
 
-    /// Zużywa request z poprzedniej klatki. Wołane raz na klatkę, PRZED paint.
+    /// Consumes the request from the previous frame. Called once per frame, BEFORE paint.
     pub fn take_motion(&mut self) -> bool {
         let was = self.motion_pending;
         self.motion_pending = false;
@@ -148,7 +148,7 @@ impl DamageTracker {
     }
 
     // ──────────────────────────────────────────────────────────
-    // Odpytania
+    // Queries
     // ──────────────────────────────────────────────────────────
 
     /// No pixels or animation work are pending.
@@ -208,11 +208,11 @@ impl DamageTracker {
     }
 
     // ──────────────────────────────────────────────────────────
-    // Koniec klatki
+    // End of frame
     // ──────────────────────────────────────────────────────────
 
-    /// Wołane po paint — resetuje stan bieżącej klatki.
-    /// **NIE** rusza `motion_pending`, bo paint mógł złożyć nowy request.
+    /// Called after paint — resets the current frame state.
+    /// **Does NOT** touch `motion_pending`, because paint may have queued a new request.
     pub fn after_paint(&mut self) {
         self.flags = Dirty::empty();
         self.regions.clear();
@@ -220,10 +220,10 @@ impl DamageTracker {
         self.frames_painted += 1;
     }
 
-    /// Wołane gdy klatka pominięta.
+    /// Called when a frame is skipped.
     ///
-    /// Czyści też znaczniki księgowe (`HIT_TEST`, `DATA`), które nie wymagają
-    /// pikseli, żeby nie utrzymywały `needs_frame()` w nieskończoność.
+    /// Also clears bookkeeping markers (`HIT_TEST`, `DATA`) that require no
+    /// pixels so they do not keep `needs_frame()` alive forever.
     pub fn record_skipped(&mut self) {
         self.flags = Dirty::empty();
         self.regions.clear();
@@ -231,7 +231,7 @@ impl DamageTracker {
         self.frames_skipped += 1;
     }
 
-    /// Pełny reset (nowy root, nowe okno).
+    /// Full reset (new root, new window).
     pub fn clear_all(&mut self) {
         self.flags = Dirty::empty();
         self.regions.clear();
@@ -240,7 +240,7 @@ impl DamageTracker {
     }
 
     // ──────────────────────────────────────────────────────────
-    // Statystyki
+    // Statistics
     // ──────────────────────────────────────────────────────────
 
     pub fn frames_painted(&self) -> u64 {
@@ -251,7 +251,7 @@ impl DamageTracker {
         self.frames_skipped
     }
 
-    /// Odsetek klatek pominiętych (0.0 – 1.0).
+    /// Fraction of skipped frames (0.0 – 1.0).
     pub fn skip_rate(&self) -> f32 {
         let total = self.frames_painted + self.frames_skipped;
         if total == 0 {
@@ -376,7 +376,7 @@ mod tests {
         d.request_frame();
         assert!(d.needs_frame(), "motion = ramka do namalowania");
 
-        // take_motion zużywa request
+        // take_motion consumes the request
         assert!(d.take_motion());
         assert!(!d.take_motion(), "drugie take_motion = false");
     }
@@ -412,7 +412,7 @@ mod tests {
         d.after_paint();
         assert!(d.is_empty(), "po klatce puste");
 
-        // paint mógł ustawić motion dla następnej klatki
+        // paint may have set motion for the next frame
         d.request_frame();
         d.after_paint();
         assert!(d.needs_frame(), "motion z paint nie ginie");
@@ -450,7 +450,7 @@ mod tests {
         for i in 0..100 {
             d.mark_rect(r(i as f32, 0.0, 1.0, 1.0));
         }
-        // 100 marków = jedna klatka
+        // 100 marks = one frame
         d.after_paint();
         assert_eq!(d.frames_painted(), 1);
         assert!(d.is_empty());

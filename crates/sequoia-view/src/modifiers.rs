@@ -131,8 +131,8 @@ pub struct When {
 
 pub fn when<V: View + 'static>(present: Signal<bool>, child: V) -> When {
     When {
-        // Ruch jest opt-in: sam `when` tylko montuje i odmontowuje dziecko,
-        // a animację włącza dopiero `.enter(...)` / `.exit(...)`.
+        // Motion is opt-in: `when` alone only mounts and unmounts the child,
+        // and the animation is enabled only by `.enter(...)` / `.exit(...)`.
         presence: Presence::new(present).child(child).durations(0.0, 0.0),
     }
 }

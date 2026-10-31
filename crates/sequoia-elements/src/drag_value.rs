@@ -702,8 +702,8 @@ impl View for DragValue {
 
         let line_h = LayoutCtx::text_line_height(size);
         let draws_line = line_width > 0.0 && colors.line.a > 0.0;
-        // Bez podkreślenia nie rezerwujemy miejsca pod linią, więc tekst
-        // centrujemy w pionie w całym polu. Z linią układ zostaje jak dotąd.
+        // Without an underline we do not reserve space for the line, so the text
+        // is vertically centered in the whole field. With a line the layout stays as before.
         let text_top = if draws_line {
             rect.top()
         } else {
