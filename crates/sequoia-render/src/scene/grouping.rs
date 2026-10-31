@@ -9,6 +9,7 @@ use sequoia_core::{ImageSampling, Rect, RenderItem};
 ///
 /// Items outside the viewport are culled. Items that exceed the per-buffer
 /// ceilings are dropped and counted in the returned tuple.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn group_runs(
     items: &[RenderItem],
     clips: &[Option<sequoia_core::RoundedClip>],
@@ -462,6 +463,7 @@ pub(crate) fn group_runs_with_opacity(
 }
 
 /// Offsets run ranges by the instance counts already present in the buffers.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn shift_gui_runs(
     runs: &[GuiRun],
     quad_base: u32,

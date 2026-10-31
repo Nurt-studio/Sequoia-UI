@@ -6,6 +6,7 @@
 #[allow(unused_imports)]
 use std::any::Any;
 
+use crate::gpu::resources::UserShaderEntry;
 use crate::scene::grouping::*;
 use crate::scene::instances::opacity_composite_instance;
 use crate::types::*;
@@ -75,6 +76,7 @@ pub(crate) fn build_opacity_draws(
     images: &mut Vec<BlitQuad>,
     image_keys: &mut Vec<u64>,
     gradients: &mut Vec<GpuGradient>,
+    shaders: &mut ShaderGroupData,
     stats: &mut RenderStats,
     fb: (u32, u32),
     composites: &mut Vec<GpuBackdrop>,
@@ -95,10 +97,12 @@ pub(crate) fn build_opacity_draws(
                 let mut seg_keys: Vec<u64> = Vec::new();
                 let mut seg_gradients: Vec<GpuGradient> = Vec::new();
                 let mut seg_runs: Vec<GuiRun> = Vec::new();
-                let (dq, dg, di, dgrad, culled) = group_runs(
+                let shader_base = shaders.instances.len() as u32;
+                let (dq, dg, di, dgrad, culled) = group_runs_with_opacity(
                     &items[start..end],
                     &clips[start..end],
                     &transforms[start..end],
+                    &[],
                     scale,
                     viewport,
                     ceilings.0,
@@ -111,6 +115,7 @@ pub(crate) fn build_opacity_draws(
                     &mut seg_keys,
                     &mut seg_gradients,
                     &mut seg_runs,
+                    Some(shaders),
                 );
                 stats.dropped_quads += dq as u64;
                 stats.dropped_glyphs += dg as u64;
@@ -119,12 +124,13 @@ pub(crate) fn build_opacity_draws(
                 stats.culled += culled as u64;
 
                 let all_opaque = seg_gradients.is_empty() && seg_quads.iter().all(quad_is_opaque);
-                let runs = shift_gui_runs(
+                let runs = shift_gui_runs_with_shaders(
                     &seg_runs,
                     quads.len() as u32,
                     glyphs.len() as u32,
                     images.len() as u32,
                     gradients.len() as u32,
+                    shader_base,
                 );
                 quads.extend_from_slice(&seg_quads);
                 glyphs.extend_from_slice(&seg_glyphs);
@@ -143,7 +149,7 @@ pub(crate) fn build_opacity_draws(
             OpacityNode::Group { opacity, children } => {
                 let child_draws = build_opacity_draws(
                     children, items, clips, transforms, scale, viewport, ceilings, quads, glyphs,
-                    images, image_keys, gradients, stats, fb, composites,
+                    images, image_keys, gradients, shaders, stats, fb, composites,
                 );
                 if child_draws.is_empty() {
                     continue;
@@ -320,6 +326,7 @@ mod tests {
         let mut images = Vec::new();
         let mut keys = Vec::new();
         let mut gradients = Vec::new();
+        let mut shaders = ShaderGroupData::default();
         let mut stats = RenderStats::default();
         let mut composites = Vec::new();
         let draws = build_opacity_draws(
@@ -335,6 +342,7 @@ mod tests {
             &mut images,
             &mut keys,
             &mut gradients,
+            &mut shaders,
             &mut stats,
             (100, 100),
             &mut composites,

@@ -13,7 +13,10 @@ use crate::surface::SurfaceFrame;
 use crate::surface::*;
 use crate::types::*;
 use crate::utils::*;
-use sequoia_core::{BackdropSpan, Color, FilterSpan, ImageSource, Rect, RenderItem, RenderList};
+use sequoia_core::{
+    BackdropSpan, BlendMode, Color, FilterSpan, ImageSource, Rect, RenderItem, RenderList,
+    ShaderDraw, ShaderId,
+};
 use sequoia_view::Runtime;
 use sequoia_view::{PointerEvent, SurfaceDraw, Unit, View};
 #[allow(unused_imports)]
@@ -32,6 +35,105 @@ fn embedded_shader_parses_and_validates() {
     validator
         .validate(&module)
         .expect("Sequoia shader fails to validate");
+}
+
+#[test]
+fn shader_instance_layout_matches_the_vertex_stride() {
+    assert_eq!(std::mem::size_of::<GpuShaderInstance>(), SHADER_BYTES);
+    assert_eq!(std::mem::align_of::<GpuShaderInstance>(), 4);
+    assert_eq!(SHADER_BYTES, 96);
+    assert_eq!(SHADER_UNIFORM_STRIDE, 256);
+}
+
+#[test]
+fn fixed_function_blend_modes_get_distinct_states() {
+    let normal = blend_component(BlendMode::Normal);
+    let add = blend_component(BlendMode::Add);
+    let multiply = blend_component(BlendMode::Multiply);
+    let screen = blend_component(BlendMode::Screen);
+    let subtract = blend_component(BlendMode::Subtract);
+
+    assert_ne!(normal, add, "Add must build a different pipeline state");
+    assert_ne!(normal, multiply);
+    assert_ne!(normal, screen);
+    assert_ne!(normal, subtract);
+    assert_eq!(add.src_factor, wgpu::BlendFactor::One);
+    assert_eq!(add.dst_factor, wgpu::BlendFactor::One);
+    assert_eq!(
+        subtract.operation,
+        wgpu::BlendOperation::Subtract,
+        "Subtract uses dst - src"
+    );
+    assert!(blend_mode_is_advanced(BlendMode::Overlay));
+    assert!(blend_mode_is_advanced(BlendMode::Hue));
+    assert!(!blend_mode_is_advanced(BlendMode::Normal));
+    assert!(!blend_mode_is_advanced(BlendMode::Subtract));
+}
+
+#[test]
+fn shader_items_become_instances_with_aligned_uniforms() {
+    let red = [1.0f32, 0.0, 0.0, 1.0];
+    let mut uniforms = Vec::new();
+    for value in red {
+        uniforms.extend_from_slice(&value.to_le_bytes());
+    }
+    let mut list = RenderList::new();
+    list.push_shader(ShaderDraw {
+        rect: Rect::from_xywh(0.0, 0.0, 100.0, 100.0),
+        uv: [0.0, 0.0, 1.0, 1.0],
+        shader: ShaderId::new(7),
+        uniforms: Arc::from(uniforms),
+        textures: Arc::from(Vec::new()),
+        blend: BlendMode::Add,
+        opacity: 1.0,
+    });
+
+    let mut quads = Vec::new();
+    let mut glyphs = Vec::new();
+    let mut images = Vec::new();
+    let mut image_keys = Vec::new();
+    let mut gradients = Vec::new();
+    let mut runs = Vec::new();
+    let mut shaders = ShaderGroupData::default();
+    group_runs_with_opacity(
+        list.items(),
+        list.item_clips(),
+        list.item_transforms(),
+        &[],
+        2.0,
+        None,
+        usize::MAX,
+        usize::MAX,
+        usize::MAX,
+        usize::MAX,
+        &mut quads,
+        &mut glyphs,
+        &mut images,
+        &mut image_keys,
+        &mut gradients,
+        &mut runs,
+        Some(&mut shaders),
+    );
+
+    assert_eq!(shaders.instances.len(), 1);
+    assert_eq!(shaders.uniforms.len(), SHADER_UNIFORM_STRIDE);
+    assert_eq!(shaders.instances[0].uniform_offset, 0);
+    assert_eq!(shaders.instances[0].shader_id, 7);
+    assert_eq!(shaders.instances[0].rect, [0.0, 0.0, 200.0, 200.0]);
+    assert_eq!(
+        &shaders.uniforms[..4],
+        &1.0f32.to_le_bytes(),
+        "red channel is uploaded"
+    );
+    assert_eq!(
+        &shaders.uniforms[16..SHADER_UNIFORM_STRIDE],
+        &[0u8; SHADER_UNIFORM_STRIDE - 16],
+        "remaining uniform slots are zero-filled"
+    );
+    assert!(matches!(
+        runs.as_slice(),
+        [GuiRun::Shader(0, 1, ShaderId(7), BlendMode::Add)]
+    ));
 }
 
 fn backdrop_span(rect: Rect, blur: f32) -> BackdropSpan {

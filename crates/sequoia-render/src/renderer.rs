@@ -16,8 +16,8 @@ use sequoia_text::GlyphAtlas;
 use winit::window::Window;
 
 use crate::gpu::pipelines::*;
-use crate::gpu::resources::vertex_buffer;
-use crate::gpu::shaders::compose_user_shader;
+use crate::gpu::resources::{UserShaderEntry, vertex_buffer};
+use crate::gpu::shaders::{passthrough_wgsl, validate_user_shader};
 use crate::pass::opacity::*;
 use crate::scene::grouping::*;
 use crate::scene::instances::*;
@@ -25,7 +25,7 @@ use crate::scene::planning::*;
 use crate::surface::*;
 use crate::types::*;
 use crate::utils::*;
-use sequoia_core::{Color, Rect, RenderList, ShaderId};
+use sequoia_core::{BlendMode, Color, Rect, RenderList, ShaderId};
 use sequoia_view::SurfaceDraw;
 
 /// Owns the wgpu device and window surface and renders frames into it.
@@ -116,6 +116,8 @@ pub struct GpuRenderer {
     pub(crate) uniform_cap: usize,
     pub(crate) shader_bgl: wgpu::BindGroupLayout,
     pub(crate) shader_bind_group: wgpu::BindGroup,
+    #[cfg(debug_assertions)]
+    pub(crate) pipeline_builds: u64,
 }
 
 fn create_instance(backend: GpuBackend) -> wgpu::Instance {
@@ -432,12 +434,10 @@ impl GpuRenderer {
         });
 
         // Built-in passthrough shader (id 0).
-        let passthrough_src = compose_user_shader(
-            "fn fs_user(frag: ShaderVarying) -> vec4<f32> { return uniforms.values[0]; }",
-        );
+        let passthrough_src = passthrough_wgsl();
         let passthrough_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("passthrough"),
-            source: wgpu::ShaderSource::Wgsl(passthrough_src.clone().into()),
+            source: wgpu::ShaderSource::Wgsl(passthrough_src.into()),
         });
         let passthrough_layout = create_user_shader_pipeline_layout(&device, &shader_bgl);
         let passthrough_pipeline = create_user_shader_pipeline(
@@ -445,7 +445,7 @@ impl GpuRenderer {
             &passthrough_module,
             &passthrough_layout,
             format,
-            premultiplied_blend(),
+            blend_component(sequoia_core::BlendMode::Normal),
         );
         let mut passthrough_pipelines = HashMap::new();
         passthrough_pipelines.insert(sequoia_core::BlendMode::Normal, passthrough_pipeline);
@@ -546,6 +546,8 @@ impl GpuRenderer {
             uniform_cap: INITIAL_SHADER_CAPACITY,
             shader_bgl,
             shader_bind_group,
+            #[cfg(debug_assertions)]
+            pipeline_builds: 1,
         })
     }
 
@@ -705,7 +707,20 @@ impl GpuRenderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Compiles and registers a user shader from WGSL source.
+    /// Compiles and registers a user shader from a complete WGSL module.
+    ///
+    /// The source must define `vs_main` and `fs_main` entry points matching the
+    /// engine ABI. [`crate::compose_user_shader`] can wrap a bare `fs_user`
+    /// function when the shader does not need a custom vertex stage.
+    ///
+    /// Registering an existing name replaces that shader in place, keeping its
+    /// [`ShaderId`] stable. Pipelines for blend modes other than
+    /// [`BlendMode::Normal`] are built lazily the first time they are drawn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError::ShaderCompile`] with the naga or wgpu diagnostic
+    /// when parsing, validation, or pipeline creation fails.
     pub fn register_shader(
         &mut self,
         name: impl Into<String>,
@@ -713,36 +728,36 @@ impl GpuRenderer {
     ) -> Result<ShaderId, RenderError> {
         let name = name.into();
         let wgsl = wgsl.as_ref();
-        {
-            let module = wgpu::naga::front::wgsl::parse_str(wgsl)
-                .map_err(|e| RenderError::ShaderCompile(e.to_string()))?;
-            let mut validator = wgpu::naga::valid::Validator::new(
-                wgpu::naga::valid::ValidationFlags::all(),
-                wgpu::naga::valid::Capabilities::all(),
-            );
-            validator
-                .validate(&module)
-                .map_err(|e| RenderError::ShaderCompile(e.to_string()))?;
-        }
+        validate_user_shader(wgsl)?;
+
+        let pipeline_layout = create_user_shader_pipeline_layout(&self.device, &self.shader_bgl);
+        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&name),
+                label: Some(name.as_str()),
                 source: wgpu::ShaderSource::Wgsl(wgsl.into()),
             });
-        // Build pipeline for Normal blend mode only in stage 1.
-        let pipeline_layout = create_user_shader_pipeline_layout(&self.device, &self.shader_bgl);
         let pipeline = create_user_shader_pipeline(
             &self.device,
             &module,
             &pipeline_layout,
             self.render_format,
-            premultiplied_blend(),
+            blend_component(BlendMode::Normal),
         );
+        if let Some(error) = pollster::block_on(error_scope.pop()) {
+            return Err(RenderError::ShaderCompile(error.to_string()));
+        }
+
         let mut pipelines = HashMap::new();
-        pipelines.insert(sequoia_core::BlendMode::Normal, pipeline);
-        let id = ShaderId::new(self.next_shader_id);
-        self.next_shader_id += 1;
+        pipelines.insert(BlendMode::Normal, pipeline);
+        let id = if let Some(id) = self.by_name.get(&name).copied() {
+            id
+        } else {
+            let id = ShaderId::new(self.next_shader_id);
+            self.next_shader_id += 1;
+            id
+        };
         self.user_shaders.insert(
             id,
             UserShaderEntry {
@@ -752,6 +767,10 @@ impl GpuRenderer {
             },
         );
         self.by_name.insert(name, id);
+        #[cfg(debug_assertions)]
+        {
+            self.pipeline_builds += 1;
+        }
         Ok(id)
     }
 
@@ -759,6 +778,61 @@ impl GpuRenderer {
     #[must_use]
     pub fn shader_id(&self, name: &str) -> Option<ShaderId> {
         self.by_name.get(name).copied()
+    }
+
+    /// Returns how many user-shader pipelines have been built.
+    ///
+    /// Debug builds only; useful for asserting that blend modes get separate
+    /// pipelines without inspecting GPU objects.
+    #[cfg(debug_assertions)]
+    #[must_use]
+    pub fn pipeline_builds(&self) -> u64 {
+        self.pipeline_builds
+    }
+
+    /// Builds the pipeline for one shader and blend mode if it does not exist.
+    ///
+    /// Returns `true` when a new pipeline was created.
+    pub(crate) fn ensure_shader_pipeline(&mut self, shader: ShaderId, blend: BlendMode) -> bool {
+        let Some(entry) = self.user_shaders.get(&shader) else {
+            return false;
+        };
+        if entry.pipelines.contains_key(&blend) {
+            return false;
+        }
+        let module = entry.module.clone();
+        let bgl = entry.bgl.clone();
+        if blend_mode_is_advanced(blend) {
+            log::warn!("sequoia-render: blend mode {blend:?} falls back to Normal until stage 4");
+        }
+        let layout = create_user_shader_pipeline_layout(&self.device, &bgl);
+        let pipeline = create_user_shader_pipeline(
+            &self.device,
+            &module,
+            &layout,
+            self.render_format,
+            blend_component(blend),
+        );
+        if let Some(entry) = self.user_shaders.get_mut(&shader) {
+            entry.pipelines.insert(blend, pipeline);
+        }
+        #[cfg(debug_assertions)]
+        {
+            self.pipeline_builds += 1;
+        }
+        true
+    }
+
+    /// Pre-builds every user-shader pipeline needed by this frame.
+    ///
+    /// Doing this before recording passes keeps pipeline creation out of the
+    /// hot drawing loop and makes the per-blend-mode cache observable in debug.
+    fn prepare_shader_pipelines(&mut self, list: &RenderList) {
+        for item in list.items() {
+            if let sequoia_core::RenderItem::Shader(draw) = item {
+                self.ensure_shader_pipeline(draw.shader, draw.blend);
+            }
+        }
     }
 
     /// Renders `list` into the window surface.
@@ -827,6 +901,7 @@ impl GpuRenderer {
             1.0
         };
         self.sync_atlas(atlas);
+        self.prepare_shader_pipelines(list);
 
         let mut reconfigured = false;
         let mut attempts = 0u32;
@@ -1249,6 +1324,7 @@ impl GpuRenderer {
                     images,
                     image_keys,
                     gradients,
+                    &mut self.shader_data,
                     &mut self.stats,
                     fb,
                     &mut group_composites,
@@ -1329,8 +1405,10 @@ impl GpuRenderer {
                  images: &mut Vec<BlitQuad>,
                  image_keys: &mut Vec<u64>,
                  gradients: &mut Vec<GpuGradient>,
+                 shaders: &mut ShaderGroupData,
                  stats: &mut RenderStats,
                  plan: &mut BackdropSegPlan| {
+                    let shader_base = shaders.instances.len() as u32;
                     let (dq, dg, di, dgrad, culled) = group_runs_with_opacity(
                         &items[from..to],
                         &clips[from..to],
@@ -1348,7 +1426,7 @@ impl GpuRenderer {
                         &mut seg_keys,
                         &mut seg_gradients,
                         &mut seg_runs,
-                        None,
+                        Some(shaders),
                     );
                     stats.dropped_quads += dq as u64;
                     stats.dropped_glyphs += dg as u64;
@@ -1358,12 +1436,13 @@ impl GpuRenderer {
 
                     plan.all_opaque =
                         seg_gradients.is_empty() && seg_quads.iter().all(quad_is_opaque);
-                    plan.runs = shift_gui_runs(
+                    plan.runs = shift_gui_runs_with_shaders(
                         &seg_runs,
                         quads.len() as u32,
                         glyphs.len() as u32,
                         images.len() as u32,
                         gradients.len() as u32,
+                        shader_base,
                     );
                     quads.extend_from_slice(&seg_quads);
                     glyphs.extend_from_slice(&seg_glyphs);
@@ -1391,6 +1470,7 @@ impl GpuRenderer {
                             images,
                             image_keys,
                             gradients,
+                            &mut self.shader_data,
                             &mut self.stats,
                             &mut plan,
                         );
@@ -1417,6 +1497,7 @@ impl GpuRenderer {
                         images,
                         image_keys,
                         gradients,
+                        &mut self.shader_data,
                         &mut self.stats,
                         &mut plan,
                     );
@@ -1454,6 +1535,7 @@ impl GpuRenderer {
                                     images,
                                     image_keys,
                                     gradients,
+                                    &mut self.shader_data,
                                     &mut self.stats,
                                     &mut plan,
                                 );
@@ -1487,6 +1569,7 @@ impl GpuRenderer {
                                     images,
                                     image_keys,
                                     gradients,
+                                    &mut self.shader_data,
                                     &mut self.stats,
                                     &mut plan,
                                 );
@@ -1507,6 +1590,7 @@ impl GpuRenderer {
                                 images,
                                 image_keys,
                                 gradients,
+                                &mut self.shader_data,
                                 &mut self.stats,
                                 &mut tmp,
                             );
@@ -1542,6 +1626,7 @@ impl GpuRenderer {
                         images,
                         image_keys,
                         gradients,
+                        &mut self.shader_data,
                         &mut self.stats,
                         &mut plan,
                     );

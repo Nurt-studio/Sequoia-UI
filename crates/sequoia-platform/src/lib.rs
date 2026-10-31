@@ -271,7 +271,14 @@ impl App {
         self
     }
 
-    /// Registers a custom fragment shader by name with WGSL source.
+    /// Registers a custom shader by name with a complete WGSL module.
+    ///
+    /// The module must expose `vs_main` and `fs_main` entry points matching the
+    /// engine ABI. Use [`sequoia_render::compose_user_shader`] to wrap a bare
+    /// `fs_user` fragment function when no custom vertex stage is needed.
+    ///
+    /// Registration happens when the window's GPU renderer is created; errors
+    /// are logged and the shader is skipped.
     #[must_use]
     pub fn shader(mut self, name: impl Into<String>, wgsl: impl Into<String>) -> Self {
         self.shaders.push((name.into(), wgsl.into()));
@@ -1931,6 +1938,55 @@ fn collect_shaders_dir(
 mod tests {
     use super::*;
     use sequoia_view::Unit;
+
+    #[test]
+    fn shader_file_and_directory_register_wgsl_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "sequoia-shader-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("effects")).expect("create shader dir");
+        std::fs::write(root.join("root.wgsl"), "@vertex fn vs_main() {}").expect("write root");
+        std::fs::write(
+            root.join("effects/invert.wgsl"),
+            "@fragment fn fs_main() {}",
+        )
+        .expect("write nested");
+        std::fs::write(root.join("effects/notes.txt"), "ignored").expect("write ignored");
+
+        let file = root.join("effects/invert.wgsl");
+        let app = App::new()
+            .shader("inline", "@vertex fn vs_main() {}")
+            .shader_file("from_file", &file)
+            .shader_dir(&root);
+
+        let shaders = app.shaders();
+        assert!(
+            shaders
+                .iter()
+                .any(|(name, wgsl)| name == "inline" && wgsl.contains("vs_main"))
+        );
+        assert!(
+            shaders
+                .iter()
+                .any(|(name, wgsl)| name == "from_file" && wgsl.contains("fs_main"))
+        );
+        assert!(
+            shaders
+                .iter()
+                .any(|(name, wgsl)| name == "root" && wgsl.contains("vs_main"))
+        );
+        assert!(
+            shaders
+                .iter()
+                .any(|(name, wgsl)| name == "effects/invert" && wgsl.contains("fs_main"))
+        );
+        assert!(!shaders.iter().any(|(name, _)| name.ends_with("notes")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn editing_text_suppresses_plain_key_accelerators() {

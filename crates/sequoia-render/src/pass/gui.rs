@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 use std::any::Any;
 
+use crate::gpu::resources::UserShaderEntry;
 use crate::scene::grouping::quad_range_is_opaque;
 use crate::types::*;
 

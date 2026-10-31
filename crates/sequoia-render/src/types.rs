@@ -3,11 +3,9 @@
 //! The `Gpu*` structs mirror the layout expected by the WGSL shader and are
 //! uploaded directly as vertex instance data.
 
-use std::collections::HashMap;
-
 use bytemuck::{Pod, Zeroable};
 
-use sequoia_core::{Color, Rect};
+use sequoia_core::{BlendMode, Color, Rect};
 
 /// Instance data for a rounded rectangle, border, or shadow.
 #[repr(C)]
@@ -79,14 +77,55 @@ pub(crate) struct ShaderGroupData {
     pub(crate) uniforms: Vec<u8>,
 }
 
-/// Per-shader render state.
-#[allow(dead_code)]
-pub(crate) struct UserShaderEntry {
-    pub(crate) pipelines: HashMap<sequoia_core::BlendMode, wgpu::RenderPipeline>,
-    #[allow(dead_code)]
-    pub(crate) bgl: wgpu::BindGroupLayout,
-    #[allow(dead_code)]
-    pub(crate) module: wgpu::ShaderModule,
+/// Returns the fixed-function blend state used by a user-shader pipeline.
+///
+/// Stage 1 supports the five blend modes expressible with fixed-function
+/// hardware. Advanced Photoshop modes are built as separate pipelines with the
+/// normal blend state and are replaced by read-back compositing in stage 4.
+pub(crate) fn blend_component(mode: BlendMode) -> wgpu::BlendComponent {
+    use wgpu::{BlendFactor as Factor, BlendOperation as Op};
+
+    let normal = wgpu::BlendComponent {
+        src_factor: Factor::One,
+        dst_factor: Factor::OneMinusSrcAlpha,
+        operation: Op::Add,
+    };
+    match mode {
+        BlendMode::Normal => normal,
+        BlendMode::Add => wgpu::BlendComponent {
+            src_factor: Factor::One,
+            dst_factor: Factor::One,
+            operation: Op::Add,
+        },
+        BlendMode::Multiply => wgpu::BlendComponent {
+            src_factor: Factor::Dst,
+            dst_factor: Factor::OneMinusSrcAlpha,
+            operation: Op::Add,
+        },
+        BlendMode::Screen => wgpu::BlendComponent {
+            src_factor: Factor::OneMinusDst,
+            dst_factor: Factor::One,
+            operation: Op::Add,
+        },
+        BlendMode::Subtract => wgpu::BlendComponent {
+            src_factor: Factor::One,
+            dst_factor: Factor::One,
+            operation: Op::Subtract,
+        },
+        _ => normal,
+    }
+}
+
+/// Returns `true` when `mode` needs destination read-back compositing.
+pub(crate) fn blend_mode_is_advanced(mode: BlendMode) -> bool {
+    !matches!(
+        mode,
+        BlendMode::Normal
+            | BlendMode::Add
+            | BlendMode::Multiply
+            | BlendMode::Screen
+            | BlendMode::Subtract
+    )
 }
 
 /// Instance data for a gradient fill with up to four color stops.

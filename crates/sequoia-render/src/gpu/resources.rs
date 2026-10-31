@@ -12,7 +12,14 @@ use sequoia_text::GlyphAtlas;
 use crate::surface::sanitize_samples;
 use crate::types::*;
 use crate::utils::*;
-use sequoia_core::ImageSource;
+use sequoia_core::{BlendMode, ImageSource};
+
+/// Render pipelines and binding layout for one registered user shader.
+pub(crate) struct UserShaderEntry {
+    pub(crate) pipelines: HashMap<BlendMode, wgpu::RenderPipeline>,
+    pub(crate) bgl: wgpu::BindGroupLayout,
+    pub(crate) module: wgpu::ShaderModule,
+}
 
 impl crate::renderer::GpuRenderer {
     /// Returns a bind group for `source`, uploading or refreshing it as needed.

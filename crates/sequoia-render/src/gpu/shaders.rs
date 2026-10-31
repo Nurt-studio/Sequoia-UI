@@ -719,3 +719,64 @@ fn fs_main(frag: ShaderVarying) -> @location(0) vec4<f32> {
 pub fn compose_user_shader(source: &str) -> String {
     format!("{USER_SHADER_PRELUDE}\n{source}\n{USER_SHADER_EPILOGUE}")
 }
+
+/// Parses and validates a complete user shader module.
+///
+/// The source must be self-contained WGSL with a `vs_main` vertex entry point
+/// and an `fs_main` fragment entry point matching the engine ABI. Use
+/// [`compose_user_shader`] to wrap a bare `fs_user` function with that ABI.
+///
+/// # Errors
+///
+/// Returns [`crate::RenderError::ShaderCompile`] with the naga diagnostic when
+/// parsing or validation fails, including the source line and column.
+pub fn validate_user_shader(source: &str) -> Result<(), crate::RenderError> {
+    let module = wgpu::naga::front::wgsl::parse_str(source)
+        .map_err(|e| crate::RenderError::ShaderCompile(e.emit_to_string(source)))?;
+    let mut validator = wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    );
+    validator.validate(&module).map_err(|e| {
+        let message = match e.location(source) {
+            Some(location) => format!(
+                "{} at line {}, column {}",
+                e, location.line_number, location.line_position
+            ),
+            None => e.to_string(),
+        };
+        crate::RenderError::ShaderCompile(message)
+    })?;
+
+    let has_vertex = module
+        .entry_points
+        .iter()
+        .any(|entry| entry.name == "vs_main" && entry.stage == wgpu::naga::ShaderStage::Vertex);
+    let has_fragment = module
+        .entry_points
+        .iter()
+        .any(|entry| entry.name == "fs_main" && entry.stage == wgpu::naga::ShaderStage::Fragment);
+    if !has_vertex {
+        return Err(crate::RenderError::ShaderCompile(
+            "user shader is missing the `vs_main` vertex entry point".into(),
+        ));
+    }
+    if !has_fragment {
+        return Err(crate::RenderError::ShaderCompile(
+            "user shader is missing the `fs_main` fragment entry point".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Returns the built-in passthrough shader as a complete WGSL module.
+///
+/// The fragment stage returns `uniforms.values[0]`, so the first 16 uniform
+/// bytes are the straight RGBA color of the drawn rectangle.
+#[must_use]
+pub fn passthrough_wgsl() -> String {
+    compose_user_shader(PASSTHROUGH_FS)
+}
+
+pub(crate) const PASSTHROUGH_FS: &str =
+    "fn fs_user(frag: ShaderVarying) -> vec4<f32> { return uniforms.values[0]; }";

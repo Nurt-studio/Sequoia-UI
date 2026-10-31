@@ -930,21 +930,52 @@ pub enum BlendMode {
     /// Adds source and destination.
     Add,
 
+    /// Multiplies source and destination.
     Multiply,
+
+    /// Inverts the product of inverted source and destination.
     Screen,
+
+    /// Subtracts the source from the destination.
     Subtract,
+
+    /// Combines Multiply and Screen using the destination as the mask.
     Overlay,
+
+    /// Keeps the darker of source and destination.
     Darken,
+
+    /// Keeps the lighter of source and destination.
     Lighten,
+
+    /// Brightens the destination to reflect the source.
     ColorDodge,
+
+    /// Darkens the destination to reflect the source.
     ColorBurn,
+
+    /// Combines Multiply and Screen using the source as the mask.
     HardLight,
+
+    /// Softens the contrast between source and destination.
     SoftLight,
+
+    /// Absolute difference between source and destination.
     Difference,
+
+    /// Inverted difference with lower contrast.
     Exclusion,
+
+    /// Takes hue from the source and saturation/lightness from the destination.
     Hue,
+
+    /// Takes saturation from the source and hue/lightness from the destination.
     Saturation,
+
+    /// Takes hue and saturation from the source and lightness from the destination.
     Color,
+
+    /// Takes lightness from the source and hue/saturation from the destination.
     Luminosity,
 
     /// Selects the source where the destination is opaque.
@@ -993,10 +1024,13 @@ pub enum TexInput {
 /// A custom-shader rectangle.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShaderDraw {
+    /// Destination rectangle in logical coordinates.
     pub rect: Rect,
 
+    /// Texture coordinates as `[u0, v0, u1, v1]`.
     pub uv: [f32; 4],
 
+    /// Registered shader to execute.
     pub shader: ShaderId,
 
     /// Raw uniform bytes exposed to the shader as `uniforms.values`.
@@ -1008,20 +1042,26 @@ pub struct ShaderDraw {
     /// Binding index and texture source pairs.
     pub textures: Arc<[(u32, TexInput)]>,
 
+    /// Compositing mode applied to the shader output.
     pub blend: BlendMode,
 
+    /// Additional opacity in the range `0..=1`.
     pub opacity: f32,
 }
 
 /// Copy of an offscreen target into the current paint target.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlitDraw {
+    /// Destination rectangle in logical coordinates.
     pub rect: Rect,
 
+    /// Texture coordinates as `[u0, v0, u1, v1]`.
     pub uv: [f32; 4],
 
+    /// Offscreen target to copy.
     pub target: RenderTargetId,
 
+    /// Additional opacity in the range `0..=1`.
     pub opacity: f32,
 }
 
@@ -1031,14 +1071,17 @@ pub const MAX_SHADER_UNIFORM_BYTES: usize = 16 * 4 * 4;
 /// Marker that starts drawing into an offscreen target.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TargetBegin {
+    /// Target being started.
     pub target: RenderTargetId,
 
+    /// Target size in logical coordinates.
     pub size: Size,
 }
 
 /// Marker that finishes drawing into an offscreen target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TargetEnd {
+    /// Target being finished.
     pub target: RenderTargetId,
 }
 
@@ -1751,8 +1794,17 @@ impl RenderList {
         if !draw.textures.is_empty() {
             let mut textures = draw.textures.to_vec();
             textures.sort_by_key(|(binding, _)| *binding);
-            textures.dedup_by_key(|(binding, _)| *binding);
-            draw.textures = Arc::from(textures);
+            let mut deduped: Vec<(u32, TexInput)> = Vec::with_capacity(textures.len());
+            for pair in textures {
+                if let Some(last) = deduped.last_mut()
+                    && last.0 == pair.0
+                {
+                    *last = pair;
+                } else {
+                    deduped.push(pair);
+                }
+            }
+            draw.textures = Arc::from(deduped);
         }
         let t = self.active_transform();
         if let Some(local) = self.active_clip_for(t)
@@ -1807,6 +1859,11 @@ impl RenderList {
     }
 
     /// Starts an offscreen pass and returns its handle.
+    ///
+    /// Rendering into targets is not implemented yet; the renderer records the
+    /// marker and warns during a frame. The handle can be referenced by
+    /// [`TexInput::Target`] in later stages.
+    #[must_use]
     pub fn begin_target(&mut self, size: Size, blend: BlendMode) -> RenderTargetId {
         let id = RenderTargetId::new(self.next_target);
         self.next_target += 1;
@@ -1817,12 +1874,15 @@ impl RenderList {
     }
 
     /// Ends an offscreen pass started with [`RenderList::begin_target`].
+    ///
+    /// The marker is recorded but ignored by the stage 1 renderer.
     pub fn end_target(&mut self, id: RenderTargetId) {
         self.items.push(RenderItem::TargetEnd { id });
         self.item_clips.push(None);
         self.item_transforms.push(Transform::default());
     }
 
+    /// Iterates over custom shader draws in recording order.
     pub fn shaders(&self) -> impl Iterator<Item = &ShaderDraw> {
         self.items.iter().filter_map(|i| match i {
             RenderItem::Shader(s) => Some(s),
@@ -3204,6 +3264,65 @@ mod tests {
             }],
         });
         assert_eq!(list.len(), 1, "rotated glyph in custom clip remains");
+    }
+
+    #[test]
+    fn shader_draw_truncates_uniforms_and_keeps_last_binding() {
+        let mut list = RenderList::new();
+        let uniforms = vec![7u8; MAX_SHADER_UNIFORM_BYTES + 9];
+        list.push_shader(ShaderDraw {
+            rect: Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+            uv: [0.0, 0.0, 1.0, 1.0],
+            shader: ShaderId::new(4),
+            uniforms: Arc::from(uniforms),
+            textures: Arc::from(vec![
+                (2, TexInput::Image(10)),
+                (1, TexInput::Image(11)),
+                (2, TexInput::Image(12)),
+            ]),
+            blend: BlendMode::Normal,
+            opacity: 1.0,
+        });
+
+        let draw = list.shaders().next().expect("shader draw");
+        assert_eq!(draw.uniforms.len(), MAX_SHADER_UNIFORM_BYTES);
+        assert_eq!(
+            draw.textures.as_ref(),
+            &[(1, TexInput::Image(11)), (2, TexInput::Image(12))],
+            "duplicate bindings keep the last source"
+        );
+        assert_eq!(list.items().len(), 1);
+        assert_eq!(list.item_clips().len(), 1);
+        assert_eq!(list.item_transforms().len(), 1);
+    }
+
+    #[test]
+    fn target_markers_and_blit_round_trip_through_the_list() {
+        let mut list = RenderList::new();
+        let target = list.begin_target(Size::new(32.0, 16.0), BlendMode::Multiply);
+        list.end_target(target);
+        list.push_blit(
+            Rect::from_xywh(0.0, 0.0, 32.0, 16.0),
+            [0.0, 0.0, 1.0, 1.0],
+            target,
+            BlendMode::Screen,
+        );
+
+        assert_eq!(target.get(), 0);
+        assert!(matches!(
+            list.items()[0],
+            RenderItem::TargetBegin { id, size, blend }
+                if id == target && size.width == 32.0 && blend == BlendMode::Multiply
+        ));
+        assert!(matches!(
+            list.items()[1],
+            RenderItem::TargetEnd { id } if id == target
+        ));
+        assert!(matches!(
+            list.items()[2],
+            RenderItem::Blit { target: id, blend: BlendMode::Screen, .. } if id == target
+        ));
+        assert_eq!(list.len(), 3);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 use std::any::Any;
 
+use crate::gpu::resources::UserShaderEntry;
 use crate::types::*;
 
 impl crate::renderer::GpuRenderer {
