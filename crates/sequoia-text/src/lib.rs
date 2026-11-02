@@ -413,6 +413,43 @@ impl GlyphAtlas {
         &self.pixels
     }
 
+    /// Returns the number of bytes occupied by the atlas bitmap.
+    pub fn bytes(&self) -> usize {
+        self.pixels.len()
+    }
+
+    /// Drops the least recently used half of the atlas and repacks it.
+    ///
+    /// Entries that were not looked up recently are evicted, the survivors are
+    /// moved to the top of the bitmap, and the whole texture is marked dirty.
+    /// Glyph UVs emitted before this call become stale, so callers that keep a
+    /// render list across the call must repaint it (the renderer leaves this
+    /// until after the frame has been uploaded).
+    pub fn compact(&mut self) {
+        if self.entries.is_empty() && self.sprites.is_empty() {
+            return;
+        }
+        self.repack();
+    }
+
+    /// Compacts the atlas and shrinks the bitmap to fit the survivors.
+    ///
+    /// The texture never grows here; dimensions are rounded up to the next
+    /// power of two and clamped to the current size, with a small floor so a
+    /// single eviction does not immediately trigger another resize.
+    pub fn shrink_to_fit(&mut self) {
+        self.compact();
+        let need_w = self.cursor_x.max(1);
+        let need_h = (self.cursor_y + self.row_h).max(1);
+        let floor_w = 64.min(self.width);
+        let floor_h = 64.min(self.height);
+        let w = need_w.next_power_of_two().clamp(floor_w, self.width);
+        let h = need_h.next_power_of_two().clamp(floor_h, self.height);
+        if w != self.width || h != self.height {
+            self.resize(w, h);
+        }
+    }
+
     fn mark_dirty(&mut self, x: u32, y: u32, w: u32, h: u32) {
         if w == 0 || h == 0 {
             return;
@@ -740,10 +777,11 @@ impl GlyphAtlas {
         let new_h = new_h.clamp(1, ATLAS_MAX_DIM);
         let bytes = checked_atlas_bytes(new_w, new_h).unwrap_or(0);
         let mut pixels = vec![0u8; bytes];
-        let row_bytes = self.width as usize * ATLAS_BPP;
-        for row in 0..self.height {
-            let src = row as usize * row_bytes;
-            let dst = row as usize * (new_w as usize) * ATLAS_BPP;
+        let copy_w = self.width.min(new_w);
+        let row_bytes = copy_w as usize * ATLAS_BPP;
+        for row in 0..self.height.min(new_h) {
+            let src = row as usize * self.width as usize * ATLAS_BPP;
+            let dst = row as usize * new_w as usize * ATLAS_BPP;
             pixels[dst..dst + row_bytes].copy_from_slice(&self.pixels[src..src + row_bytes]);
         }
         self.pixels = pixels;
@@ -3805,6 +3843,24 @@ mod tests {
         );
         let (w, h) = atlas.size();
         assert_eq!(atlas.pixels().len(), (w * h) as usize * ATLAS_BPP);
+    }
+
+    #[test]
+    fn atlas_shrink_to_fit_frees_bytes() {
+        let mut atlas = GlyphAtlas::new(256, 256);
+        for i in 0..3u64 {
+            atlas.insert_sprite(i, 8, 8, &solid(8, 8));
+        }
+        let before = atlas.bytes();
+        atlas.shrink_to_fit();
+        let (w, h) = atlas.size();
+        assert!(
+            atlas.bytes() < before,
+            "bitmap shrank: {before} -> {}",
+            atlas.bytes()
+        );
+        assert_eq!(atlas.pixels().len(), (w * h) as usize * ATLAS_BPP);
+        assert!(atlas.sprite(2).is_some(), "hot sprite survived the shrink");
     }
 
     #[test]
