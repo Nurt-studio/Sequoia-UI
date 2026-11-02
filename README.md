@@ -69,8 +69,8 @@ Masonry(columns: 3, gap: 12, padding: 16) {
 - API docs: <https://docs.rs/sequoia-ui>
 - Crate: <https://crates.io/crates/sequoia-ui>
 - Modules: `animation`, `assets`, `async_bridge`, `core`, `draw`, `elements`,
-  `export`, `input`, `layout`, `platform`, `reactive`, `render`, `seq`, `style`,
-  `text`, `view`.
+  `export`, `input`, `layout`, `platform`, `reactive`, `render`, `seq`,
+  `shader`, `style`, `text`, `view`.
 
 ## License
 

@@ -108,6 +108,25 @@ immediately. Both accept `.disabled()` and `.on_toggle`.
 and `on_commit` for expensive work. `Slider1D` is a compact alternative for
 single-value strips, and `DragValue` is a numeric drag control.
 
+`Chip` is the compact pill for filters, tags, and tokens. It can show an icon,
+a selected state, and a remove affordance:
+
+```rust
+# use sequoia_ui::prelude::*;
+let tags = Signal::new(vec!["rust".to_string()]);
+let chip = Chip::new("rust")
+    .icon("tag")
+    .selected(true)
+    .removable(true)
+    .on_press(|| { /* filter by this tag */ })
+    .on_remove(|| { /* remove the tag */ });
+# let _ = (tags, chip);
+```
+
+Use `selected` for a filter that is still present but toggled, and `removable`
+for tokens the user can delete. `ChipStyle` and the usual color builders
+override the theme.
+
 ## Forms
 
 A form is a validation registry, not a container. Build the layout yourself and
@@ -198,9 +217,11 @@ let palette = CommandPalette::new(commands.clone(), palette_open);
 let menu = MenuBar::new(commands);
 ```
 
-`TabStrip` writes the active index into its signal and supports closable,
-tearable tabs through `on_close` and `on_tear`. `MenuBar` builds menus from a
-`CommandRegistry`, grouping commands by category. `CommandPalette` adds fuzzy
+`TabStrip` writes the active index into its signal. Closable and tearable tabs
+are configured with `closable`, `tearable`, `tear_preview_for`, `on_close`,
+`on_tear_start`, and `on_tear_end`; the built-in `TabTear` payload carries the
+tab index during a tear drag. `MenuBar` builds menus from a `CommandRegistry`,
+grouping commands by category. `CommandPalette` adds fuzzy
 search, keyboard selection, and a modal surface. Command shortcuts are display
 text only; bind the actual accelerator with `App::accelerator` (see
 [Hotkeys](hotkeys.md)).
@@ -224,7 +245,7 @@ selected key in a `Signal`. See [Collections](collections.md) and
 | --- | --- |
 | Actions | `Button`, `WindowControls` |
 | Text and media | `Text`, `RichText`, `Kbd`, `Badge`, `Avatar`, `Icon`, `Image`, `Divider` |
-| Inputs | `TextField`, `TextArea`, `Checkbox`, `Switch`, `RadioButton`, `RadioGroup`, `Slider`, `Slider1D`, `DragValue`, `NumberField`, `DateField`, `Field`, `MultiSelect` |
+| Inputs | `TextField`, `TextArea`, `Checkbox`, `Switch`, `RadioButton`, `RadioGroup`, `Slider`, `Slider1D`, `DragValue`, `NumberField`, `DateField`, `Field`, `MultiSelect`, `Chip` |
 | Pickers | `DropdownButton`, `ColorPicker`, `PickerFloat`, `SvPad` |
 | Feedback | `Spinner`, `ProgressBar`, `Skeleton`, `Tooltip`, `ToastQueue`, `ToastStack` |
 | Navigation | `TabStrip`, `MenuBar`, `CommandRegistry`, `CommandPalette`, `FloatingMenu` |

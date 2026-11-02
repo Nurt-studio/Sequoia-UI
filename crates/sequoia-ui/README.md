@@ -65,8 +65,8 @@ maps. Use `HostBindings` to expose Rust signals, actions, and row data to the
 The facade re-exports the framework crates as modules, including:
 
 `animation`, `assets`, `async_bridge`, `core`, `draw`, `elements`, `export`,
-`input`, `layout`, `platform`, `reactive`, `render`, `seq`, `style`, `text`,
-and `view`.
+`input`, `layout`, `platform`, `reactive`, `render`, `seq`, `shader`, `style`,
+`text`, and `view`.
 
 ## License
 

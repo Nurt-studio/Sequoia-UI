@@ -63,22 +63,29 @@ below, and each module maps to one crate.
 | `text` | `sequoia-text` | Text shaping, wrapping, and rich text |
 | `draw` | `sequoia-draw` | Vector paths, fills, strokes, and rasterization |
 | `render` | `sequoia-render` | `wgpu` renderer and surface management |
+| `shader` | `sequoia-shader` | Typed shader runtime, WGSL stdlib, and math types |
+| `shader` macro | `sequoia-shader-macros` | `shader!` proc macro and compile-time WGSL validation |
 | `platform` | `sequoia-platform` | Application loop, windows, dialogs, settings |
 | `animation` | `sequoia-animation` | Tweens, keyframes, springs, and state machines |
 | `assets` | `sequoia-assets` | Asset registry, icons, fonts, and photo decoding |
 | `async_bridge` | `sequoia-async` | Futures bridged to the UI thread, timers, resources |
-| `dock` | `sequoia-dock` | Headless dock model for IDE-style panels |
-| `buffer` | `sequoia-buffer` | Text buffer engine with cursors and undo |
+| `view` (dock types) | `sequoia-dock` | Headless dock model for IDE-style panels |
+| — (separate crate) | `sequoia-buffer` | Text buffer engine with cursors and undo |
 | `seq` | `sequoia-seq` | `.seq` parser, checker, and lowering to views |
 | `export` | `sequoia-export` | Headless HiDPI PNG export |
-| `hotkey` | `sequoia-hotkey` | OS-global hotkeys |
+| `platform` (hotkeys) | `sequoia-hotkey` | OS-global hotkeys |
 | `ui` | `sequoia-ui` | Facade crate and prelude |
-| `preview` | `sequoia-preview` | `.seq` preview runner |
-| `seq-lsp` | `sequoia-seq-lsp` | Language server for `.seq` |
-| `test` | `sequoia-test` | Internal headless test harness |
+| — (binary) | `sequoia-preview` | `.seq` preview runner |
+| — (binary) | `sequoia-seq-lsp` | Language server for `.seq` |
+| — (test only) | `sequoia-test` | Internal headless test harness |
 
-Additional workspace members are tools and examples rather than framework
-modules: `sequoia-seq-lsp`, `sequoia-preview`, and the `example/paint` binary.
+Only the entries that name a facade module are re-exported by `sequoia-ui`;
+the other rows describe where those crates are reachable. The `sequoia-dock`
+model is reached through `sequoia_ui::view`, `sequoia-hotkey` through
+`sequoia_ui::platform`, and `sequoia-buffer` must be added as its own
+dependency. `sequoia-preview` and `sequoia-seq-lsp` are workspace binaries, and
+`sequoia-test` is used from tests. The `shader` module also re-exports the
+`shader!` macro at `sequoia_ui::shader::shader`.
 
 ## Page template
 

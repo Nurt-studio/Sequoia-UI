@@ -26,6 +26,38 @@ cargo run -p sequoia-ui --example layout
 The example is in
 [`crates/sequoia-ui/examples/layout.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/layout.rs).
 
+## Showcase
+
+A broad tour of the widget library: forms, overlays, navigation, feedback, and
+theming in one window.
+
+```text
+cargo run -p sequoia-ui --example showcase
+```
+
+## Split panel
+
+A resizable two-level layout built on `SplitPanel`, with an outer horizontal
+split and an inner vertical split.
+
+```text
+cargo run -p sequoia-ui --example split-panel
+```
+
+## Shaders
+
+Two GPU effect demos built with the `shader!` macro. `progressive_blur` shows a
+separable blur with a UV-space ramp; `shader_gallery` renders a blurred card
+over a background.
+
+```text
+cargo run -p sequoia-ui --example progressive_blur
+cargo run -p sequoia-ui --example shader_gallery
+```
+
+See [Custom shaders](../guides/shaders.md) for the macro, registration, and
+offscreen passes they use.
+
 ## Paint
 
 A larger desktop application in `example/paint` with a dock layout, toolbars,
@@ -33,6 +65,15 @@ file handling, and canvas tools.
 
 ```text
 cargo run -p paint
+```
+
+## Vision design
+
+A design-tool example in `example/vision-design` with a canvas editor,
+component tree, property inspector, and `.seq`/Svelte code generation.
+
+```text
+cargo run -p vision-design
 ```
 
 ## Read examples like documentation

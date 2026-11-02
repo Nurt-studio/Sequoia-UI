@@ -54,7 +54,8 @@ Every framework subsystem is available as a module from the facade:
 
 ```text
 sequoia_ui::{animation, assets, async_bridge, core, draw, elements, export,
-             input, layout, platform, reactive, render, seq, style, text, view}
+             input, layout, platform, reactive, render, seq, shader, style,
+             text, view}
 ```
 
 ## Verify the toolchain
