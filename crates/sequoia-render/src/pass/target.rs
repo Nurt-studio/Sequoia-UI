@@ -266,17 +266,21 @@ impl GpuRenderer {
             let Some(source) = find_image_source(list.items(), *key) else {
                 continue;
             };
+            let max_dim = self.quality.max_image_dim().max(1);
+            let allow_new = self.quality.max_image_dim() > 0;
             if let Some(group) = Self::image_bind_group(
                 &self.device,
                 &self.queue,
                 &self.atlas_bgl,
                 &self.blit_sampler,
-                &mut self.images,
-                &mut self.image_order,
-                &mut self.image_failures,
+                &self.images,
                 &source,
+                allow_new,
+                max_dim,
             ) {
                 image_draws.push((index as u32, group));
+            } else {
+                self.stats.dropped_images += 1;
             }
         }
 
@@ -291,16 +295,20 @@ impl GpuRenderer {
                 ];
                 for (binding, input) in textures.iter() {
                     let group = match input {
-                        TexInput::Image(source) => Self::image_bind_group(
-                            &self.device,
-                            &self.queue,
-                            &self.atlas_bgl,
-                            &self.blit_sampler,
-                            &mut self.images,
-                            &mut self.image_order,
-                            &mut self.image_failures,
-                            source,
-                        ),
+                        TexInput::Image(source) => {
+                            let max_dim = self.quality.max_image_dim().max(1);
+                            let allow_new = self.quality.max_image_dim() > 0;
+                            Self::image_bind_group(
+                                &self.device,
+                                &self.queue,
+                                &self.atlas_bgl,
+                                &self.blit_sampler,
+                                &self.images,
+                                source,
+                                allow_new,
+                                max_dim,
+                            )
+                        }
                         TexInput::Target(target) => self
                             .render_targets
                             .get(target)

@@ -6,6 +6,7 @@
 #[allow(unused_imports)]
 use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use sequoia_text::GlyphAtlas;
 
@@ -14,35 +15,131 @@ use crate::types::*;
 use crate::utils::*;
 use sequoia_core::{BlendMode, ImageSource};
 
-/// Render pipelines and binding layout for one registered user shader.
-pub(crate) struct UserShaderEntry {
-    pub(crate) pipelines: HashMap<BlendMode, wgpu::RenderPipeline>,
-    pub(crate) bgl: wgpu::BindGroupLayout,
-    pub(crate) module: wgpu::ShaderModule,
+/// Byte- and count-bounded LRU cache of decoded image textures.
+///
+/// The cache can be shared by several renderers that use the same wgpu device,
+/// which lets multi-window applications upload an image once. Textures are
+/// destroyed when the last reference to the cache is dropped.
+pub(crate) struct ImageCache {
+    entries: HashMap<u64, GpuImage>,
+    order: VecDeque<u64>,
+    failures: HashSet<u64>,
+    bytes: u64,
+    max_bytes: u64,
+    max_textures: usize,
+    evictions: u64,
+    rejected: u64,
 }
 
-impl crate::renderer::GpuRenderer {
-    /// Returns a bind group for `source`, uploading or refreshing it as needed.
+impl ImageCache {
+    pub(crate) fn new(max_bytes: u64, max_textures: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            failures: HashSet::new(),
+            bytes: 0,
+            max_bytes,
+            max_textures,
+            evictions: 0,
+            rejected: 0,
+        }
+    }
+
+    pub(crate) fn set_limits(&mut self, max_bytes: u64, max_textures: usize) {
+        self.max_bytes = max_bytes;
+        self.max_textures = max_textures.max(1);
+        self.enforce_limits();
+    }
+
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn evictions(&self) -> u64 {
+        self.evictions
+    }
+
+    pub(crate) fn get(&self, key: u64) -> Option<&GpuImage> {
+        self.entries.get(&key)
+    }
+
+    pub(crate) fn failed(&self, key: u64) -> bool {
+        self.failures.contains(&key)
+    }
+
+    /// Removes one cached texture and reports whether it existed.
+    pub(crate) fn remove(&mut self, key: u64) -> bool {
+        self.failures.remove(&key);
+        if let Some(image) = self.entries.remove(&key) {
+            self.bytes = self.bytes.saturating_sub(image.bytes);
+            self.order.retain(|k| *k != key);
+            image.texture.destroy();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Destroys every cached texture and clears failure records.
+    pub(crate) fn clear(&mut self) {
+        for (_, image) in self.entries.drain() {
+            image.texture.destroy();
+        }
+        self.order.clear();
+        self.failures.clear();
+        self.bytes = 0;
+    }
+
+    /// Enforces the byte and texture-count limits, evicting LRU entries.
     ///
-    /// Dynamic images are re-uploaded when their version changes. Decoding
-    /// failures are cached to avoid retrying broken sources every frame.
+    /// Call this after the frame has been submitted and the GPU no longer
+    /// reads the textures recorded in its command buffers.
+    pub(crate) fn trim(&mut self) {
+        self.enforce_limits();
+    }
+
+    fn enforce_limits(&mut self) {
+        if self.max_bytes == 0 {
+            return;
+        }
+        while self.entries.len() > self.max_textures || self.bytes > self.max_bytes {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(image) = self.entries.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(image.bytes);
+                image.texture.destroy();
+                self.evictions += 1;
+            }
+        }
+    }
+
+    /// Returns a bind group for `source`, uploading it when needed.
+    ///
+    /// `allow_new` is `false` when memory pressure has disabled new uploads;
+    /// already-cached images keep working. Images larger than `max_dim` or the
+    /// byte limit are rejected instead of being allocated.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn image_bind_group(
+    pub(crate) fn bind_group(
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
-        images: &mut HashMap<u64, GpuImage>,
-        order: &mut VecDeque<u64>,
-        failures: &mut HashSet<u64>,
         source: &ImageSource,
+        allow_new: bool,
+        max_dim: u32,
     ) -> Option<wgpu::BindGroup> {
         let key = source.cache_key();
-        if let Some(entry) = images.get_mut(&key) {
-            if let Some(pos) = order.iter().position(|k| *k == key) {
-                order.remove(pos);
+        if let Some(entry) = self.entries.get_mut(&key) {
+            if let Some(pos) = self.order.iter().position(|k| *k == key) {
+                self.order.remove(pos);
             }
-            order.push_back(key);
+            self.order.push_back(key);
             let want_version = source.dynamic_version();
             let want_extent = source.extent();
             let entry_version = entry.version;
@@ -55,26 +152,41 @@ impl crate::renderer::GpuRenderer {
                 {
                     upload_rgba_levels(queue, &entry.texture, w, h, &data);
                     entry.version = want_version;
-                    failures.remove(&key);
+                    self.failures.remove(&key);
                     return Some(entry.bind_group.clone());
                 }
-                if let Some(old) = images.remove(&key) {
-                    old.texture.destroy();
-                }
+                self.remove(key);
             } else {
                 return Some(entry.bind_group.clone());
             }
         }
-        if failures.contains(&key) {
+        if self.failures.contains(&key) {
+            return None;
+        }
+        if !allow_new {
+            self.rejected += 1;
+            return None;
+        }
+        if let Some((w, h)) = source_dimensions(source)
+            && (w > max_dim || h > max_dim)
+        {
+            // Reject from the header without decoding the pixels; the image is
+            // retried when the quality level allows a larger texture again.
+            self.rejected += 1;
             return None;
         }
         let Some((w, h, data)) = decode_image(source) else {
-            if failures.len() >= IMAGE_FAILURES_MAX {
-                failures.clear();
+            if self.failures.len() >= IMAGE_FAILURES_MAX {
+                self.failures.clear();
             }
-            failures.insert(key);
+            self.failures.insert(key);
             return None;
         };
+        let bytes = rgba8_bytes(w, h);
+        if w > max_dim || h > max_dim || bytes > self.max_bytes {
+            self.rejected += 1;
+            return None;
+        }
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("sequoia-image"),
             size: wgpu::Extent3d {
@@ -106,7 +218,8 @@ impl crate::renderer::GpuRenderer {
             ],
         });
         let bg = bind_group.clone();
-        images.insert(
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.entries.insert(
             key,
             GpuImage {
                 texture,
@@ -114,19 +227,67 @@ impl crate::renderer::GpuRenderer {
                 width: w,
                 height: h,
                 version: source.dynamic_version(),
+                bytes,
             },
         );
-        order.push_back(key);
-        while images.len() > IMAGE_CACHE_MAX {
-            if let Some(oldest) = order.pop_front() {
-                if let Some(evicted) = images.remove(&oldest) {
-                    evicted.texture.destroy();
-                }
-            } else {
-                break;
-            }
-        }
+        self.order.push_back(key);
+        // Limits are enforced after the frame so an image uploaded late in the
+        // scene cannot evict a texture that earlier draws still reference.
         Some(bg)
+    }
+}
+
+impl Drop for ImageCache {
+    fn drop(&mut self) {
+        for (_, image) in self.entries.drain() {
+            image.texture.destroy();
+        }
+    }
+}
+
+/// Fast dimension lookup that avoids decoding pixels when possible.
+fn source_dimensions(source: &ImageSource) -> Option<(u32, u32)> {
+    if let Some(extent) = source.extent() {
+        return Some(extent);
+    }
+    match source {
+        ImageSource::File(path) => image::image_dimensions(path).ok(),
+        _ => None,
+    }
+}
+
+/// Shared handle to an [`ImageCache`].
+pub(crate) type SharedImageCache = Arc<Mutex<ImageCache>>;
+
+/// Locks a shared image cache, recovering from a poisoned mutex.
+pub(crate) fn lock_images(cache: &SharedImageCache) -> std::sync::MutexGuard<'_, ImageCache> {
+    cache.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Render pipelines and binding layout for one registered user shader.
+pub(crate) struct UserShaderEntry {
+    pub(crate) pipelines: HashMap<BlendMode, wgpu::RenderPipeline>,
+    pub(crate) bgl: wgpu::BindGroupLayout,
+    pub(crate) module: wgpu::ShaderModule,
+}
+
+impl crate::renderer::GpuRenderer {
+    /// Returns a bind group for `source`, uploading or refreshing it as needed.
+    ///
+    /// Dynamic images are re-uploaded when their version changes. Decoding
+    /// failures are cached to avoid retrying broken sources every frame.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn image_bind_group(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        images: &SharedImageCache,
+        source: &ImageSource,
+        allow_new: bool,
+        max_dim: u32,
+    ) -> Option<wgpu::BindGroup> {
+        lock_images(images).bind_group(device, queue, layout, sampler, source, allow_new, max_dim)
     }
 
     /// Ensures at least `count` full-frame group layers for `size`.

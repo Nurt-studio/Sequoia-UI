@@ -262,6 +262,7 @@ pub(crate) struct GpuImage {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) version: Option<u64>,
+    pub(crate) bytes: u64,
 }
 
 pub(crate) const MAX_IMAGE_DIM: u32 = 4096;
@@ -298,6 +299,12 @@ pub(crate) const INITIAL_GLYPH_CAPACITY: usize = 4096;
 
 pub(crate) const INITIAL_FRAME_CAPACITY: usize = 64;
 
+/// Frames without meaningful buffer use before instance buffers are trimmed.
+pub(crate) const BUFFER_TRIM_IDLE_FRAMES: u32 = 120;
+
+/// Frames below 60% budget before the quality level is raised again.
+pub(crate) const QUALITY_RECOVER_FRAMES: u32 = 180;
+
 pub(crate) const INITIAL_BLIT_CAPACITY: usize = 16;
 
 pub(crate) const INITIAL_IMAGE_CAPACITY: usize = 64;
@@ -305,8 +312,6 @@ pub(crate) const INITIAL_IMAGE_CAPACITY: usize = 64;
 pub(crate) const INITIAL_BACKDROP_CAPACITY: usize = 8;
 
 pub(crate) const INITIAL_GRADIENT_CAPACITY: usize = 32;
-
-pub(crate) const IMAGE_CACHE_MAX: usize = 64;
 
 pub(crate) const IMAGE_FAILURES_MAX: usize = 1024;
 
@@ -376,6 +381,201 @@ pub struct RenderStats {
     pub frames: u64,
     pub filter_spans: u64,
     pub filter_skipped: u64,
+    /// Image textures evicted by the cache limits.
+    pub evicted_images: u64,
+    /// Glyph-atlas compactions triggered by the memory budget.
+    pub atlas_prunes: u64,
+    /// Instance buffers recreated at a smaller size after a quiet period.
+    pub buffer_shrinks: u64,
+    /// Frames that ran at a reduced quality level because of memory pressure.
+    pub degraded_frames: u64,
+}
+
+/// Byte budget for the GPU resources owned by one renderer.
+///
+/// The renderer treats these values as soft limits: it evicts caches, prunes
+/// the glyph atlas and trims instance buffers first, and only then lowers the
+/// [`QualityLevel`]. A budget with `total == 0` disables enforcement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryBudget {
+    /// Total bytes for all tracked resources.
+    pub total: u64,
+    /// Bytes available to the image texture cache.
+    pub images: u64,
+    /// Bytes available to the glyph atlas.
+    pub atlas: u64,
+    /// Bytes available to cached offscreen surfaces.
+    pub surfaces: u64,
+    /// Bytes available to instance and uniform buffers.
+    pub buffers: u64,
+    /// Maximum number of concurrently cached image textures.
+    pub max_images: usize,
+    /// Maximum number of pooled offscreen render targets.
+    pub max_targets: usize,
+}
+
+const MIB: u64 = 1 << 20;
+
+impl Default for MemoryBudget {
+    fn default() -> Self {
+        Self::for_total(256 * MIB)
+    }
+}
+
+impl MemoryBudget {
+    /// Splits `total` into per-category budgets.
+    ///
+    /// The split keeps half of the budget for images, a quarter for cached
+    /// surfaces, an eighth each for the atlas and instance buffers. A total of
+    /// zero disables budget enforcement.
+    pub fn for_total(total: u64) -> Self {
+        Self {
+            total,
+            images: total / 2,
+            atlas: total / 8,
+            surfaces: total / 4,
+            buffers: total / 8,
+            max_images: 128,
+            max_targets: 8,
+        }
+    }
+
+    /// Returns a budget that never degrades or evicts.
+    pub fn unlimited() -> Self {
+        Self {
+            total: 0,
+            images: u64::MAX,
+            atlas: u64::MAX,
+            surfaces: u64::MAX,
+            buffers: u64::MAX,
+            max_images: usize::MAX,
+            max_targets: usize::MAX,
+        }
+    }
+
+    /// Returns `true` when `total` is zero and enforcement is disabled.
+    pub fn is_unlimited(self) -> bool {
+        self.total == 0
+    }
+}
+
+/// Automatic quality level used when the memory budget is exceeded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum QualityLevel {
+    /// Everything is cached and uploaded.
+    #[default]
+    Full,
+    /// Image caches keep half of their entries.
+    Balanced,
+    /// New large image uploads and new cached surfaces are refused.
+    Reduced,
+    /// Only already-cached images are drawn; targets and caches shrink.
+    Minimal,
+}
+
+impl QualityLevel {
+    /// Returns the next lower quality level, or `None` at the minimum.
+    pub(crate) fn degrade(self) -> Option<Self> {
+        match self {
+            Self::Full => Some(Self::Balanced),
+            Self::Balanced => Some(Self::Reduced),
+            Self::Reduced => Some(Self::Minimal),
+            Self::Minimal => None,
+        }
+    }
+
+    /// Returns the next higher quality level, or `None` at the maximum.
+    pub(crate) fn recover(self) -> Option<Self> {
+        match self {
+            Self::Full => None,
+            Self::Balanced => Some(Self::Full),
+            Self::Reduced => Some(Self::Balanced),
+            Self::Minimal => Some(Self::Reduced),
+        }
+    }
+
+    /// Returns the user-facing level name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Balanced => "balanced",
+            Self::Reduced => "reduced",
+            Self::Minimal => "minimal",
+        }
+    }
+
+    /// Fraction of an image cache limit that stays available at this level.
+    pub(crate) fn cache_scale(self) -> f64 {
+        match self {
+            Self::Full => 1.0,
+            Self::Balanced => 0.5,
+            Self::Reduced => 0.25,
+            Self::Minimal => 0.1,
+        }
+    }
+
+    /// Fraction of the instance-buffer ceilings kept at this level.
+    pub(crate) fn buffer_scale(self) -> f64 {
+        match self {
+            Self::Full => 1.0,
+            Self::Balanced => 0.75,
+            Self::Reduced => 0.5,
+            Self::Minimal => 0.25,
+        }
+    }
+
+    /// Largest image edge uploaded at this quality level.
+    pub(crate) fn max_image_dim(self) -> u32 {
+        match self {
+            Self::Full => MAX_IMAGE_DIM,
+            Self::Balanced => 4096,
+            Self::Reduced => 2048,
+            Self::Minimal => 0,
+        }
+    }
+}
+
+/// Bytes currently held by a renderer's tracked GPU resources.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryUsage {
+    pub buffers: u64,
+    pub images: u64,
+    pub atlas: u64,
+    pub surfaces: u64,
+    pub targets: u64,
+    /// Full-window scratch targets: partial-repaint target, backdrop ping-pong
+    /// buffers, depth buffer, and opacity layers.
+    pub scratch: u64,
+}
+
+impl MemoryUsage {
+    /// Total tracked bytes.
+    pub fn total(self) -> u64 {
+        self.buffers
+            .saturating_add(self.images)
+            .saturating_add(self.atlas)
+            .saturating_add(self.surfaces)
+            .saturating_add(self.targets)
+            .saturating_add(self.scratch)
+    }
+
+    /// Returns `true` when the usage exceeds `budget` in any category.
+    pub fn over(self, budget: &MemoryBudget) -> bool {
+        if budget.is_unlimited() {
+            return false;
+        }
+        self.total() > budget.total
+            || self.images > budget.images
+            || self.atlas > budget.atlas
+            || self.surfaces > budget.surfaces
+            || self.buffers > budget.buffers
+    }
+}
+
+/// Returns the byte size of an RGBA8 texture.
+pub(crate) fn rgba8_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width) * u64::from(height) * 4
 }
 
 impl RenderStats {
@@ -611,4 +811,55 @@ pub struct Region {
     pub y: u32,
     pub width: u32,
     pub height: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_budget_splits_total() {
+        let budget = MemoryBudget::default();
+        assert_eq!(
+            budget.images + budget.atlas + budget.surfaces + budget.buffers,
+            budget.total
+        );
+        assert!(!budget.is_unlimited());
+        assert!(budget.max_images > 0);
+    }
+
+    #[test]
+    fn unlimited_budget_never_reports_pressure() {
+        let usage = MemoryUsage {
+            buffers: u64::MAX / 2,
+            images: u64::MAX / 2,
+            ..MemoryUsage::default()
+        };
+        assert!(!usage.over(&MemoryBudget::unlimited()));
+    }
+
+    #[test]
+    fn usage_over_detects_a_single_category() {
+        let budget = MemoryBudget::for_total(1024);
+        let usage = MemoryUsage {
+            images: budget.images + 1,
+            ..MemoryUsage::default()
+        };
+        assert!(usage.over(&budget));
+    }
+
+    #[test]
+    fn quality_degrades_and_recovers_in_order() {
+        let mut level = QualityLevel::Full;
+        while let Some(next) = level.degrade() {
+            level = next;
+        }
+        assert_eq!(level, QualityLevel::Minimal);
+        assert_eq!(level.max_image_dim(), 0, "minimal refuses new uploads");
+        while let Some(next) = level.recover() {
+            level = next;
+        }
+        assert_eq!(level, QualityLevel::Full);
+        assert!(QualityLevel::Reduced.cache_scale() < QualityLevel::Full.cache_scale());
+    }
 }

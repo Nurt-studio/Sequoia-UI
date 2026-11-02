@@ -9,6 +9,7 @@
 //! - [`pass`] — backdrop, filter, and GUI render passes.
 //! - [`renderer`] — frame orchestration and the top-level renderer.
 //! - [`scene`] — instance conversion and composite planning.
+//! - [`shared`] — a device and image cache shared by several windows.
 //! - [`surface`] — embeddable renderer surfaces.
 //! - [`types`] — GPU types, options, statistics, and errors.
 //! - [`utils`] — shared helpers.
@@ -20,6 +21,7 @@ pub mod gpu;
 pub mod pass;
 pub mod renderer;
 pub mod scene;
+pub mod shared;
 pub mod surface;
 pub mod types;
 pub mod utils;
@@ -30,10 +32,11 @@ mod tests;
 pub use color::{ColorSpace, linear_to_srgb, srgb_to_linear};
 pub use gpu::shaders::{compose_user_shader, passthrough_wgsl, validate_user_shader};
 pub use renderer::GpuRenderer;
+pub use shared::SharedGpu;
 pub use surface::{PendingFrames, Revision, WgpuFrame, WgpuRenderer, WgpuSurface};
 pub use types::{
-    FrameSkip, GpuBackend, GpuOptions, PowerPreference, PresentMode, Region, RenderError,
-    RenderStats,
+    FrameSkip, GpuBackend, GpuOptions, MemoryBudget, MemoryUsage, PowerPreference, PresentMode,
+    QualityLevel, Region, RenderError, RenderStats,
 };
 
 pub use wgpu;

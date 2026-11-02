@@ -7,16 +7,18 @@
 #[allow(unused_imports)]
 use std::any::Any;
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use sequoia_text::GlyphAtlas;
 use winit::window::Window;
 
 use crate::gpu::pipelines::*;
-use crate::gpu::resources::{UserShaderEntry, vertex_buffer};
+use crate::gpu::resources::{
+    ImageCache, SharedImageCache, UserShaderEntry, lock_images, vertex_buffer,
+};
 use crate::gpu::shaders::{passthrough_wgsl, validate_user_shader};
 use crate::pass::opacity::*;
 use crate::scene::grouping::*;
@@ -76,9 +78,16 @@ pub struct GpuRenderer {
     pub(crate) surface_tex: HashMap<usize, CachedSurface>,
     pub(crate) depth_tex: Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>,
     pub(crate) clear_color: Color,
-    pub(crate) images: HashMap<u64, GpuImage>,
-    pub(crate) image_order: VecDeque<u64>,
-    pub(crate) image_failures: HashSet<u64>,
+    pub(crate) images: SharedImageCache,
+    pub(crate) budget: MemoryBudget,
+    pub(crate) quality: QualityLevel,
+    pub(crate) quality_low_frames: u32,
+    pub(crate) buffer_idle_frames: u32,
+    pub(crate) peak_quads: usize,
+    pub(crate) peak_glyphs: usize,
+    pub(crate) peak_images: usize,
+    pub(crate) peak_gradients: usize,
+    pub(crate) evictions_seen: u64,
     pub(crate) image_buf: wgpu::Buffer,
     pub(crate) image_cap: usize,
     pub(crate) last_frame: Option<Instant>,
@@ -225,6 +234,68 @@ pub(crate) fn auto_backend_candidates() -> &'static [GpuBackend] {
     }
 }
 
+/// Surface, device, and cache state collected before a renderer is built.
+pub(crate) struct GpuSurfaceSetup {
+    pub(crate) surface: wgpu::Surface<'static>,
+    pub(crate) adapter_info: wgpu::AdapterInfo,
+    pub(crate) caps: wgpu::SurfaceCapabilities,
+    pub(crate) view_formats_supported: bool,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) images: SharedImageCache,
+}
+
+/// Creates a surface and picks the first adapter that supports it.
+pub(crate) fn select_backend(
+    window: Arc<Window>,
+    options: GpuOptions,
+) -> Result<(wgpu::Instance, wgpu::Surface<'static>, wgpu::Adapter), RenderError> {
+    let candidates: Vec<GpuBackend> = match options.backend {
+        GpuBackend::Auto => auto_backend_candidates().to_vec(),
+        backend => vec![backend],
+    };
+
+    for backend in candidates {
+        let instance = create_instance(backend);
+        let Ok(surface) = instance.create_surface(window.clone()) else {
+            continue;
+        };
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: options.power_preference.wgpu(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            }))
+        else {
+            continue;
+        };
+        return Ok((instance, surface, adapter));
+    }
+    Err(RenderError::NoAdapter)
+}
+
+/// Requests the shared device configuration used by every renderer.
+pub(crate) fn request_device(
+    adapter: &wgpu::Adapter,
+) -> Result<(wgpu::Device, wgpu::Queue), RenderError> {
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("sequoia-device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::Manual {
+            suballocated_device_memory_block_size: (4 << 20)..(32 << 20),
+        },
+        trace: wgpu::Trace::Off,
+    }))
+    .map_err(RenderError::Device)?;
+
+    device.on_uncaptured_error(Arc::new(|error| {
+        log::error!("sequoia-render: uncaptured GPU error: {error}");
+    }));
+    Ok((device, queue))
+}
+
 impl GpuRenderer {
     /// Creates a renderer for `window` using default options.
     pub fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, RenderError> {
@@ -241,66 +312,64 @@ impl GpuRenderer {
         height: u32,
         options: GpuOptions,
     ) -> Result<Self, RenderError> {
-        let candidates: Vec<GpuBackend> = match options.backend {
-            GpuBackend::Auto => auto_backend_candidates().to_vec(),
-            backend => vec![backend],
+        Self::create(window, width, height, options, None)
+    }
+
+    /// Creates a renderer, reusing `shared` device resources when provided.
+    pub(crate) fn create(
+        window: Arc<Window>,
+        width: u32,
+        height: u32,
+        options: GpuOptions,
+        shared: Option<&crate::shared::SharedGpu>,
+    ) -> Result<Self, RenderError> {
+        let setup = match shared {
+            Some(shared) => shared.surface_setup(window)?,
+            None => {
+                let (_instance, surface, adapter) = select_backend(window, options)?;
+                let adapter_info = adapter.get_info();
+                log::info!(
+                    "sequoia-render: backend {:?}, adapter '{}' ({:?}, {} {})",
+                    adapter_info.backend,
+                    adapter_info.name,
+                    adapter_info.device_type,
+                    adapter_info.driver,
+                    adapter_info.driver_info
+                );
+                let caps = surface.get_capabilities(&adapter);
+                let view_formats_supported = adapter
+                    .get_downlevel_capabilities()
+                    .flags
+                    .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
+                let (device, queue) = request_device(&adapter)?;
+                let budget = MemoryBudget::default();
+                let images = Arc::new(Mutex::new(ImageCache::new(
+                    budget.images,
+                    budget.max_images,
+                )));
+                GpuSurfaceSetup {
+                    surface,
+                    adapter_info,
+                    caps,
+                    view_formats_supported,
+                    device,
+                    queue,
+                    images,
+                }
+            }
         };
-
-        let mut selected = None;
-        for backend in candidates {
-            let instance = create_instance(backend);
-            let Ok(surface) = instance.create_surface(window.clone()) else {
-                continue;
-            };
-            let Ok(adapter) =
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: options.power_preference.wgpu(),
-                    compatible_surface: Some(&surface),
-                    force_fallback_adapter: false,
-                }))
-            else {
-                continue;
-            };
-            selected = Some((instance, surface, adapter));
-            break;
-        }
-        let (_instance, surface, adapter) = selected.ok_or(RenderError::NoAdapter)?;
-        let adapter_info = adapter.get_info();
-
-        log::info!(
-            "sequoia-render: backend {:?}, adapter '{}' ({:?}, {} {})",
-            adapter_info.backend,
-            adapter_info.name,
-            adapter_info.device_type,
-            adapter_info.driver,
-            adapter_info.driver_info
-        );
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("sequoia-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::Manual {
-                suballocated_device_memory_block_size: (4 << 20)..(32 << 20),
-            },
-            trace: wgpu::Trace::Off,
-        }))
-        .map_err(RenderError::Device)?;
-
-        device.on_uncaptured_error(Arc::new(|error| {
-            log::error!("sequoia-render: uncaptured GPU error: {error}");
-        }));
-
-        let caps = surface.get_capabilities(&adapter);
+        let GpuSurfaceSetup {
+            surface,
+            adapter_info,
+            caps,
+            view_formats_supported,
+            device,
+            queue,
+            images,
+        } = setup;
         let mut resolved = resolve_surface_format(&caps.formats, options.surface_format)
             .ok_or(RenderError::NoAdapter)?;
-        if !resolved.view_formats.is_empty()
-            && !adapter
-                .get_downlevel_capabilities()
-                .flags
-                .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS)
-        {
+        if !resolved.view_formats.is_empty() && !view_formats_supported {
             log::warn!(
                 "sequoia-render: surface view formats are unavailable - using the default sRGB format"
             );
@@ -527,7 +596,7 @@ impl GpuRenderer {
         let mut passthrough_names = HashMap::new();
         passthrough_names.insert("passthrough".to_string(), ShaderId::new(0));
 
-        Ok(Self {
+        let mut renderer = Self {
             device,
             queue,
             adapter: adapter_info,
@@ -574,9 +643,16 @@ impl GpuRenderer {
             surface_tex: HashMap::new(),
             depth_tex: None,
             clear_color: CLEAR_COLOR,
-            images: HashMap::new(),
-            image_order: VecDeque::new(),
-            image_failures: HashSet::new(),
+            images,
+            budget: MemoryBudget::default(),
+            quality: QualityLevel::Full,
+            quality_low_frames: 0,
+            buffer_idle_frames: 0,
+            peak_quads: 0,
+            peak_glyphs: 0,
+            peak_images: 0,
+            peak_gradients: 0,
+            evictions_seen: 0,
             image_buf,
             image_cap: INITIAL_IMAGE_CAPACITY,
             last_frame: None,
@@ -623,7 +699,9 @@ impl GpuRenderer {
             target_reuses: 0,
             #[cfg(debug_assertions)]
             pipeline_builds: 1,
-        })
+        };
+        renderer.set_memory_budget(MemoryBudget::default());
+        Ok(renderer)
     }
 
     /// Returns information about the selected adapter.
@@ -661,64 +739,153 @@ impl GpuRenderer {
         self.stats
     }
 
-    /// Human-readable summary of the GPU allocations this renderer owns.
+    /// Returns the current GPU memory budget.
+    pub fn memory_budget(&self) -> MemoryBudget {
+        self.budget
+    }
+
+    /// Replaces the memory budget and applies it immediately.
     ///
-    /// Covers our own textures and instance buffers, not driver-private
-    /// staging memory, so a report that keeps growing points at resources being
-    /// recreated every frame.
-    pub fn memory_report(&self) -> String {
-        fn mb(bytes: f64) -> f64 {
-            bytes / 1_048_576.0
-        }
-        fn tex(size: (u32, u32)) -> f64 {
-            mb(size.0 as f64 * size.1 as f64 * 4.0)
-        }
-        let mut surfaces = 0.0;
-        for s in self.surface_tex.values() {
-            surfaces += tex(s.size) * if s.msaa.is_some() { 2.0 } else { 1.0 };
-        }
-        let mut images = 0.0;
-        for i in self.images.values() {
-            images += tex((i.width, i.height));
-        }
-        let mut groups = 0.0;
-        for g in &self.group_layers {
-            groups += tex(g.size);
-        }
+    /// Image-cache limits, render-target pool size, and instance ceilings are
+    /// recomputed for the current quality level. A budget with a zero total
+    /// disables enforcement.
+    pub fn set_memory_budget(&mut self, budget: MemoryBudget) {
+        let budget = if budget.total == 0 {
+            MemoryBudget::unlimited()
+        } else {
+            budget
+        };
+        self.budget = budget;
+        self.target_cache = budget.max_targets.max(1);
+        self.apply_quality_limits();
+        self.apply_budget_ceilings();
+    }
+
+    /// Returns the current automatic quality level.
+    pub fn quality_level(&self) -> QualityLevel {
+        self.quality
+    }
+
+    /// Returns the bytes currently held by tracked GPU resources.
+    pub fn memory_usage(&self) -> MemoryUsage {
+        let surfaces = self
+            .surface_tex
+            .values()
+            .map(|s| {
+                let mut bytes = rgba8_bytes(s.size.0, s.size.1);
+                if s.msaa.is_some() {
+                    bytes = bytes.saturating_add(rgba8_bytes(s.size.0, s.size.1));
+                }
+                bytes
+            })
+            .sum();
+        let atlas = self
+            .atlas_synced
+            .map(|(_, w, h)| rgba8_bytes(w, h))
+            .unwrap_or(0);
+        let targets = self
+            .render_targets
+            .values()
+            .map(|t| rgba8_bytes(t.size.0, t.size.1))
+            .sum();
         let frame = self
             .frame_target
             .as_ref()
-            .map(|t| tex(t.size))
-            .unwrap_or(0.0);
+            .map(|t| rgba8_bytes(t.size.0, t.size.1))
+            .unwrap_or(0);
         let backdrop = self
             .backdrop_tex
             .as_ref()
-            .map(|b| tex(b.size) * 3.0)
-            .unwrap_or(0.0);
+            .map(|b| rgba8_bytes(b.size.0, b.size.1).saturating_mul(3))
+            .unwrap_or(0);
         let depth = self
             .depth_tex
             .as_ref()
-            .map(|(_, _, size)| tex(*size))
-            .unwrap_or(0.0);
-        let atlas = self
-            .atlas_synced
-            .map(|(_, w, h)| tex((w, h)))
-            .unwrap_or(0.0);
-        let bufs = mb((self.capacity * QUAD_BYTES
+            .map(|(_, _, size)| u64::from(size.0) * u64::from(size.1) * 4)
+            .unwrap_or(0);
+        let groups: u64 = self
+            .group_layers
+            .iter()
+            .map(|g| rgba8_bytes(g.size.0, g.size.1))
+            .sum();
+        MemoryUsage {
+            buffers: self.buffer_bytes(),
+            images: lock_images(&self.images).bytes(),
+            atlas,
+            surfaces,
+            targets,
+            scratch: frame
+                .saturating_add(backdrop)
+                .saturating_add(depth)
+                .saturating_add(groups)
+                .saturating_add(rgba8_bytes(1, 1)),
+        }
+    }
+
+    fn buffer_bytes(&self) -> u64 {
+        let counts = self.capacity * QUAD_BYTES
             + self.glyph_capacity * GLYPH_BYTES
             + self.image_cap * BLIT_BYTES
             + self.frame_cap * QUAD_BYTES
             + self.blit_cap * BLIT_BYTES
             + self.present_cap * BLIT_BYTES
             + self.gradient_cap * GRADIENT_BYTES
-            + self.backdrop_cap * BACKDROP_BYTES) as f64);
+            + self.backdrop_cap * BACKDROP_BYTES
+            + self.shader_cap * SHADER_BYTES
+            + self.uniform_cap * SHADER_UNIFORM_STRIDE;
+        counts as u64 + 16
+    }
+
+    /// Human-readable summary of the GPU allocations this renderer owns.
+    ///
+    /// Covers our own textures and instance buffers, not driver-private
+    /// staging memory, so a report that keeps growing points at resources being
+    /// recreated every frame.
+    pub fn memory_report(&self) -> String {
+        fn mb(bytes: u64) -> f64 {
+            bytes as f64 / 1_048_576.0
+        }
+        let usage = self.memory_usage();
+        let frame = self
+            .frame_target
+            .as_ref()
+            .map(|t| rgba8_bytes(t.size.0, t.size.1))
+            .unwrap_or(0);
+        let backdrop = self
+            .backdrop_tex
+            .as_ref()
+            .map(|b| rgba8_bytes(b.size.0, b.size.1) * 3)
+            .unwrap_or(0);
+        let depth = self
+            .depth_tex
+            .as_ref()
+            .map(|(_, _, size)| u64::from(size.0) * u64::from(size.1) * 4)
+            .unwrap_or(0);
+        let groups: u64 = self
+            .group_layers
+            .iter()
+            .map(|g| rgba8_bytes(g.size.0, g.size.1))
+            .sum();
         format!(
-            "gpu: target={frame:.1} backdrop={backdrop:.1} depth={depth:.1} atlas={atlas:.1} \
-             groups={groups:.1}(n={}) surfaces={surfaces:.1}(n={}) images={images:.1}(n={}) \
-             bufs={bufs:.1}MB acq={} atlas_new={}",
+            "gpu: total={:.1}MB budget={:.1}MB quality={} target={:.1} backdrop={:.1} \
+             depth={:.1} atlas={:.1} groups={:.1}(n={}) surfaces={:.1}(n={}) \
+             images={:.1}(n={}) targets={:.1}(n={}) bufs={:.1}MB acq={} atlas_new={}",
+            mb(usage.total()),
+            mb(self.budget.total),
+            self.quality.name(),
+            mb(frame),
+            mb(backdrop),
+            mb(depth),
+            mb(usage.atlas),
+            mb(groups),
             self.group_layers.len(),
+            mb(usage.surfaces),
             self.surface_tex.len(),
-            self.images.len(),
+            mb(usage.images),
+            lock_images(&self.images).len(),
+            mb(usage.targets),
+            self.render_targets.len(),
+            mb(usage.buffers),
             self.trace_acquires,
             self.trace_atlas_recreates,
         )
@@ -758,21 +925,223 @@ impl GpuRenderer {
     }
 
     /// Destroys all cached image textures.
+    ///
+    /// When the cache is shared with other renderers, the engine keeps a
+    /// reference and will upload the images again on demand.
     pub fn clear_image_cache(&mut self) {
-        for (_, img) in self.images.drain() {
-            img.texture.destroy();
-        }
-        self.image_order.clear();
-        self.image_failures.clear();
+        lock_images(&self.images).clear();
     }
 
     /// Destroys the cached texture for one image key.
     pub fn remove_image(&mut self, key: u64) {
-        if let Some(img) = self.images.remove(&key) {
-            img.texture.destroy();
-            self.image_order.retain(|k| *k != key);
+        lock_images(&self.images).remove(key);
+    }
+
+    fn apply_quality_limits(&mut self) {
+        let scale = self.quality.cache_scale();
+        let max_images = ((self.budget.max_images as f64) * scale).ceil() as usize;
+        let max_bytes = (self.budget.images as f64 * scale) as u64;
+        lock_images(&self.images).set_limits(max_bytes.max(1), max_images.max(1));
+    }
+
+    /// Recomputes per-buffer instance ceilings from the buffer budget.
+    fn apply_budget_ceilings(&mut self) {
+        let device_quad = instance_ceiling(&self.device, QUAD_BYTES);
+        let device_glyph = instance_ceiling(&self.device, GLYPH_BYTES);
+        let device_image = instance_ceiling(&self.device, BLIT_BYTES);
+        let device_gradient = instance_ceiling(&self.device, GRADIENT_BYTES);
+        if self.budget.is_unlimited() {
+            self.quad_ceiling = device_quad;
+            self.glyph_ceiling = device_glyph;
+            self.image_ceiling = device_image;
+            self.gradient_ceiling = device_gradient;
+            return;
         }
-        self.image_failures.remove(&key);
+        let scale = self.quality.buffer_scale();
+        let share = |fraction: f64| -> usize {
+            ((self.budget.buffers as f64 * fraction * scale) as usize).max(1)
+        };
+        self.quad_ceiling = device_quad.min((share(0.45) / QUAD_BYTES).max(1));
+        self.glyph_ceiling = device_glyph.min((share(0.30) / GLYPH_BYTES).max(1));
+        self.image_ceiling = device_image.min((share(0.15) / BLIT_BYTES).max(1));
+        self.gradient_ceiling = device_gradient.min((share(0.10) / GRADIENT_BYTES).max(1));
+    }
+
+    /// Shrinks instance buffers that stayed far below their capacity.
+    fn maybe_trim_buffers(&mut self) {
+        let oversized = |cap: usize, peak: usize, initial: usize| {
+            cap > peak.saturating_mul(3).max(initial.saturating_mul(2))
+        };
+        let any = oversized(self.capacity, self.peak_quads, INITIAL_QUAD_CAPACITY)
+            || oversized(
+                self.glyph_capacity,
+                self.peak_glyphs,
+                INITIAL_GLYPH_CAPACITY,
+            )
+            || oversized(self.image_cap, self.peak_images, INITIAL_IMAGE_CAPACITY)
+            || oversized(
+                self.gradient_cap,
+                self.peak_gradients,
+                INITIAL_GRADIENT_CAPACITY,
+            );
+        if !any {
+            self.buffer_idle_frames = 0;
+            return;
+        }
+        self.buffer_idle_frames = self.buffer_idle_frames.saturating_add(1);
+        if self.buffer_idle_frames < BUFFER_TRIM_IDLE_FRAMES {
+            return;
+        }
+        self.buffer_idle_frames = 0;
+        let target =
+            |cap: usize, peak: usize, initial: usize| peak.saturating_mul(2).max(initial).min(cap);
+        let quad = target(self.capacity, self.peak_quads, INITIAL_QUAD_CAPACITY);
+        if quad < self.capacity {
+            self.quad_buf =
+                vertex_buffer(&self.device, "sequoia-quads", (quad * QUAD_BYTES) as u64);
+            self.capacity = quad;
+            self.stats.buffer_shrinks += 1;
+        }
+        let glyph = target(
+            self.glyph_capacity,
+            self.peak_glyphs,
+            INITIAL_GLYPH_CAPACITY,
+        );
+        if glyph < self.glyph_capacity {
+            self.glyph_buf =
+                vertex_buffer(&self.device, "sequoia-glyphs", (glyph * GLYPH_BYTES) as u64);
+            self.glyph_capacity = glyph;
+            self.stats.buffer_shrinks += 1;
+        }
+        let images = target(self.image_cap, self.peak_images, INITIAL_IMAGE_CAPACITY);
+        if images < self.image_cap {
+            self.image_buf =
+                vertex_buffer(&self.device, "sequoia-images", (images * BLIT_BYTES) as u64);
+            self.image_cap = images;
+            self.stats.buffer_shrinks += 1;
+        }
+        let gradients = target(
+            self.gradient_cap,
+            self.peak_gradients,
+            INITIAL_GRADIENT_CAPACITY,
+        );
+        if gradients < self.gradient_cap {
+            self.gradient_buf = vertex_buffer(
+                &self.device,
+                "sequoia-gradients",
+                (gradients * GRADIENT_BYTES) as u64,
+            );
+            self.gradient_cap = gradients;
+            self.stats.buffer_shrinks += 1;
+        }
+    }
+
+    /// Applies eviction, pruning, degradation, and buffer-trimming policies.
+    fn apply_memory_policy(&mut self, atlas: &mut GlyphAtlas) {
+        lock_images(&self.images).trim();
+        let usage = self.memory_usage();
+        let evictions = lock_images(&self.images).evictions();
+        self.stats.evicted_images += evictions.saturating_sub(self.evictions_seen);
+        self.evictions_seen = evictions;
+
+        if self.budget.is_unlimited() {
+            return;
+        }
+
+        let (atlas_w, atlas_h) = atlas.size();
+        let atlas_can_shrink = atlas_w > 64 || atlas_h > 64;
+        if atlas.bytes() as u64 > self.budget.atlas && atlas_can_shrink {
+            let before = atlas.version();
+            atlas.compact();
+            if atlas.bytes() as u64 > self.budget.atlas {
+                atlas.shrink_to_fit();
+            }
+            if atlas.version() != before {
+                self.stats.atlas_prunes += 1;
+                log::debug!(
+                    "sequoia-render: glyph atlas pruned ({} -> {} bytes, budget {} bytes)",
+                    usage.atlas,
+                    atlas.bytes(),
+                    self.budget.atlas
+                );
+            }
+        }
+
+        if usage.total() > self.budget.total {
+            self.stats.degraded_frames += 1;
+            self.quality_low_frames = 0;
+            if let Some(next) = self.quality.degrade() {
+                self.quality = next;
+                self.apply_quality_limits();
+                self.apply_budget_ceilings();
+                log::warn!(
+                    "sequoia-render: GPU memory {:.1}/{:.1} MiB - degrading to `{}`",
+                    usage.total() as f64 / 1_048_576.0,
+                    self.budget.total as f64 / 1_048_576.0,
+                    self.quality.name()
+                );
+            }
+        } else {
+            let relaxed = u128::from(usage.total()) * 100 < u128::from(self.budget.total) * 60;
+            if relaxed && self.quality != QualityLevel::Full {
+                self.quality_low_frames = self.quality_low_frames.saturating_add(1);
+                if self.quality_low_frames >= QUALITY_RECOVER_FRAMES {
+                    self.quality_low_frames = 0;
+                    if let Some(next) = self.quality.recover() {
+                        self.quality = next;
+                        self.apply_quality_limits();
+                        self.apply_budget_ceilings();
+                        log::info!(
+                            "sequoia-render: GPU memory relaxed - quality back to `{}`",
+                            self.quality.name()
+                        );
+                    }
+                }
+            } else {
+                self.quality_low_frames = 0;
+            }
+        }
+
+        self.maybe_trim_buffers();
+    }
+
+    /// Destroys every texture owned by this renderer.
+    ///
+    /// Called when the renderer is dropped (for example after its window
+    /// closes). The shared image cache is only cleared when this renderer is
+    /// its last user, so other windows keep their textures.
+    fn destroy_cached_textures(&mut self) {
+        if let Some((texture, _)) = self.atlas_tex.take() {
+            texture.destroy();
+        }
+        self.atlas_synced = None;
+        for (_, surface) in self.surface_tex.drain() {
+            surface.texture.destroy();
+            if let Some((msaa, _)) = surface.msaa {
+                msaa.destroy();
+            }
+        }
+        if let Some(backdrop) = self.backdrop_tex.take() {
+            backdrop.a_tex.destroy();
+            backdrop.b_tex.destroy();
+            backdrop.c_tex.destroy();
+        }
+        if let Some(target) = self.frame_target.take() {
+            target.texture.destroy();
+        }
+        if let Some((texture, _, _)) = self.depth_tex.take() {
+            texture.destroy();
+        }
+        for (_, target) in self.render_targets.drain() {
+            target.texture.destroy();
+        }
+        for layer in self.group_layers.drain(..) {
+            layer.texture.destroy();
+        }
+        self._shader_white_tex.destroy();
+        if Arc::strong_count(&self.images) == 1 {
+            lock_images(&self.images).clear();
+        }
     }
 
     /// Resizes the window surface; zero dimensions are clamped to one.
@@ -1214,6 +1583,27 @@ impl GpuRenderer {
                 Some(e) => e.size != job.size || e.samples != samples || e.format != format,
                 None => true,
             };
+            if recreate
+                && !self.surface_tex.contains_key(&job.binding.key)
+                && !self.budget.is_unlimited()
+                && (self.quality >= QualityLevel::Reduced
+                    || self
+                        .surface_tex
+                        .values()
+                        .map(|s| {
+                            let bytes = rgba8_bytes(s.size.0, s.size.1);
+                            if s.msaa.is_some() {
+                                bytes.saturating_mul(2)
+                            } else {
+                                bytes
+                            }
+                        })
+                        .sum::<u64>()
+                        > self.budget.surfaces)
+            {
+                self.stats.dropped_surfaces += 1;
+                continue;
+            }
             if recreate {
                 if let Some(old) = self.surface_tex.remove(&job.binding.key) {
                     old.texture.destroy();
@@ -1884,14 +2274,16 @@ impl GpuRenderer {
         let image_draws = &mut self.scratch_image_draws;
         image_draws.clear();
         if !images.is_empty() {
+            let max_dim = self.quality.max_image_dim().max(1);
+            let allow_new = self.quality.max_image_dim() > 0;
             for key in image_keys.iter() {
-                if self.image_failures.contains(key) {
+                if lock_images(&self.images).failed(*key) {
                     continue;
                 }
                 let Some(src) = find_image_source(list.items(), *key) else {
                     continue;
                 };
-                let needs_upload = match self.images.get(key) {
+                let needs_upload = match lock_images(&self.images).get(*key) {
                     None => true,
                     Some(entry) => {
                         let version_changed = src
@@ -1909,10 +2301,10 @@ impl GpuRenderer {
                         &self.queue,
                         &self.atlas_bgl,
                         &self.blit_sampler,
-                        &mut self.images,
-                        &mut self.image_order,
-                        &mut self.image_failures,
+                        &self.images,
                         &src,
+                        allow_new,
+                        max_dim,
                     );
                 }
             }
@@ -1923,8 +2315,13 @@ impl GpuRenderer {
                     }
                     continue;
                 }
-                if let Some(entry) = self.images.get(key) {
-                    image_draws.push((i as u32, entry.bind_group.clone()));
+                let group = lock_images(&self.images)
+                    .get(*key)
+                    .map(|entry| entry.bind_group.clone());
+                if let Some(entry) = group {
+                    image_draws.push((i as u32, entry));
+                } else {
+                    self.stats.dropped_images += 1;
                 }
             }
         }
@@ -1956,16 +2353,20 @@ impl GpuRenderer {
             ];
             for (binding, input) in textures.iter() {
                 let group = match input {
-                    TexInput::Image(source) => Self::image_bind_group(
-                        &self.device,
-                        &self.queue,
-                        &self.atlas_bgl,
-                        &self.blit_sampler,
-                        &mut self.images,
-                        &mut self.image_order,
-                        &mut self.image_failures,
-                        source,
-                    ),
+                    TexInput::Image(source) => {
+                        let max_dim = self.quality.max_image_dim().max(1);
+                        let allow_new = self.quality.max_image_dim() > 0;
+                        Self::image_bind_group(
+                            &self.device,
+                            &self.queue,
+                            &self.atlas_bgl,
+                            &self.blit_sampler,
+                            &self.images,
+                            source,
+                            allow_new,
+                            max_dim,
+                        )
+                    }
                     TexInput::Target(target) => self
                         .render_targets
                         .get(target)
@@ -2700,8 +3101,22 @@ impl GpuRenderer {
         self.stats.gradient_instances = gradients.len() as u64;
         self.stats.draw_calls = draws;
         self.stats.passes = passes;
+        let peaks = (quads.len(), glyphs.len(), images.len(), gradients.len());
+        self.peak_quads = peaks.0;
+        self.peak_glyphs = peaks.1;
+        self.peak_images = peaks.2;
+        self.peak_gradients = peaks.3;
         self.queue.submit([encoder.finish()]);
         frame.present();
+        // Eviction and pruning run after the frame is submitted: the current
+        // render list still carries atlas UVs and image bind groups.
+        self.apply_memory_policy(atlas);
         Ok(())
+    }
+}
+
+impl Drop for GpuRenderer {
+    fn drop(&mut self) {
+        self.destroy_cached_textures();
     }
 }
