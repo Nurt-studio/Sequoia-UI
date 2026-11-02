@@ -73,6 +73,7 @@ list. The most useful groups are:
 | Grids | `grid`, `grid_offset`, `grid_split`, `dots`, `axes` |
 | Text | `text` (baseline), `text_tl` (top-left), `text_center`, `text_center_x`, `text_styled`, `text_tl_rotated`, `text_width`, `text_width_weighted` |
 | Images | `image`, `pixels`, `pixels_nearest`, `pixels_region` |
+| Shaders | `shader`, `shader_at`, `shader_with_blend`, `group` |
 | Clipping | `clipped`, `clipped_rounded` |
 | Transforms | `with_transform`, `unproject`, `to_global_point`, `to_local_point` |
 
@@ -380,6 +381,41 @@ let canvas = Canvas::new().on_draw(move |g| {
 Prepare or update bitmaps outside the paint callback; `on_draw` is `Fn`, not
 `FnMut`, so it cannot mutate captured data in place. See the Assets guide for
 registering image assets and icons.
+
+## GPU effects
+
+`Canvas` can run a custom fragment shader over its own drawing. `with_effect`
+renders your content into an offscreen target and passes it to the shader as the
+`content` input; `with_mask` uses the built-in `apply_mask` shader to multiply
+the content alpha by a separately drawn mask:
+
+```rust,no_run
+# use sequoia_ui::prelude::*;
+# use sequoia_ui::shader::shader;
+# shader! { pub fn invert(content: Sampler2D, uv: FragUv) -> Color {
+#     let sampled = textureSample(content, content_sampler, uv);
+#     return vec4<f32>(1.0 - sampled.rgb, sampled.a);
+# } }
+let vignette = Canvas::new().with_mask(
+    |g| {
+        g.text_center(g.rect(), "SEQUOIA", 96.0, Color::WHITE);
+    },
+    |g| {
+        g.fill(g.rect(), Color::hex(0x2d7ff9).into());
+    },
+);
+
+let inverted = Canvas::new().with_effect(Invert, |g| {
+    g.fill(g.rect(), Color::hex(0x2d7ff9).into());
+});
+# let _ = (vignette, inverted);
+```
+
+Shaders must be registered on the app with `App::shader_type::<T>()` (or
+`shader`/`shader_file`/`shader_dir` for raw WGSL). For manual multi-pass work,
+`Painter::group` captures a target and `Painter::shader` samples it. The
+[Custom shaders](shaders.md) guide covers the macro, uniforms, texture inputs,
+blending, and limits.
 
 ## Testing
 

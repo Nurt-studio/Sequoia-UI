@@ -32,6 +32,7 @@
 #![doc = include_str!("../../src/guides/drag-and-drop.md")]
 #![doc = include_str!("../../src/guides/docking.md")]
 #![doc = include_str!("../../src/guides/canvas.md")]
+#![doc = include_str!("../../src/guides/shaders.md")]
 #![doc = include_str!("../../src/guides/assets.md")]
 #![doc = include_str!("../../src/guides/seq.md")]
 #![doc = include_str!("../../src/guides/localization.md")]
@@ -39,4 +40,5 @@
 #![doc = include_str!("../../src/guides/testing.md")]
 #![doc = include_str!("../../src/guides/export.md")]
 #![doc = include_str!("../../src/guides/custom-views.md")]
+#![doc = include_str!("../../src/cookbook/debounced-search.md")]
 #![doc = include_str!("../../src/contributing/documentation.md")]

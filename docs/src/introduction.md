@@ -26,7 +26,8 @@ The book is a set of focused guides rather than a single tutorial:
   styling.
 - **Guides** cover individual subsystems such as widgets, animation, assets,
   `.seq`, docking, and testing.
-- **Cookbook** collects complete recipes for common tasks.
+- **Cookbook** collects complete recipes for common tasks, starting with
+  [debounced search](cookbook/debounced-search.md).
 - **Contributing** documents how to write and verify pages in this book.
 
 API reference documentation lives on [docs.rs](https://docs.rs/sequoia-ui) and

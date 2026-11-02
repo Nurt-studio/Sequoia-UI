@@ -34,6 +34,7 @@
 - [Drag and drop](guides/drag-and-drop.md)
 - [Docking](guides/docking.md)
 - [Canvas](guides/canvas.md)
+- [Custom shaders](guides/shaders.md)
 - [Assets](guides/assets.md)
 - [Seq](guides/seq.md)
 - [Localization](guides/localization.md)
@@ -41,6 +42,10 @@
 - [Testing](guides/testing.md)
 - [Headless export](guides/export.md)
 - [Custom views](guides/custom-views.md)
+
+# Cookbook
+
+- [Debounced search](cookbook/debounced-search.md)
 
 # Contributing
 
