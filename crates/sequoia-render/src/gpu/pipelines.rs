@@ -798,10 +798,11 @@ pub(crate) fn create_user_shader_bind_group_layout(device: &wgpu::Device) -> wgp
 pub(crate) fn create_user_shader_pipeline_layout(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
+    atlas_bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::PipelineLayout {
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sequoia-user-shader-layout"),
-        bind_group_layouts: &[Some(bgl)],
+        bind_group_layouts: &[Some(bgl), Some(atlas_bgl), Some(atlas_bgl), Some(atlas_bgl)],
         immediate_size: 0,
     })
 }

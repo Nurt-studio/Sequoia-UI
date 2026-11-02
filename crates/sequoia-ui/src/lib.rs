@@ -27,6 +27,8 @@ pub use sequoia_reactive::{Binding, Environment, Signal, Store, UndoSignal};
 pub use sequoia_render as render;
 pub use sequoia_seq as seq;
 pub use sequoia_seq::{AppMeta, HostBindings, LoadedApp, SeqError, SeqLoader};
+pub use sequoia_shader as shader;
+pub use sequoia_shader::shader;
 pub use sequoia_style as style;
 pub use sequoia_text as text;
 pub use sequoia_view as view;

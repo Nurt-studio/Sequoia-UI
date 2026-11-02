@@ -25,6 +25,7 @@ impl crate::renderer::GpuRenderer {
         shader_buf: &wgpu::Buffer,
         shader_instances: &[GpuShaderInstance],
         shader_bind_group: &wgpu::BindGroup,
+        shader_textures: &[ShaderTextureGroups],
         user_shaders: &std::collections::HashMap<sequoia_core::ShaderId, UserShaderEntry>,
         runs: &[GuiRun],
         image_draws: &[(u32, wgpu::BindGroup)],
@@ -91,6 +92,11 @@ impl crate::renderer::GpuRenderer {
                             break;
                         };
                         pass.set_bind_group(0, shader_bind_group, &[instance.uniform_offset]);
+                        if let Some(groups) = shader_textures.get(index as usize) {
+                            for (slot, group) in groups.iter().enumerate() {
+                                pass.set_bind_group(slot as u32 + 1, group, &[]);
+                            }
+                        }
                         pass.draw(0..4, index..index + 1);
                     }
                 }

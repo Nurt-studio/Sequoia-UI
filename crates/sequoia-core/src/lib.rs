@@ -21,9 +21,9 @@ pub use crate::geometry::{
 pub use crate::paint::{
     BackdropDraw, BackdropSpan, BlendMode, BlitDraw, Color, FilterDraw, FilterSpan, GlyphQuad,
     GradientDraw, ImageDraw, ImageSampling, ImageSource, MAX_SHADER_UNIFORM_BYTES,
-    MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, Quad, RenderItem, RenderList, RenderTargetId,
-    RoundedClip, ShaderDraw, ShaderId, Shadow, SpanMask, TargetBegin, TargetEnd, TexInput,
-    TextDraw, WaveformDraw,
+    MAX_WAVEFORM_BARS, OpacityNode, OpacitySpan, PassNode, Quad, RenderItem, RenderList,
+    RenderTargetId, RoundedClip, ShaderDraw, ShaderId, Shadow, SpanMask, TargetBegin, TargetEnd,
+    TexInput, TextDraw, WaveformDraw,
 };
 pub use crate::pixel::Pixels;
 pub use crate::window::WindowId;

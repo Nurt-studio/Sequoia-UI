@@ -4,8 +4,9 @@
 //! uploaded directly as vertex instance data.
 
 use bytemuck::{Pod, Zeroable};
+use std::sync::Arc;
 
-use sequoia_core::{BlendMode, Color, Rect};
+use sequoia_core::{BlendMode, Color, Rect, RenderTargetId, TexInput};
 
 /// Instance data for a rounded rectangle, border, or shadow.
 #[repr(C)]
@@ -70,11 +71,39 @@ pub(crate) struct GpuShaderInstance {
     pub(crate) _pad: [f32; 2],
 }
 
+/// Per-draw texture bind groups in slot order (group 1, 2, 3).
+pub(crate) type ShaderTextureGroups = [wgpu::BindGroup; sequoia_shader::MAX_TEXTURES];
+
+/// Cached offscreen texture backing one `RenderTargetId`.
+pub(crate) struct RenderTargetTexture {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+    pub(crate) bind_group: wgpu::BindGroup,
+    pub(crate) size: (u32, u32),
+    pub(crate) last_used: u64,
+}
+
+/// Image-bind-group key marking a texture that comes from an offscreen target.
+pub(crate) const TARGET_KEY_BIT: u64 = 1 << 63;
+
+/// Encodes a render target as an image bind-group key.
+#[must_use]
+pub(crate) fn target_key(target: RenderTargetId) -> u64 {
+    TARGET_KEY_BIT | target.get()
+}
+
+/// Decodes a key produced by [`target_key`].
+#[must_use]
+pub(crate) fn target_from_key(key: u64) -> Option<RenderTargetId> {
+    (key & TARGET_KEY_BIT != 0).then(|| RenderTargetId::new(key & !TARGET_KEY_BIT))
+}
+
 /// CPU-side shader instances and their dynamic uniform payloads.
 #[derive(Default)]
 pub(crate) struct ShaderGroupData {
     pub(crate) instances: Vec<GpuShaderInstance>,
     pub(crate) uniforms: Vec<u8>,
+    pub(crate) textures: Vec<Arc<[(u32, TexInput)]>>,
 }
 
 /// Returns the fixed-function blend state used by a user-shader pipeline.

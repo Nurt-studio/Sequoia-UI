@@ -16,6 +16,8 @@ members = [
     "crates/sequoia-elements",
     "crates/sequoia-text",
     "crates/sequoia-render",
+    "crates/sequoia-shader",
+    "crates/sequoia-shader-macros",
     "crates/sequoia-style",
     "crates/sequoia-assets",
     "crates/sequoia-platform",
@@ -54,6 +56,10 @@ unicode-segmentation = "1"
 directories = "6.0"
 windows = { version = "0.52", features = ["Win32_Foundation", "Win32_System", "Win32_System_Threading", "Win32_UI", "Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 naga = { version = "29.0.4", features = ["wgsl-in"] }
+proc-macro2 = "1"
+proc-macro-crate = "3"
+quote = "1"
+syn = { version = "2", features = ["full"] }
 wgpu = "29.0.4"
 winit = "0.30"
 sequoia-async = { version = "0.1.3", path = "crates/sequoia-async" }
@@ -75,6 +81,8 @@ sequoia-preview = { version = "0.1.3", path = "crates/sequoia-preview" }
 sequoia-seq = { version = "0.1.3", path = "crates/sequoia-seq" }
 sequoia-seq-lsp = { version = "0.1.3", path = "crates/sequoia-seq-lsp" }
 sequoia-render = { version = "0.1.3", path = "crates/sequoia-render" }
+sequoia-shader = { version = "0.1.3", path = "crates/sequoia-shader" }
+sequoia-shader-macros = { version = "0.1.3", path = "crates/sequoia-shader-macros" }
 sequoia-style = { version = "0.1.3", path = "crates/sequoia-style" }
 sequoia-test = { version = "0.1.3", path = "crates/sequoia-test" }
 sequoia-text = { version = "0.1.3", path = "crates/sequoia-text" }

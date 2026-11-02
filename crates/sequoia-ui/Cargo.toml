@@ -24,6 +24,7 @@ sequoia-platform = { workspace = true }
 sequoia-reactive = { workspace = true }
 sequoia-render = { workspace = true }
 sequoia-seq = { workspace = true }
+sequoia-shader = { workspace = true }
 sequoia-style = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-view = { workspace = true }

@@ -27,6 +27,7 @@ sequoia-reactive = { workspace = true }
 sequoia-style = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-render = { workspace = true }
+sequoia-shader = { workspace = true }
 sequoia-view = { workspace = true }
 winit = { workspace = true }
 

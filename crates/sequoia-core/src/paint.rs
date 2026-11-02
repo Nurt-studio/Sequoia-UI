@@ -1011,14 +1011,20 @@ impl BlendMode {
 }
 
 /// Texture made available to a shader draw.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum TexInput {
     /// Output of an earlier offscreen target.
     Target(RenderTargetId),
 
-    /// Bitmap image handle.
-    Image(u64),
+    /// Bitmap image source. The renderer uploads and caches it by cache key.
+    Image(ImageSource),
+}
+
+impl From<RenderTargetId> for TexInput {
+    fn from(target: RenderTargetId) -> Self {
+        Self::Target(target)
+    }
 }
 
 /// A custom-shader rectangle.
@@ -1047,6 +1053,32 @@ pub struct ShaderDraw {
 
     /// Additional opacity in the range `0..=1`.
     pub opacity: f32,
+}
+
+/// One pass of a render-target plan built by [`RenderList::target_plan`].
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum PassNode {
+    /// Renders a range of items into an offscreen target.
+    Render {
+        /// Target that receives the items.
+        target: RenderTargetId,
+
+        /// Target size in logical coordinates.
+        size: Size,
+
+        /// Blend mode used when the target is composited.
+        blend: BlendMode,
+
+        /// Items to render, as indices into the render list.
+        items: std::ops::Range<usize>,
+    },
+
+    /// Renders a range of items into the destination surface.
+    Present {
+        /// Items to render, as indices into the render list.
+        items: std::ops::Range<usize>,
+    },
 }
 
 /// Copy of an offscreen target into the current paint target.
@@ -1373,6 +1405,66 @@ impl RenderList {
                 .then_with(|| a.depth.cmp(&b.depth))
         });
         let (nodes, _) = build_opacity_nodes(&spans, 0, 0, self.items.len());
+        nodes
+    }
+
+    /// Returns `true` when the list contains any offscreen target pass.
+    pub fn has_targets(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, RenderItem::TargetBegin { .. }))
+    }
+
+    /// Builds the execution plan for offscreen targets.
+    ///
+    /// Target passes are emitted when they close, so a target that feeds another
+    /// target appears earlier in the plan than its consumer. Everything painted
+    /// outside a target - including [`RenderItem::Blit`] items, which stay in the
+    /// pass that contains them so painting order is preserved - becomes a
+    /// [`PassNode::Present`] segment. Segments and passes cover the whole list in
+    /// wiring order.
+    ///
+    /// Nested targets are not supported: an inner target is still emitted as its
+    /// own pass, but its items also stay inside the enclosing target's range.
+    pub fn target_plan(&self) -> Vec<PassNode> {
+        let mut nodes = Vec::new();
+        let mut open: Vec<(RenderTargetId, Size, BlendMode, usize)> = Vec::new();
+        let mut segment = 0usize;
+        for (index, item) in self.items.iter().enumerate() {
+            match item {
+                RenderItem::TargetBegin { id, size, blend } => {
+                    if open.is_empty() && segment < index {
+                        nodes.push(PassNode::Present {
+                            items: segment..index,
+                        });
+                    }
+                    open.push((*id, *size, *blend, index + 1));
+                }
+                RenderItem::TargetEnd { id } => {
+                    let Some(position) = open.iter().rposition(|(open_id, ..)| open_id == id) else {
+                        continue;
+                    };
+                    let (target, size, blend, start) = open.remove(position);
+                    if start <= index {
+                        nodes.push(PassNode::Render {
+                            target,
+                            size,
+                            blend,
+                            items: start..index,
+                        });
+                    }
+                    if open.is_empty() {
+                        segment = index + 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if segment < self.items.len() {
+            nodes.push(PassNode::Present {
+                items: segment..self.items.len(),
+            });
+        }
         nodes
     }
 
@@ -2254,6 +2346,15 @@ impl RenderList {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tex(id: u64) -> TexInput {
+        TexInput::Image(ImageSource::Rgba {
+            id,
+            width: 1,
+            height: 1,
+            data: Arc::new(vec![255; 4]),
+        })
+    }
 
     #[test]
     fn color_construction() {
@@ -3275,11 +3376,7 @@ mod tests {
             uv: [0.0, 0.0, 1.0, 1.0],
             shader: ShaderId::new(4),
             uniforms: Arc::from(uniforms),
-            textures: Arc::from(vec![
-                (2, TexInput::Image(10)),
-                (1, TexInput::Image(11)),
-                (2, TexInput::Image(12)),
-            ]),
+            textures: Arc::from(vec![(2, tex(10)), (1, tex(11)), (2, tex(12))]),
             blend: BlendMode::Normal,
             opacity: 1.0,
         });
@@ -3288,7 +3385,7 @@ mod tests {
         assert_eq!(draw.uniforms.len(), MAX_SHADER_UNIFORM_BYTES);
         assert_eq!(
             draw.textures.as_ref(),
-            &[(1, TexInput::Image(11)), (2, TexInput::Image(12))],
+            &[(1, tex(11)), (2, tex(12))],
             "duplicate bindings keep the last source"
         );
         assert_eq!(list.items().len(), 1);

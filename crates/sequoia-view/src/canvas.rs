@@ -197,6 +197,61 @@ impl Canvas {
         self
     }
 
+    /// Replaces the canvas draw with `content` piped through `shader`.
+    ///
+    /// `content` renders into an offscreen target and `shader` is drawn over the
+    /// whole canvas with that target bound as its `content` input. The shader
+    /// must be registered (see `App::shader_type`).
+    #[must_use]
+    pub fn with_effect<E>(mut self, shader: E, content: impl Fn(&mut Painter) + 'static) -> Self
+    where
+        E: sequoia_shader::SequoiShader + Copy + 'static,
+    {
+        self.draw = Rc::new(move |g: &mut Painter| {
+            let rect = g.rect();
+            let (target, ()) = g.group(rect.size, sequoia_core::BlendMode::Normal, |inner| {
+                content(inner)
+            });
+            g.shader(
+                shader,
+                rect,
+                &[("content", sequoia_core::TexInput::Target(target))],
+            );
+        });
+        self
+    }
+
+    /// Replaces the canvas draw with `content` masked by `mask`.
+    ///
+    /// Both closures render into their own offscreen target; the built-in
+    /// `apply_mask` shader keeps the layer color and multiplies its alpha by the
+    /// mask alpha.
+    #[must_use]
+    pub fn with_mask(
+        mut self,
+        mask: impl Fn(&mut Painter) + 'static,
+        content: impl Fn(&mut Painter) + 'static,
+    ) -> Self {
+        self.draw = Rc::new(move |g: &mut Painter| {
+            let rect = g.rect();
+            let (mask_target, ()) = g.group(rect.size, sequoia_core::BlendMode::Normal, |inner| {
+                mask(inner)
+            });
+            let (layer_target, ()) = g.group(rect.size, sequoia_core::BlendMode::Normal, |inner| {
+                content(inner)
+            });
+            g.shader(
+                sequoia_shader::ApplyMask,
+                rect,
+                &[
+                    ("mask", sequoia_core::TexInput::Target(mask_target)),
+                    ("layer", sequoia_core::TexInput::Target(layer_target)),
+                ],
+            );
+        });
+        self
+    }
+
     pub fn on_pointer(
         mut self,
         handler: impl Fn(Point, &PointerEvent, &mut EventCtx) + 'static,

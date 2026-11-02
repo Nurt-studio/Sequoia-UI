@@ -17,6 +17,7 @@ sequoia-core = { workspace = true }
 sequoia-dock = { workspace = true }
 sequoia-draw = { workspace = true }
 sequoia-reactive = { workspace = true }
+sequoia-shader = { workspace = true }
 sequoia-style = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-layout = { workspace = true }

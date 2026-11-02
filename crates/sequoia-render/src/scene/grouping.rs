@@ -429,6 +429,7 @@ pub(crate) fn group_runs_with_opacity(
                     uniform_offset,
                     _pad: [0.0; 2],
                 });
+                data.textures.push(s.textures.clone());
                 let shader_id = s.shader;
                 let blend = s.blend;
                 match runs.last_mut() {
@@ -441,15 +442,44 @@ pub(crate) fn group_runs_with_opacity(
                 }
             }
 
-            RenderItem::Blit { target, .. } => {
-                log::warn!("RenderItem::Blit({target:?}) ignored in Stage 1");
+            RenderItem::Blit {
+                rect,
+                uv,
+                target,
+                ..
+            } => {
+                if cull_rect_t(*rect, index) {
+                    culled += 1;
+                    continue;
+                }
+                if images.len() >= image_ceiling {
+                    dropped_images += 1;
+                    continue;
+                }
+                let (clip_rect, clip_radius) = gpu_clip(index);
+                let (transform_a, transform_b) = gpu_transform(index);
+                images.push(BlitQuad {
+                    rect: [
+                        rect.left() * scale,
+                        rect.top() * scale,
+                        rect.size.width * scale,
+                        rect.size.height * scale,
+                    ],
+                    uv: *uv,
+                    clip_rect,
+                    clip_radius,
+                    transform_a,
+                    transform_b,
+                    opacity: opacity(index),
+                    nearest: 0.0,
+                });
+                image_keys.push(target_key(*target));
+                match runs.last_mut() {
+                    Some(GuiRun::Images(_, len)) => *len += 1,
+                    _ => runs.push(GuiRun::Images(images.len() as u32 - 1, 1)),
+                }
             }
-            RenderItem::TargetBegin { id, .. } => {
-                log::warn!("RenderItem::TargetBegin({id:?}) ignored in Stage 1");
-            }
-            RenderItem::TargetEnd { id } => {
-                log::warn!("RenderItem::TargetEnd({id:?}) ignored in Stage 1");
-            }
+            RenderItem::TargetBegin { .. } | RenderItem::TargetEnd { .. } => {}
             _ => {}
         }
     }

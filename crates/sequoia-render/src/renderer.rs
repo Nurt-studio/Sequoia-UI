@@ -25,7 +25,7 @@ use crate::scene::planning::*;
 use crate::surface::*;
 use crate::types::*;
 use crate::utils::*;
-use sequoia_core::{BlendMode, Color, Rect, RenderList, ShaderId};
+use sequoia_core::{BlendMode, Color, Rect, RenderList, ShaderId, TexInput};
 use sequoia_view::SurfaceDraw;
 
 /// Owns the wgpu device and window surface and renders frames into it.
@@ -116,8 +116,72 @@ pub struct GpuRenderer {
     pub(crate) uniform_cap: usize,
     pub(crate) shader_bgl: wgpu::BindGroupLayout,
     pub(crate) shader_bind_group: wgpu::BindGroup,
+    pub(crate) shader_white_bg: wgpu::BindGroup,
+    pub(crate) _shader_white_tex: wgpu::Texture,
+    pub(crate) scratch_shader_textures: Vec<ShaderTextureGroups>,
+    pub(crate) render_targets: HashMap<sequoia_core::RenderTargetId, RenderTargetTexture>,
+    pub(crate) target_cache: usize,
+    pub(crate) target_allocs: u64,
+    pub(crate) target_reuses: u64,
     #[cfg(debug_assertions)]
     pub(crate) pipeline_builds: u64,
+}
+
+fn create_white_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+) -> (wgpu::Texture, wgpu::BindGroup) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sequoia-shader-white"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[255u8; 4],
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: None,
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sequoia-shader-white-bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+    (texture, bind_group)
 }
 
 fn create_instance(backend: GpuBackend) -> wgpu::Instance {
@@ -364,6 +428,9 @@ impl GpuRenderer {
             ..Default::default()
         });
 
+        let (shader_white_tex, shader_white_bg) =
+            create_white_bind_group(&device, &queue, &atlas_bgl, &blit_sampler);
+
         let shader = create_shader_module(&device);
 
         let (layout, glyph_layout) = create_pipeline_layouts(&device, &screen_bgl, &atlas_bgl);
@@ -439,7 +506,8 @@ impl GpuRenderer {
             label: Some("passthrough"),
             source: wgpu::ShaderSource::Wgsl(passthrough_src.into()),
         });
-        let passthrough_layout = create_user_shader_pipeline_layout(&device, &shader_bgl);
+        let passthrough_layout =
+            create_user_shader_pipeline_layout(&device, &shader_bgl, &atlas_bgl);
         let passthrough_pipeline = create_user_shader_pipeline(
             &device,
             &passthrough_module,
@@ -546,6 +614,13 @@ impl GpuRenderer {
             uniform_cap: INITIAL_SHADER_CAPACITY,
             shader_bgl,
             shader_bind_group,
+            shader_white_bg,
+            _shader_white_tex: shader_white_tex,
+            scratch_shader_textures: Vec::new(),
+            render_targets: HashMap::new(),
+            target_cache: 8,
+            target_allocs: 0,
+            target_reuses: 0,
             #[cfg(debug_assertions)]
             pipeline_builds: 1,
         })
@@ -730,7 +805,8 @@ impl GpuRenderer {
         let wgsl = wgsl.as_ref();
         validate_user_shader(wgsl)?;
 
-        let pipeline_layout = create_user_shader_pipeline_layout(&self.device, &self.shader_bgl);
+        let pipeline_layout =
+            create_user_shader_pipeline_layout(&self.device, &self.shader_bgl, &self.atlas_bgl);
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = self
             .device
@@ -802,10 +878,11 @@ impl GpuRenderer {
         }
         let module = entry.module.clone();
         let bgl = entry.bgl.clone();
+        let atlas_bgl = self.atlas_bgl.clone();
         if blend_mode_is_advanced(blend) {
             log::warn!("sequoia-render: blend mode {blend:?} falls back to Normal until stage 4");
         }
-        let layout = create_user_shader_pipeline_layout(&self.device, &bgl);
+        let layout = create_user_shader_pipeline_layout(&self.device, &bgl, &atlas_bgl);
         let pipeline = create_user_shader_pipeline(
             &self.device,
             &module,
@@ -957,6 +1034,25 @@ impl GpuRenderer {
         let mut draws: u64 = 0;
 
         let fb = (self.config.width, self.config.height);
+
+        // Target passes read the screen-size uniform in their vertex stage, so
+        // it has to be current before those passes are recorded and submitted.
+        let screen = [
+            self.config.width as f32,
+            self.config.height as f32,
+            0.0,
+            0.0,
+        ];
+        self.queue
+            .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&screen));
+
+        // Offscreen targets are rendered before the scene that samples them.
+        // Every target pass submits on its own because all passes share the
+        // instance buffers: one more `write_buffer` would otherwise replace the
+        // instances of an earlier pass before the GPU executes it.
+        let (target_encoder, target_passes) = self.execute_target_passes(list, encoder, s, fb);
+        encoder = target_encoder;
+        passes += target_passes;
 
         // Backdrops and filters render into an intermediate target first.
         let has_backdrops = list.has_backdrops();
@@ -1259,8 +1355,23 @@ impl GpuRenderer {
             .as_ref()
             .map(|plan| opacity_plan_depth(plan))
             .unwrap_or(0);
+        let target_ranges: Vec<std::ops::Range<usize>> = list
+            .target_plan()
+            .into_iter()
+            .filter_map(|node| match node {
+                sequoia_core::PassNode::Render { items, .. } => Some(items),
+                _ => None,
+            })
+            .collect();
+        let has_targets = !target_ranges.is_empty() && !has_backdrops && !has_filters;
+        if !target_ranges.is_empty() && !has_targets {
+            log::warn!(
+                "sequoia-render: offscreen targets are ignored while backdrops or filters are present"
+            );
+        }
         let use_opacity_layers = !has_backdrops
             && !has_filters
+            && !has_targets
             && opacity_depth > 0
             && opacity_depth <= MAX_GROUP_DEPTH
             && blit_quads.is_empty()
@@ -1291,6 +1402,45 @@ impl GpuRenderer {
                 }
             }
         }
+
+        // Items that belong to an offscreen target are drawn by the target pass,
+        // not by the scene pass, so they are filtered out here together with the
+        // target markers. Opacities stay aligned with the filtered item order.
+        let mut main_items: Vec<sequoia_core::RenderItem> = Vec::new();
+        let mut main_clips: Vec<Option<sequoia_core::RoundedClip>> = Vec::new();
+        let mut main_transforms: Vec<sequoia_core::Transform> = Vec::new();
+        let mut main_opacities: Vec<f32> = Vec::new();
+        if has_targets {
+            for (index, item) in list.items().iter().enumerate() {
+                if matches!(
+                    item,
+                    sequoia_core::RenderItem::TargetBegin { .. }
+                        | sequoia_core::RenderItem::TargetEnd { .. }
+                ) || target_ranges.iter().any(|range| range.contains(&index))
+                {
+                    continue;
+                }
+                main_items.push(item.clone());
+                main_clips.push(list.item_clips()[index]);
+                main_transforms.push(list.item_transforms()[index]);
+                main_opacities.push(item_opacities.get(index).copied().unwrap_or(1.0));
+            }
+        }
+        let (scene_items, scene_clips, scene_transforms, scene_opacities) = if has_targets {
+            (
+                main_items.as_slice(),
+                main_clips.as_slice(),
+                main_transforms.as_slice(),
+                main_opacities.as_slice(),
+            )
+        } else {
+            (
+                list.items(),
+                list.item_clips(),
+                list.item_transforms(),
+                item_opacities.as_slice(),
+            )
+        };
 
         let quads = &mut self.scratch_quads;
         let glyphs = &mut self.scratch_glyphs;
@@ -1337,10 +1487,10 @@ impl GpuRenderer {
             }
             if opacity_draws.is_none() {
                 let (dq, dg, di, dgrad, culled) = group_runs_with_opacity(
-                    list.items(),
-                    list.item_clips(),
-                    list.item_transforms(),
-                    item_opacities.as_slice(),
+                    scene_items,
+                    scene_clips,
+                    scene_transforms,
+                    scene_opacities,
                     s,
                     Some(viewport),
                     self.quad_ceiling,
@@ -1393,9 +1543,9 @@ impl GpuRenderer {
                 self.image_ceiling,
                 self.gradient_ceiling,
             );
-            let items = list.items();
-            let clips = list.item_clips();
-            let transforms = list.item_transforms();
+            let items = scene_items;
+            let clips = scene_clips;
+            let transforms = scene_transforms;
 
             let mut group_segment =
                 |from: usize,
@@ -1767,6 +1917,12 @@ impl GpuRenderer {
                 }
             }
             for (i, key) in image_keys.iter().enumerate() {
+                if let Some(target) = target_from_key(*key) {
+                    if let Some(entry) = self.render_targets.get(&target) {
+                        image_draws.push((i as u32, entry.bind_group.clone()));
+                    }
+                    continue;
+                }
                 if let Some(entry) = self.images.get(key) {
                     image_draws.push((i as u32, entry.bind_group.clone()));
                 }
@@ -1789,6 +1945,42 @@ impl GpuRenderer {
                 );
             }
         }
+
+        self.scratch_shader_textures.clear();
+        let shader_texture_inputs = std::mem::take(&mut self.shader_data.textures);
+        for textures in &shader_texture_inputs {
+            let mut groups: ShaderTextureGroups = [
+                self.shader_white_bg.clone(),
+                self.shader_white_bg.clone(),
+                self.shader_white_bg.clone(),
+            ];
+            for (binding, input) in textures.iter() {
+                let group = match input {
+                    TexInput::Image(source) => Self::image_bind_group(
+                        &self.device,
+                        &self.queue,
+                        &self.atlas_bgl,
+                        &self.blit_sampler,
+                        &mut self.images,
+                        &mut self.image_order,
+                        &mut self.image_failures,
+                        source,
+                    ),
+                    TexInput::Target(target) => self
+                        .render_targets
+                        .get(target)
+                        .map(|entry| entry.bind_group.clone()),
+                    _ => None,
+                };
+                if let Some(group) = group
+                    && let Some(slot) = groups.get_mut(*binding as usize)
+                {
+                    *slot = group;
+                }
+            }
+            self.scratch_shader_textures.push(groups);
+        }
+        self.shader_data.textures = shader_texture_inputs;
 
         if !group_composites.is_empty() {
             Self::ensure_capacity(
@@ -2029,6 +2221,7 @@ impl GpuRenderer {
                                     &self.shader_buf,
                                     &self.shader_data.instances,
                                     &self.shader_bind_group,
+                                    &self.scratch_shader_textures,
                                     &self.user_shaders,
                                     &seg.runs,
                                     image_draws,
@@ -2116,6 +2309,7 @@ impl GpuRenderer {
                                     &self.shader_buf,
                                     &self.shader_data.instances,
                                     &self.shader_bind_group,
+                                    &self.scratch_shader_textures,
                                     &self.user_shaders,
                                     &fplan.runs,
                                     image_draws,
@@ -2175,6 +2369,7 @@ impl GpuRenderer {
                                     &self.shader_buf,
                                     &self.shader_data.instances,
                                     &self.shader_bind_group,
+                                    &self.scratch_shader_textures,
                                     &self.user_shaders,
                                     &fplan.runs,
                                     image_draws,
@@ -2228,6 +2423,7 @@ impl GpuRenderer {
                         &self.shader_buf,
                         &self.shader_data.instances,
                         &self.shader_bind_group,
+                        &self.scratch_shader_textures,
                         &self.user_shaders,
                         &plan.runs,
                         image_draws,
@@ -2338,6 +2534,7 @@ impl GpuRenderer {
                 shader_buf: &self.shader_buf,
                 shader_instances: &self.shader_data.instances,
                 shader_bind_group: &self.shader_bind_group,
+                shader_textures: &self.scratch_shader_textures,
                 user_shaders: &self.user_shaders,
                 backdrop_buf: &self.backdrop_buf,
             };
@@ -2458,6 +2655,13 @@ impl GpuRenderer {
                                     &self.shader_bind_group,
                                     &[instance.uniform_offset],
                                 );
+                                if let Some(groups) =
+                                    self.scratch_shader_textures.get(index as usize)
+                                {
+                                    for (slot, group) in groups.iter().enumerate() {
+                                        pass.set_bind_group(slot as u32 + 1, group, &[]);
+                                    }
+                                }
                                 pass.draw(0..4, index..index + 1);
                             }
                         }

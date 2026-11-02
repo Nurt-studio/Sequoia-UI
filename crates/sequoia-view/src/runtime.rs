@@ -12,7 +12,8 @@ use crate::overlay::{
     Anchor, InputMode, OverlayEntry, OverlayId, OverlayLayer, OverlayStore, compute_position,
 };
 use sequoia_core::{
-    Constraints, Dirty, Edges, Length, Point, Rect, RenderList, Size, Transform, Vec2, WindowId,
+    Constraints, Dirty, Edges, Length, Point, Rect, RenderList, ShaderId, Size, Transform, Vec2,
+    WindowId,
 };
 use sequoia_input::{
     CursorIcon, Event, EventPhase, ImeEvent, Key, KeyEvent, Modifiers, PenTool, PointerButton,
@@ -260,6 +261,10 @@ struct Inner {
     layout_dirty: Cell<bool>,
 
     scoped_cancels: RefCell<HashMap<ElementId, Vec<Box<dyn FnOnce()>>>>,
+
+    shader_ids: RefCell<HashMap<String, ShaderId>>,
+
+    next_shader_id: Cell<u32>,
 }
 
 impl Inner {
@@ -378,8 +383,34 @@ impl Runtime {
                 layout_epoch: Cell::new(0),
                 layout_dirty: Cell::new(true),
                 scoped_cancels: RefCell::new(HashMap::new()),
+                shader_ids: RefCell::new(HashMap::new()),
+                next_shader_id: Cell::new(0),
             }),
         }
+    }
+
+    /// Associates a shader name with a backend [`ShaderId`].
+    pub fn register_shader_id_with(&self, name: impl Into<String>, id: ShaderId) {
+        self.inner.shader_ids.borrow_mut().insert(name.into(), id);
+    }
+
+    /// Registers a shader name and returns a stable headless [`ShaderId`].
+    pub fn register_shader_id(&self, name: impl Into<String>) -> ShaderId {
+        let name = name.into();
+        if let Some(id) = self.inner.shader_ids.borrow().get(&name).copied() {
+            return id;
+        }
+        let id = ShaderId::new(self.inner.next_shader_id.get());
+        self.inner
+            .next_shader_id
+            .set(self.inner.next_shader_id.get() + 1);
+        self.inner.shader_ids.borrow_mut().insert(name, id);
+        id
+    }
+
+    /// Looks up a registered shader name.
+    pub fn shader_id(&self, name: &str) -> Option<ShaderId> {
+        self.inner.shader_ids.borrow().get(name).copied()
     }
 
     pub fn window_id(&self) -> WindowId {

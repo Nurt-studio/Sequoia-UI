@@ -1,0 +1,16 @@
+[package]
+name = "sequoia-shader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — custom shader runtime and WGSL types"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bytemuck = { workspace = true }
+sequoia-shader-macros = { workspace = true }
+
+[lints]
+workspace = true

@@ -8,3 +8,4 @@ pub mod backdrop;
 pub mod filter;
 pub mod gui;
 pub mod opacity;
+pub mod target;

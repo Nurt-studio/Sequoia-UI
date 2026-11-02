@@ -10,6 +10,7 @@ categories.workspace = true
 
 [dependencies]
 sequoia-core = { workspace = true }
+sequoia-shader = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-view = { workspace = true }
 bytemuck = { workspace = true }

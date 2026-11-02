@@ -21,6 +21,7 @@ sequoia-elements = { workspace = true }
 sequoia-async = { workspace = true }
 sequoia-platform = { workspace = true }
 sequoia-render = { workspace = true }
+sequoia-shader = { workspace = true }
 sequoia-style = { workspace = true }
 sequoia-ui = { workspace = true }
 

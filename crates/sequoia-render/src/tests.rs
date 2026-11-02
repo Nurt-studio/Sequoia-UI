@@ -15,7 +15,7 @@ use crate::types::*;
 use crate::utils::*;
 use sequoia_core::{
     BackdropSpan, BlendMode, Color, FilterSpan, ImageSource, Rect, RenderItem, RenderList,
-    ShaderDraw, ShaderId,
+    ShaderDraw, ShaderId, TexInput,
 };
 use sequoia_view::Runtime;
 use sequoia_view::{PointerEvent, SurfaceDraw, Unit, View};
@@ -77,13 +77,20 @@ fn shader_items_become_instances_with_aligned_uniforms() {
     for value in red {
         uniforms.extend_from_slice(&value.to_le_bytes());
     }
+    let source = ImageSource::Rgba {
+        id: 11,
+        width: 1,
+        height: 1,
+        data: Arc::new(vec![255; 4]),
+    };
+    let texture = TexInput::Image(source.clone());
     let mut list = RenderList::new();
     list.push_shader(ShaderDraw {
         rect: Rect::from_xywh(0.0, 0.0, 100.0, 100.0),
         uv: [0.0, 0.0, 1.0, 1.0],
         shader: ShaderId::new(7),
         uniforms: Arc::from(uniforms),
-        textures: Arc::from(Vec::new()),
+        textures: Arc::from(vec![(0u32, texture)]),
         blend: BlendMode::Add,
         opacity: 1.0,
     });
@@ -120,6 +127,10 @@ fn shader_items_become_instances_with_aligned_uniforms() {
     assert_eq!(shaders.instances[0].uniform_offset, 0);
     assert_eq!(shaders.instances[0].shader_id, 7);
     assert_eq!(shaders.instances[0].rect, [0.0, 0.0, 200.0, 200.0]);
+    assert_eq!(
+        shaders.textures[0].as_ref(),
+        &[(0, TexInput::Image(source))]
+    );
     assert_eq!(
         &shaders.uniforms[..4],
         &1.0f32.to_le_bytes(),
