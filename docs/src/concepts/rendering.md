@@ -120,6 +120,7 @@ bounds. Such a view should report extra paint overflow; built-in views such as
 - shadows
 - waveforms
 - backdrops and filters
+- custom shader draws
 
 Items are painted in order, so later items appear on top. Clip regions can be
 pushed around groups of items.
@@ -211,6 +212,39 @@ text built with `Text::with` subscribes to its signals and participates in
 normal damage tracking. See [Text](text.md) for shaping, wrapping, and
 ellipsis controls.
 
+## GPU resource management
+
+`GpuRenderer` keeps its allocations bounded even in long-running apps:
+
+- `MemoryBudget` sets total and per-category byte limits plus the maximum
+  number of concurrent image textures and pooled render targets. Apply it with
+  `renderer.set_memory_budget(budget)`; a total of zero disables enforcement.
+- The image cache evicts least-recently-used textures when either its byte or
+  texture-count limit is reached. Images that do not fit are skipped rather
+  than allocated.
+- When the glyph atlas exceeds its share, it is compacted and shrunk to the
+  smallest power-of-two bitmap that fits the hot entries.
+- Instance buffers grow geometrically while a frame needs more room and are
+  trimmed after two minutes of low usage, so one large frame does not pin
+  memory forever.
+- If the total budget is still exceeded, the renderer lowers its
+  `QualityLevel` (`full` → `balanced` → `reduced` → `minimal`) and recovers
+  automatically after a sustained quiet period. Lower levels shrink caches,
+  reduce instance ceilings, and can refuse new image uploads or cached
+  surfaces.
+- Dropping the last renderer for a window destroys its atlas, cached surfaces,
+  backdrops, targets, and image textures.
+
+Multi-window apps can create one `SharedGpu` and call `renderer` on it for each
+window. All windows then share the same device, queue, and image cache, so each
+image is decoded and uploaded once. Pipelines, instance buffers, and the glyph
+atlas remain per window. Budget limits applied through one renderer also apply
+to the shared image cache.
+
+`renderer.memory_usage()` returns the tracked byte counts, and `RenderStats`
+reports `evicted_images`, `atlas_prunes`, `buffer_shrinks`, and
+`degraded_frames` for telemetry.
+
 ## Measuring work
 
 `RenderList` offers accessors for diagnostics:
@@ -244,3 +278,4 @@ is how thumbnails and previews are produced. See [Headless export](../guides/exp
 - [Styling](styling.md)
 - [Animation](animation.md)
 - [Custom views](../guides/custom-views.md)
+- [Custom shaders](../guides/shaders.md)
