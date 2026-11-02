@@ -93,7 +93,7 @@ pub(crate) fn node_graph_spec(editor: EditorState) -> sequoia_ui::prelude::Windo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sequoia_ui::core::{Point, RenderItem, RenderList};
+    use sequoia_ui::core::{Point, RenderItem, RenderList, Vec2};
     use sequoia_ui::input::{Modifiers, PointerButton};
     use sequoia_ui::text::TextSystem;
     use sequoia_ui::view::{ElementId, Runtime};
@@ -205,6 +205,22 @@ mod tests {
                 c.from_node == 1 && c.from_port == 1 && c.to_node == 3 && c.to_port == 1
             })
         );
+    }
+
+    #[test]
+    fn horizontal_wheel_pans_the_graph() {
+        let (rt, graph) = mounted();
+        let mut text = TextSystem::new();
+
+        rt.wheel(
+            Point::new(900.0, 600.0),
+            Vec2::new(40.0, 0.0),
+            Modifiers::NONE,
+            &mut text,
+        );
+
+        assert_eq!(graph.pan_x.get_untracked(), -40.0);
+        assert_eq!(graph.pan_y.get_untracked(), 0.0);
     }
 
     #[test]

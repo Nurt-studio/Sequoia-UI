@@ -189,7 +189,7 @@ impl Interaction {
                         handle,
                         wx,
                         wy,
-                        signals.layers.get_untracked(),
+                        signals.state.root.get_untracked().clone(),
                     ));
                     ctx.handled();
                     return;
@@ -228,7 +228,7 @@ impl Interaction {
                         *last.borrow_mut() = (Some(id), now);
                         if !layer.locked {
                             *self.drag.borrow_mut() =
-                                Some(DragSession::moving(layer, wx, wy, layers.clone()));
+                                Some(DragSession::moving(layer, wx, wy, signals.state.root.get_untracked().clone()));
                         }
                     } else {
                         signals.selected.set(None);
@@ -281,9 +281,9 @@ impl Interaction {
                     ctx.handled();
                     return;
                 }
-                if let Some(session) = self.drag.borrow_mut().take() {
+                if let Some(mut session) = self.drag.borrow_mut().take() {
                     *self.guides.borrow_mut() = Guides::default();
-                    state.push_snapshot(session.layers_before);
+                    state.push_snapshot(session.before.take());
                     state.propagate_layout();
                     ctx.handled();
                 }

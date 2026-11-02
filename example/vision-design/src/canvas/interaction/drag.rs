@@ -5,6 +5,7 @@ use crate::canvas::GUIDE_TOL_PX;
 use crate::core::geometry::{Handle, apply_resize, snap};
 use crate::core::layer::Layer;
 use crate::core::snap::{Guides, compute_snap_and_guides};
+use crate::model::svelte_ast::SvelteNode;
 
 #[derive(Clone)]
 pub(crate) enum DragMode {
@@ -18,17 +19,17 @@ pub(crate) struct DragSession {
     pub(crate) start_wx: f32,
     pub(crate) start_wy: f32,
     pub(crate) orig: Vec<(u64, f32, f32, f32, f32)>,
-    pub(crate) layers_before: Vec<Layer>,
+    pub(crate) before: Option<SvelteNode>,
 }
 
 impl DragSession {
-    pub(crate) fn moving(layer: &Layer, wx: f32, wy: f32, before: Vec<Layer>) -> Self {
+    pub(crate) fn moving(layer: &Layer, wx: f32, wy: f32, before: Option<SvelteNode>) -> Self {
         Self {
             mode: DragMode::Move,
             start_wx: wx,
             start_wy: wy,
             orig: vec![(layer.id, layer.x, layer.y, layer.w, layer.h)],
-            layers_before: before,
+            before,
         }
     }
 
@@ -37,14 +38,14 @@ impl DragSession {
         handle: Handle,
         wx: f32,
         wy: f32,
-        before: Vec<Layer>,
+        before: Option<SvelteNode>,
     ) -> Self {
         Self {
             mode: DragMode::Resize(handle),
             start_wx: wx,
             start_wy: wy,
             orig: vec![(layer.id, layer.x, layer.y, layer.w, layer.h)],
-            layers_before: before,
+            before,
         }
     }
 }
@@ -94,41 +95,23 @@ pub(crate) fn apply(
                 ny_raw
             };
             *guides.borrow_mut() = found;
-            signals.layers.update(|ls| {
-                if let Some(l) = ls.iter_mut().find(|l| l.id == id) {
-                    l.x = final_x;
-                    l.y = final_y;
-                }
-            });
+            signals.state.move_layer(id, final_x, final_y);
             signals.bump();
         }
         DragMode::Move => {
             *guides.borrow_mut() = Guides::default();
-            signals.layers.update(|ls| {
-                for (id, ox, oy, _, _) in orig {
-                    if let Some(l) = ls.iter_mut().find(|l| l.id == *id) {
-                        let nx = ox + dx;
-                        let ny = oy + dy;
-                        l.x = if grid_snap { snap(nx) } else { nx };
-                        l.y = if grid_snap { snap(ny) } else { ny };
-                    }
-                }
-            });
+            for (id, ox, oy, _, _) in orig {
+                let nx = ox + dx;
+                let ny = oy + dy;
+                signals.state.move_layer(*id, if grid_snap { snap(nx) } else { nx }, if grid_snap { snap(ny) } else { ny });
+            }
         }
         DragMode::Resize(handle) => {
             *guides.borrow_mut() = Guides::default();
-            signals.layers.update(|ls| {
-                for (id, ox, oy, ow, oh) in orig {
-                    if let Some(l) = ls.iter_mut().find(|l| l.id == *id) {
-                        let (nx, ny, nw, nh) =
-                            apply_resize(*handle, *ox, *oy, *ow, *oh, dx, dy, grid_snap);
-                        l.x = nx;
-                        l.y = ny;
-                        l.w = nw;
-                        l.h = nh;
-                    }
-                }
-            });
+            for (id, ox, oy, ow, oh) in orig {
+                let (nx, ny, nw, nh) = apply_resize(*handle, *ox, *oy, *ow, *oh, dx, dy, grid_snap);
+                signals.state.resize_layer(*id, nx, ny, nw, nh);
+            }
         }
     }
 }

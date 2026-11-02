@@ -57,18 +57,18 @@ pub(super) fn empty_box() -> impl View + 'static {
                 .gap(8.0)
                 .align_items(Align::Center)
                 .child(
-                    Text::new("Nothing selected")
+                    Text::new("Nic nie jest zaznaczone")
                         .size(13.0)
                         .semibold()
                         .color(Color::hex(0xB9B9BD)),
                 )
                 .child(
-                    Text::new("Select a layer on the canvas")
+                    Text::new("Zaznacz warstwę na canvasie,")
                         .size(12.0)
                         .color(colors::active().icon_inactive),
                 )
                 .child(
-                    Text::new("to inspect and edit its properties.")
+                    Text::new("aby oglądać i edytować jej właściwości.")
                         .size(12.0)
                         .color(colors::active().icon_inactive),
                 ),

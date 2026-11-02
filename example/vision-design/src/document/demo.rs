@@ -1,6 +1,6 @@
-use sequoia_ui::prelude::*;
-
 use crate::core::layer::Layer;
+use crate::model::svelte_ast::{Align, Dimension, Display, Element, Position, Style, SvelteNode, Tag, TextNode, TextStyle};
+use sequoia_ui::prelude::Color;
 
 pub(crate) fn demo_layers() -> Vec<Layer> {
     let base = |id, name: &str, icon, kind, level, parent, x, y, w, h, radius, hex: &str| Layer {
@@ -49,7 +49,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
     vec![
         base(
             1,
-            "Frame 1",
+            "Ramka 1",
             "tool/frame",
             "FRAME",
             0,
@@ -63,7 +63,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         ),
         base(
             2,
-            "Rectangle",
+            "Prostokąt",
             "tool/rect",
             "RECTANGLE",
             1,
@@ -77,7 +77,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         ),
         base(
             3,
-            "Ellipse",
+            "Elipsa",
             "tool/ellipse",
             "ELLIPSE",
             1,
@@ -91,7 +91,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         ),
         Layer {
             id: 4,
-            name: "Title".into(),
+            name: "Tytuł".into(),
             icon: "tool/text",
             kind: "TEXT",
             level: 1,
@@ -132,4 +132,89 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
             self_pad_left: 0.0,
         },
     ]
+}
+pub(crate) fn demo_tree() -> SvelteNode {
+    let frame = Element {
+        id: 1,
+        name: "Frame 1".into(),
+        tag: Tag::Div,
+        style: Style {
+            display: Display::Flex,
+            position: Position::Relative,
+            width: Dimension::Fixed(800.0),
+            height: Dimension::Fixed(600.0),
+            top: Some(0.0),
+            left: Some(0.0),
+            fill: Some(Color::hex(0x1B1B1B)),
+            fill_hex: "#1B1B1B".into(),
+            ..Default::default()
+        },
+        children: vec![
+            SvelteNode::Element(Element {
+                id: 2,
+                name: "Rectangle 2".into(),
+                tag: Tag::Div,
+                style: Style {
+                    display: Display::None,
+                    position: Position::Absolute,
+                    width: Dimension::Fixed(220.0),
+                    height: Dimension::Fixed(140.0),
+                    top: Some(100.0),
+                    left: Some(100.0),
+                    fill: Some(Color::hex(0x0D99FF)),
+                    fill_hex: "#0D99FF".into(),
+                    radius: 8.0,
+                    ..Default::default()
+                },
+                children: vec![],
+                visible: true,
+                locked: false,
+                component: false,
+                instance: false,
+            }),
+            SvelteNode::Element(Element {
+                id: 3,
+                name: "Ellipse 3".into(),
+                tag: Tag::Div,
+                style: Style {
+                    display: Display::None,
+                    position: Position::Absolute,
+                    width: Dimension::Fixed(120.0),
+                    height: Dimension::Fixed(120.0),
+                    top: Some(100.0),
+                    left: Some(360.0),
+                    fill: Some(Color::hex(0x42BE65)),
+                    fill_hex: "#42BE65".into(),
+                    radius: 9999.0,
+                    ..Default::default()
+                },
+                children: vec![],
+                visible: true,
+                locked: false,
+                component: false,
+                instance: false,
+            }),
+            SvelteNode::Text(TextNode {
+                id: 4,
+                name: "Tytuł".into(),
+                content: "Zaprojektuj w Sequoia".into(),
+                style: TextStyle {
+                    font_size: 28.0,
+                    font_weight: 400,
+                    color: Color::hex(0xFFFFFF),
+                    color_hex: "#FFFFFF".into(),
+                    align: Align::Start,
+                },
+                width: Some(380.0),
+                height: Some(40.0),
+                visible: true,
+                locked: false,
+            }),
+        ],
+        visible: true,
+        locked: false,
+        component: false,
+        instance: false,
+    };
+    SvelteNode::Element(frame)
 }

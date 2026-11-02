@@ -17,15 +17,18 @@ impl View for HelpOverlay {
         let st = self.state.clone();
 
         let shortcuts = vec![
-            ("Select / Hand", "V · H"),
-            ("Frame / Rect", "F · R"),
-            ("Ellipse / Text", "O · T"),
-            ("Duplicate / Delete", "Ctrl+D / Del"),
-            ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z"),
-            ("Zoom / Fit", "Ctrl+Wheel / Shift+1"),
-            ("Pan Canvas", "Space + Drag / Middle Click"),
-            ("Command Palette", "Ctrl+K"),
-            ("Inline Text Edit", "Double click text"),
+            ("Zaznaczanie / łapka", "V · H"),
+            ("Ramka / prostokąt", "F · R"),
+            ("Elipsa / tekst", "O · T"),
+            ("Kod Svelte", "Ctrl+E"),
+            ("Paleta komend", "Ctrl+K"),
+            ("Duplikuj / usuń", "Ctrl+D / Del"),
+            ("Cofnij / ponów", "Ctrl+Z / Ctrl+Shift+Z"),
+            ("Zoom / dopasuj", "Ctrl+Kółko / Shift+1"),
+            ("Przesuwanie canvasu", "Środkowy przycisk"),
+            ("Edycja tekstu", "Podwójne kliknięcie"),
+            ("Auto layout", "Obiekt → Auto layout"),
+            ("Import / eksport JSON", "Plik → JSON"),
         ];
 
         let mut grid = Column::new().gap(4.0).fill_width();
@@ -74,13 +77,13 @@ impl View for HelpOverlay {
                             Column::new()
                                 .gap(10.0)
                                 .child(
-                                    Text::new("Keyboard Shortcuts")
+                                    Text::new("Skróty klawiszowe")
                                         .size(14.0)
                                         .semibold()
                                         .color(Color::WHITE),
                                 )
                                 .child(
-                                    Text::new("Press Esc to close")
+                                    Text::new("Esc zamyka okno")
                                         .size(11.0)
                                         .color(colors::active().icon_inactive),
                                 )

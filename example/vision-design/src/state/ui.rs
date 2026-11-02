@@ -94,6 +94,7 @@ impl Menus {
 pub(crate) enum Tab {
     Design,
     Inspect,
+    Code,
 }
 
 #[derive(Clone)]

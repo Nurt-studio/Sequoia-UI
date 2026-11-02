@@ -31,7 +31,7 @@ fn search_box(state: &EditorState) -> impl View + 'static {
                 )
                 .child_flex(
                     TextField::new(query)
-                        .placeholder("Search…")
+                        .placeholder("Szukaj…")
                         .font_size(11.0)
                         .text_color(colors::active().text)
                         .background(Color::TRANSPARENT)
@@ -113,7 +113,7 @@ pub(crate) fn panel_left(state: &EditorState) -> impl View + 'static {
                 .align_items(Align::Center)
                 .child(Spacer::fixed(6.0))
                 .child(
-                    Text::new("Layers")
+                    Text::new("Warstwy")
                         .size(13.0)
                         .semibold()
                         .letter_spacing(0.3)
@@ -136,13 +136,13 @@ pub(crate) fn panel_left(state: &EditorState) -> impl View + 'static {
                     .fill_width()
                     .padding(Edges::xy(6.0, 2.0))
                     .child(Sec {
-                        title: "PAGE 1",
+                        title: "STRONA 1",
                         open: state.sec_page_open.clone(),
                         cnt: page_cnt,
                     })
                     .child(when(state.sec_page_open.clone(), layer_list(state, false)))
                     .child(Sec {
-                        title: "COMPONENTS",
+                        title: "KOMPONENTY",
                         open: state.sec_comp_open.clone(),
                         cnt: comp_cnt,
                     })

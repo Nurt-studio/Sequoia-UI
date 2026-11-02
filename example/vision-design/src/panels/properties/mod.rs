@@ -7,6 +7,7 @@ use crate::theme::colors;
 use self::alignment::body_alignment;
 use self::appearance::body_appearance;
 use self::auto_layout::body_auto_layout;
+use self::code::{code_body, is_code_tab};
 use self::constraints::body_constraints;
 use self::export::body_export;
 use self::fill::body_fill;
@@ -20,6 +21,7 @@ use self::text::body_text;
 mod alignment;
 mod appearance;
 mod auto_layout;
+mod code;
 mod constraints;
 mod controls;
 mod export;
@@ -78,17 +80,21 @@ impl View for TabStrip {
         let kind = self.state.sel_kind.get();
         let td = self.state.active_tab.clone();
         let ti = self.state.active_tab.clone();
+        let tc = self.state.active_tab.clone();
         Row::new()
             .fill_width()
-            .padding(Edges::xy(12.0, 0.0))
+            .padding(Edges::xy(10.0, 0.0))
             .border_bottom(1.0, colors::active().stroke_soft)
             .align_items(Align::Center)
-            .gap(16.0)
-            .child(tab_button("Design", tab == Tab::Design, move || {
+            .gap(10.0)
+            .child(tab_button("Projekt", tab == Tab::Design, move || {
                 td.set(Tab::Design)
             }))
-            .child(tab_button("Inspect", tab == Tab::Inspect, move || {
+            .child(tab_button("Inspekcja", tab == Tab::Inspect, move || {
                 ti.set(Tab::Inspect)
+            }))
+            .child(tab_button("Kod", tab == Tab::Code, move || {
+                tc.set(Tab::Code)
             }))
             .child(Spacer::flex(1.0))
             .child(
@@ -172,59 +178,59 @@ impl View for RightBody {
 
             let mut sections: Vec<AnyView> = vec![
                 section(
-                    "Alignment",
+                    "Wyrównanie",
                     self.state.sections.alignment.clone(),
                     body_alignment(&self.state),
                 ),
                 section(
-                    "Position",
+                    "Pozycja",
                     self.state.sections.position.clone(),
                     body_position(&self.state),
                 ),
                 section(
-                    "Size",
+                    "Rozmiar",
                     self.state.sections.size.clone(),
                     body_size(&self.state),
                 ),
                 section(
-                    "Appearance",
+                    "Wygląd",
                     self.state.sections.appearance.clone(),
                     body_appearance(&self.state),
                 ),
             ];
             if is_text {
                 sections.push(section(
-                    "Text",
+                    "Tekst",
                     self.state.sections.fill.clone(),
                     body_text(&self.state),
                 ));
             }
             if is_frame {
                 sections.push(section(
-                    "Auto Layout",
+                    "Auto layout",
                     self.state.sections.auto_layout.clone(),
                     body_auto_layout(&self.state),
                 ));
             }
             if parent_has_al {
                 sections.push(section(
-                    "Constraints",
+                    "Ograniczenia",
                     self.state.sections.constraints.clone(),
                     body_constraints(&self.state),
                 ));
             }
             sections.push(section(
-                "Fill",
+                "Wypełnienie",
                 self.state.sections.fill.clone(),
                 body_fill(&self.state),
             ));
             sections.push(section(
-                "Stroke",
+                "Obramowanie",
                 self.state.sections.stroke.clone(),
                 body_stroke(&self.state),
             ));
             sections.push(section(
-                "Export",
+                "Eksport",
                 self.state.sections.export.clone(),
                 body_export(&self.state),
             ));
@@ -246,10 +252,19 @@ pub(crate) fn panel_right(state: &EditorState) -> impl View + 'static {
         .background(colors::active().surface)
         .border_left(1.0, colors::active().stroke_soft)
         .child(tab_strip(state))
-        .child(
+        .child(code_or_scroll(state))
+}
+
+/// The "Code" tab manages scrolling on its own (without an external ScrollView).
+fn code_or_scroll(state: &EditorState) -> AnyView {
+    if is_code_tab(state) {
+        AnyView::new(code_body(state))
+    } else {
+        AnyView::new(
             ScrollView::new(RightBody {
                 state: state.clone(),
             })
             .vertical(),
         )
+    }
 }

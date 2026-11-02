@@ -37,6 +37,10 @@ pub(crate) fn install(app: App, state: &EditorState) -> App {
                 st.cmdk_query.set(String::new());
             }
         })
+        .accelerator(Key::from_char('e'), Modifiers::CONTROL, {
+            let st = state.clone();
+            move || st.open_code_tab()
+        })
         .accelerator(Key::from_char('/'), Modifiers::SHIFT, {
             let st = state.clone();
             move || st.help_open.update(|v| *v = !*v)

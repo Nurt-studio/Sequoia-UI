@@ -167,7 +167,7 @@ impl View for ZoomGroup {
 
 /// .btn-primary — 24px, bg #e8e8e8
 fn share_btn() -> impl View + 'static {
-    Button::new("Share")
+    Button::new("Udostępnij")
         .style(
             ButtonStyle::new()
                 .background(Color::hex(0xE8E8E8))

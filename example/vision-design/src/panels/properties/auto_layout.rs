@@ -23,10 +23,10 @@ pub(super) fn body_auto_layout(state: &EditorState) -> impl View + 'static {
         .child(
             Row::new()
                 .gap(3.0)
-                .child(seg_btn("→", cur == "H", move || l_h.set("H".into())))
-                .child(seg_btn("↓", cur == "V", move || l_v.set("V".into())))
+                .child(seg_btn("H", cur == "H", move || l_h.set("H".into())))
+                .child(seg_btn("V", cur == "V", move || l_v.set("V".into())))
                 .child(seg_btn("Z", cur == "Z", move || l_z.set("Z".into())))
-                .child(seg_btn("G", cur == "G", move || l_g.set("G".into())))
+                .child(seg_btn("⊞", cur == "G", move || l_g.set("G".into())))
                 .child(seg_btn("✕", cur == "NONE", move || {
                     l_none.set("NONE".into())
                 })),

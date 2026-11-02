@@ -1,7 +1,7 @@
 use sequoia_ui::layout::LayoutCtx;
 use sequoia_ui::prelude::*;
 
-use crate::components::menu::{menu_row as mrow, menu_sep as msep};
+use crate::components::menu::{menu_row as mrow, menu_row_env as mrow_env, menu_sep as msep};
 use sequoia_ui::view::{Fill, GradientStops};
 
 use crate::state::{EditorState, Menu};
@@ -121,17 +121,17 @@ pub(crate) fn menu_bar(state: &EditorState) -> impl View + 'static {
         .border_bottom(1.0, colors::active().stroke_soft)
         .child(logo())
         .child(Spacer::fixed(5.0))
-        .child(mbtn(1, "File", state))
-        .child(mbtn(2, "Edit", state))
-        .child(mbtn(3, "View", state))
-        .child(mbtn(4, "Object", state))
-        .child(mbtn(5, "Window", state))
-        .child(mbtn(6, "Help", state))
+        .child(mbtn(1, "Plik", state))
+        .child(mbtn(2, "Edycja", state))
+        .child(mbtn(3, "Widok", state))
+        .child(mbtn(4, "Obiekt", state))
+        .child(mbtn(5, "Okno", state))
+        .child(mbtn(6, "Pomoc", state))
         .child(Spacer::flex(1.0))
         .child(
             Text::with({
                 let layers = state.layers.clone();
-                move || format!("{} layers", layers.get().len())
+                move || format!("{} warstw", layers.get().len())
             })
             .size(10.0)
             .font("IBM Plex Mono")
@@ -172,22 +172,41 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_new = st.clone();
                 let s_exp = st.clone();
                 let s_jpg = st.clone();
+                let s_svelte = st.clone();
+                let s_json_file = st.clone();
+                let s_json_in = st.clone();
+                let s_png = st.clone();
                 vec![
-                    mrow("New", Some("Ctrl+N"), false, o.clone(), move || {
+                    mrow("Nowy dokument", Some("Ctrl+N"), false, o.clone(), move || {
                         s_new.new_document()
                     }),
                     msep(),
-                    mrow("Export JSON to clipboard", None, false, o.clone(), {
-                        let s = s_exp.clone();
-                        move || s.toast_warn("JSON export — not implemented yet")
+                    mrow_env(
+                        "Eksportuj JSON do schowka",
+                        None,
+                        o.clone(),
+                        move |env| s_json_in.export_json_clipboard(env),
+                    ),
+                    mrow("Zapisz JSON do pliku", None, false, o.clone(), move || {
+                        s_json_file.save_json_file()
                     }),
-                    mrow("Export selection as SVG", None, false, o.clone(), {
+                    mrow_env(
+                        "Importuj JSON ze schowka",
+                        None,
+                        o.clone(),
+                        move |env| s_exp.import_json_clipboard(env),
+                    ),
+                    msep(),
+                    mrow("Zapisz kod Svelte (.svelte)", None, false, o.clone(), move || {
+                        s_svelte.save_svelte_file()
+                    }),
+                    mrow("Eksportuj zaznaczenie jako SVG", None, false, o.clone(), {
                         let s = s_jpg.clone();
                         move || s.export_svg()
                     }),
-                    mrow("Export selection as PNG", None, false, o.clone(), {
-                        let s = s_exp.clone();
-                        move || s.toast_warn("PNG export — coming soon")
+                    mrow("Eksport PNG — wkrótce", None, false, o.clone(), {
+                        let s = s_png.clone();
+                        move || s.toast_warn("Eksport PNG — wkrótce")
                     }),
                 ]
             }
@@ -197,15 +216,15 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_a = st.clone();
                 vec![
                     mrow(
-                        "Keyboard Shortcuts",
+                        "Skróty klawiszowe",
                         Some("?"),
                         false,
                         o.clone(),
                         move || s_h.help_open.set(true),
                     ),
                     msep(),
-                    mrow("About Editor", None, false, o.clone(), move || {
-                        s_a.toast("Vision Design — Rust/Sequoia UI editor")
+                    mrow("O edytorze", None, false, o.clone(), move || {
+                        s_a.toast("Vision Design — edytor Rust/Sequoia UI, kod: Svelte")
                     }),
                 ]
             }
@@ -220,43 +239,43 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_lk = st.clone();
                 let s_vis = st.clone();
                 vec![
-                    mrow("Undo", Some("Ctrl+Z"), false, o.clone(), move || {
+                    mrow("Cofnij", Some("Ctrl+Z"), false, o.clone(), move || {
                         s_undo.undo()
                     }),
-                    mrow("Redo", Some("Ctrl+Shift+Z"), false, o.clone(), move || {
+                    mrow("Ponów", Some("Ctrl+Shift+Z"), false, o.clone(), move || {
                         s_redo.redo()
                     }),
                     msep(),
-                    mrow("Cut", Some("Ctrl+X"), false, o.clone(), {
+                    mrow("Wytnij", Some("Ctrl+X"), false, o.clone(), {
                         let s = s_cp.clone();
                         move || {
                             s.copy_selected();
                             s.delete_selected();
                         }
                     }),
-                    mrow("Copy", Some("Ctrl+C"), false, o.clone(), {
+                    mrow("Kopiuj", Some("Ctrl+C"), false, o.clone(), {
                         let s = s_cp.clone();
                         move || s.copy_selected()
                     }),
-                    mrow("Paste", Some("Ctrl+V"), false, o.clone(), {
+                    mrow("Wklej", Some("Ctrl+V"), false, o.clone(), {
                         let s = s_pst.clone();
                         move || s.paste()
                     }),
                     msep(),
-                    mrow("Duplicate", Some("Ctrl+D"), false, o.clone(), {
+                    mrow("Duplikuj", Some("Ctrl+D"), false, o.clone(), {
                         let s = s_dup.clone();
                         move || s.duplicate_selected()
                     }),
-                    mrow("Delete", Some("Del"), true, o.clone(), {
+                    mrow("Usuń", Some("Del"), true, o.clone(), {
                         let s = s_del.clone();
                         move || s.delete_selected()
                     }),
                     msep(),
-                    mrow("Lock / Unlock", None, false, o.clone(), {
+                    mrow("Zablokuj / odblokuj", None, false, o.clone(), {
                         let s = s_lk.clone();
                         move || s.toggle_lock()
                     }),
-                    mrow("Show / Hide", None, false, o.clone(), {
+                    mrow("Pokaż / ukryj", None, false, o.clone(), {
                         let s = s_vis.clone();
                         move || s.toggle_visibility()
                     }),
@@ -270,12 +289,17 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_fit = st.clone();
                 let s_gr = st.clone();
                 let s_gr2 = st.clone();
+                let s_code = st.clone();
                 vec![
-                    mrow("Zoom In", Some("Ctrl++"), false, o.clone(), move || {
+                    mrow("Kod Svelte", Some("Ctrl+E"), false, o.clone(), move || {
+                        s_code.open_code_tab()
+                    }),
+                    msep(),
+                    mrow("Przybliż", Some("Ctrl++"), false, o.clone(), move || {
                         let z = s_zi.zoom.get_untracked() * 1.25;
                         s_zi.zoom.set(z.clamp(0.1, 8.0));
                     }),
-                    mrow("Zoom Out", Some("Ctrl+-"), false, o.clone(), move || {
+                    mrow("Oddal", Some("Ctrl+-"), false, o.clone(), move || {
                         let z = s_zo.zoom.get_untracked() / 1.25;
                         s_zo.zoom.set(z.clamp(0.1, 8.0));
                     }),
@@ -284,17 +308,17 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                     }),
                     msep(),
                     mrow(
-                        "Zoom to fit",
+                        "Dopasuj do okna",
                         Some("Shift+1"),
                         false,
                         o.clone(),
                         move || s_fit.zoom_to_fit(),
                     ),
-                    mrow("Toggle Grid", None, false, o.clone(), move || {
+                    mrow("Przełącz siatkę", None, false, o.clone(), move || {
                         s_gr.toggle_grid()
                     }),
-                    mrow("Rulers", None, false, o.clone(), move || {
-                        s_gr2.toast_warn("Rulers — coming soon")
+                    mrow("Linijki — wkrótce", None, false, o.clone(), move || {
+                        s_gr2.toast_warn("Linijki — wkrótce")
                     }),
                 ]
             }
@@ -306,51 +330,54 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_bb = st.clone();
                 let s_lay = st.clone();
                 vec![
-                    mrow("Bring to Front", Some("]"), false, o.clone(), move || {
+                    mrow("Na wierzch", Some("]"), false, o.clone(), move || {
                         s_ff.bring_to_front()
                     }),
-                    mrow("Bring Forward", None, false, o.clone(), move || {
+                    mrow("Wyżej", None, false, o.clone(), move || {
                         s_fr.bring_forward()
                     }),
-                    mrow("Send Backward", None, false, o.clone(), move || {
+                    mrow("Niżej", None, false, o.clone(), move || {
                         s_bk.send_backward()
                     }),
-                    mrow("Send to Back", Some("["), false, o.clone(), move || {
+                    mrow("Na spód", Some("["), false, o.clone(), move || {
                         s_bb.send_to_back()
                     }),
                     msep(),
-                    mrow("Auto layout", None, false, o.clone(), {
+                    mrow("Auto layout (H → V → G)", None, false, o.clone(), {
                         let s = s_lay.clone();
-                        move || s.toast_warn("Auto layout — coming soon")
+                        move || s.auto_layout_selection()
                     }),
                 ]
             }
             // ---------------- WINDOW ----------------
             5 => {
                 let s_v = st.clone();
-                vec![mrow(
-                    "Variables Library",
-                    None,
-                    false,
-                    o.clone(),
-                    move || s_v.toast_warn("Variables — coming soon"),
-                )]
+                let s_code = st.clone();
+                vec![
+                    mrow("Biblioteka zmiennych", None, false, o.clone(), move || {
+                        s_v.toast_warn("Biblioteka zmiennych — otwórz Node Graph z paska górnego")
+                    }),
+                    msep(),
+                    mrow("Kod Svelte", Some("Ctrl+E"), false, o.clone(), move || {
+                        s_code.open_code_tab()
+                    }),
+                ]
             }
-            // ---------------- HELP ----------------
+            // ---------------- HELP (fallback) ----------------
             _ => {
                 let s_h = st.clone();
                 let s_a = st.clone();
                 vec![
                     mrow(
-                        "Keyboard Shortcuts",
+                        "Skróty klawiszowe",
                         Some("?"),
                         false,
                         o.clone(),
-                        move || s_h.toast_warn("Help — coming soon"),
+                        move || s_h.help_open.set(true),
                     ),
                     msep(),
-                    mrow("About Editor", None, false, o.clone(), move || {
-                        s_a.toast("Vision Design — Rust/Sequoia UI editor")
+                    mrow("O edytorze", None, false, o.clone(), move || {
+                        s_a.toast("Vision Design — edytor Rust/Sequoia UI, kod: Svelte")
                     }),
                 ]
             }

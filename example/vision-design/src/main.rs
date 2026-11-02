@@ -4,9 +4,11 @@
 
 mod app;
 mod canvas;
+mod codegen;
 mod components;
 mod core;
 mod document;
+mod model;
 mod node_graph;
 mod overlays;
 mod panels;
@@ -29,6 +31,7 @@ fn main() {
 
     app::shortcuts::install(app, &state)
         .root(app::root(state))
+        .backend(sequoia_ui::render::GpuBackend::Dx12)
         .run()
         .expect("failed to start");
 }

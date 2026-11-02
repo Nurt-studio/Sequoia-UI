@@ -1,5 +1,4 @@
 use sequoia_ui::prelude::*;
-
 use crate::theme::colors;
 
 #[derive(Clone)]
@@ -14,35 +13,37 @@ impl View for Section {
         let open_now = self.open.get();
         let open_cb = self.open.clone();
         let chev = if open_now { "▾" } else { "▸" };
+
         Column::new()
             .border_bottom(1.0, colors::active().stroke_soft)
-            .padding(Edges::xy(0.0, 4.0))
             .child(
                 Container::new()
                     .fill_width()
-                    .padding(Edges::xy(12.0, 6.0))
+                    .padding(Edges::xy(12.0, 8.0))
                     .on_click(move || open_cb.update(|b| *b = !*b))
+                    .hover(Color::hexa(0xFFFFFF08))
                     .child(
                         Row::new()
-                            .gap(8.0)
+                            .gap(6.0)
                             .align_items(Align::Center)
                             .child(
                                 Text::new(chev)
-                                    .size(14.0)
+                                    .size(10.0)
                                     .color(colors::active().icon_inactive),
                             )
                             .child(
                                 Text::new(self.title)
-                                    .size(13.0)
+                                    .size(11.0)
                                     .semibold()
-                                    .color(Color::hex(0xC9C9CD)),
+                                    .font("Inter")
+                                    .color(Color::hex(0xA8A8AC)),
                             ),
                     ),
             )
             .child(when(
                 self.open.clone(),
                 Container::new()
-                    .padding(Edges::xy(12.0, 4.0))
+                    .padding(Edges::xy(12.0, 10.0))
                     .child(self.body.clone()),
             ))
     }
@@ -53,11 +54,5 @@ pub(super) fn section(
     open: Signal<bool>,
     body: impl View + 'static,
 ) -> AnyView {
-    AnyView::new(Section {
-        title,
-        open,
-        body: AnyView::new(body),
-    })
+    AnyView::new(Section { title, open, body: AnyView::new(body) })
 }
-
-// ---------------------------- alignment ----------------------------

@@ -41,7 +41,6 @@ pub(crate) fn number_field(
                 .max(max)
                 .precision(precision)
                 .trim_zeros(true)
-                .align(Align::Center)
                 .width(Length::Fill(1.0))
                 .height(Length::Fill(1.0)),
         )

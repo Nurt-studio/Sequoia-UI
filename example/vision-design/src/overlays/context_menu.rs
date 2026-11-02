@@ -1,6 +1,6 @@
 use sequoia_ui::prelude::*;
 
-use crate::components::menu::{menu_row, menu_sep};
+use crate::components::menu::{menu_row as mrow, menu_sep as msep};
 
 use crate::state::EditorState;
 use crate::theme::colors;
@@ -27,49 +27,54 @@ impl View for ContextMenuView {
         let st_bb = st.clone();
         let st_lk = st.clone();
         let st_vis = st.clone();
+        let st_al = st.clone();
 
         let px = pos_x.get();
         let py = pos_y.get();
 
         let rows: Vec<AnyView> = vec![
-            menu_row(
-                "Duplicate",
+            mrow(
+                "Duplikuj",
                 Some("Ctrl+D"),
                 false,
                 open.clone(),
                 move || st_dup.duplicate_selected(),
             ),
-            menu_row("Copy", Some("Ctrl+C"), false, open.clone(), move || {
+            mrow("Kopiuj", Some("Ctrl+C"), false, open.clone(), move || {
                 st_cp.copy_selected()
             }),
-            menu_row("Paste", Some("Ctrl+V"), false, open.clone(), move || {
+            mrow("Wklej", Some("Ctrl+V"), false, open.clone(), move || {
                 st_pst.paste()
             }),
-            menu_row("Delete", Some("Del"), true, open.clone(), move || {
+            mrow("Usuń", Some("Del"), true, open.clone(), move || {
                 st_del.delete_selected()
             }),
-            AnyView::new(menu_sep()),
-            menu_row(
-                "Bring to Front",
+            AnyView::new(msep()),
+            mrow(
+                "Na wierzch",
                 Some("]"),
                 false,
                 open.clone(),
                 move || st_ff.bring_to_front(),
             ),
-            menu_row("Bring Forward", None, false, open.clone(), move || {
+            mrow("Wyżej", None, false, open.clone(), move || {
                 st_fr.bring_forward()
             }),
-            menu_row("Send Backward", None, false, open.clone(), move || {
+            mrow("Niżej", None, false, open.clone(), move || {
                 st_bk.send_backward()
             }),
-            menu_row("Send to Back", Some("["), false, open.clone(), move || {
+            mrow("Na spód", Some("["), false, open.clone(), move || {
                 st_bb.send_to_back()
             }),
-            AnyView::new(menu_sep()),
-            menu_row("Lock / Unlock", None, false, open.clone(), move || {
+            AnyView::new(msep()),
+            mrow("Auto layout", None, false, open.clone(), move || {
+                st_al.auto_layout_selection()
+            }),
+            AnyView::new(msep()),
+            mrow("Zablokuj / odblokuj", None, false, open.clone(), move || {
                 st_lk.toggle_lock()
             }),
-            menu_row("Show / Hide", None, false, open.clone(), move || {
+            mrow("Pokaż / ukryj", None, false, open.clone(), move || {
                 st_vis.toggle_visibility()
             }),
         ];
