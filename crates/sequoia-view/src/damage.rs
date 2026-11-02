@@ -87,7 +87,7 @@ impl DamageTracker {
     // Markers (called during a frame, before paint)
     // ──────────────────────────────────────────────────────────
 
-    /// Zaznacz konkretny obszar (window coords) jako brudny.
+    /// Marks a specific area (window coords) as dirty.
     pub fn mark_rect(&mut self, rect: Rect) {
         if rect.is_empty() {
             return;
@@ -126,7 +126,7 @@ impl DamageTracker {
         self.flags |= Dirty::LAYOUT;
     }
 
-    /// Surowy mark (np. `Dirty::OVERLAY`, `Dirty::CANVAS`).
+    /// Raw mark (e.g. `Dirty::OVERLAY`, `Dirty::CANVAS`).
     pub fn mark(&mut self, flags: Dirty) {
         self.flags |= flags;
     }
