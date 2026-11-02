@@ -42,8 +42,8 @@ pub use window::{WindowSettings, WindowSpec, Windows};
 pub use sequoia_assets::AssetRegistry as Assets;
 use sequoia_render::FrameSkip;
 pub use sequoia_render::{
-    GpuBackend, PowerPreference as GpuPowerPreference, PresentMode as GpuPresentMode, Region,
-    WgpuFrame, WgpuRenderer, WgpuSurface, wgpu,
+    GpuBackend, MemoryBudget, PowerPreference as GpuPowerPreference, PresentMode as GpuPresentMode,
+    QualityLevel, Region, SharedGpu, WgpuFrame, WgpuRenderer, WgpuSurface, wgpu,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
@@ -573,6 +573,7 @@ impl App {
             executor,
             initial,
             live: HashMap::new(),
+            shared_gpu: None,
             last_input: None,
             id_map: HashMap::new(),
             error: None,
@@ -1133,6 +1134,9 @@ struct PlatformApp {
 
     live: HashMap<WinitWindowId, WindowState>,
 
+    /// Device shared by every window; keeps image uploads from being repeated.
+    shared_gpu: Option<SharedGpu>,
+
     /// Last window that received input — the target for device events
     /// that do not carry a window identifier themselves.
     last_input: Option<WinitWindowId>,
@@ -1239,12 +1243,69 @@ impl PlatformApp {
         if let Some(format) = s.surface_format {
             options = options.surface_format(format);
         }
-        let mut gpu =
-            GpuRenderer::new_with_options(window.clone(), size.width, size.height, options)
-                .map_err(|e| {
-                    AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
-                })?;
+        let mut new_shared = None;
+        let mut gpu = if let Some(shared) = self
+            .shared_gpu
+            .as_ref()
+            .filter(|shared| shared.supports(self.backend))
+        {
+            match shared.renderer(window.clone(), size.width, size.height, options) {
+                Ok(gpu) => gpu,
+                Err(e) => {
+                    log::warn!(
+                        "sequoia-platform: window {id} cannot join the shared GPU ({e}) - using a private device"
+                    );
+                    GpuRenderer::new_with_options(window.clone(), size.width, size.height, options)
+                        .map_err(|e| {
+                            AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
+                        })?
+                }
+            }
+        } else {
+            match SharedGpu::new(window.clone(), options) {
+                Ok(shared) => {
+                    match shared.renderer(window.clone(), size.width, size.height, options) {
+                        Ok(gpu) => {
+                            new_shared = Some(shared);
+                            gpu
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "sequoia-platform: shared GPU cannot render window {id} ({e}) - using a private device"
+                            );
+                            GpuRenderer::new_with_options(
+                                window.clone(),
+                                size.width,
+                                size.height,
+                                options,
+                            )
+                            .map_err(|e| {
+                                AppError::Gpu(format!(
+                                    "backend {} ({id}): {e}",
+                                    self.backend.name()
+                                ))
+                            })?
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::info!(
+                        "sequoia-platform: no shared GPU for window {id} ({e}) - using a private device"
+                    );
+                    GpuRenderer::new_with_options(window.clone(), size.width, size.height, options)
+                        .map_err(|e| {
+                            AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
+                        })?
+                }
+            }
+        };
+        if let Some(shared) = new_shared {
+            self.shared_gpu = Some(shared);
+        }
         gpu.set_clear_color(window_clear_color(self.theme, s.transparent));
+        if let Some(budget) = s.memory_budget {
+            gpu.set_memory_budget(budget);
+        }
         for (name, wgsl) in &self.shaders {
             if let Err(e) = gpu.register_shader(name, wgsl) {
                 log::error!(
@@ -1334,6 +1395,9 @@ impl PlatformApp {
         forget_frame_stats(wid);
         log::debug!("sequoia-platform: closed window {id}");
         if self.windows.count() == 0 {
+            // The last window is gone; drop the shared device explicitly so
+            // its textures and buffers are released before the loop exits.
+            self.shared_gpu = None;
             event_loop.exit();
         }
     }
@@ -1863,9 +1927,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             return;
         };
         // Raw input carries no cursor position - we use the last known one.
-        let d = ws
-            .wheel_seen
-            .device(wheel_points(delta, ws.scale), now);
+        let d = ws.wheel_seen.device(wheel_points(delta, ws.scale), now);
         if d.x == 0.0 && d.y == 0.0 {
             return;
         }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use sequoia_core::WindowId;
-use sequoia_render::{PowerPreference, PresentMode};
+use sequoia_render::{MemoryBudget, PowerPreference, PresentMode};
 use sequoia_view::{AnyView, View};
 
 #[derive(Clone, Debug)]
@@ -23,6 +23,7 @@ pub struct WindowSettings {
     pub(crate) present_mode: PresentMode,
     pub(crate) power_preference: PowerPreference,
     pub(crate) surface_format: Option<sequoia_render::wgpu::TextureFormat>,
+    pub(crate) memory_budget: Option<MemoryBudget>,
     pub(crate) fps_limit: Option<u32>,
     pub(crate) show_fps: bool,
     pub(crate) scale_override: Option<f64>,
@@ -48,6 +49,7 @@ impl Default for WindowSettings {
             present_mode: PresentMode::Vsync,
             power_preference: PowerPreference::HighPerformance,
             surface_format: None,
+            memory_budget: None,
             fps_limit: None,
             show_fps: false,
             scale_override: None,
@@ -201,6 +203,16 @@ impl WindowSpec {
     /// back to the default sRGB format with a warning.
     pub fn surface_format(mut self, format: sequoia_render::wgpu::TextureFormat) -> Self {
         self.settings.surface_format = Some(format);
+        self
+    }
+
+    /// Sets the GPU resource budget for this window's renderer.
+    ///
+    /// The budget bounds image textures, the glyph atlas, cached surfaces, and
+    /// instance buffers, and triggers automatic quality degradation when the
+    /// total is exceeded. A total of zero disables enforcement.
+    pub fn memory_budget(mut self, budget: MemoryBudget) -> Self {
+        self.settings.memory_budget = Some(budget);
         self
     }
 
