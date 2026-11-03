@@ -10,7 +10,7 @@ use sequoia_input::{
 use sequoia_layout::{LayoutCtx, LayoutStyle};
 use sequoia_reactive::Signal;
 use sequoia_style::{TextAreaStyle, Theme, VisualState};
-use sequoia_view::{AnyView, EventCtx, FontWeight, PaintCtx, Unit, View};
+use sequoia_view::{AnyView, EventCtx, FontWeight, PaintCtx, Unit, View, WrapMode};
 
 use crate::buffer::{BufferEngine, StyledDoc};
 use crate::clipboard::SharedClipboard;
@@ -136,6 +136,10 @@ pub struct TextArea {
     indent: String,
     auto_indent: bool,
     editable: bool,
+    soft_wrap: bool,
+    wrap_mode: WrapMode,
+    disabled: bool,
+    error: bool,
     accept_tab: bool,
     appearance: Option<TextAreaStyle>,
     style: LayoutStyle,
@@ -167,7 +171,10 @@ struct AreaState {
     viewport: Size,
 
     content: Size,
+    layout: Option<Rc<VisualLayout>>,
     preedit: String,
+    preedit_cursor: Option<(usize, usize)>,
+    caret_rect: Option<Rect>,
     was_focused: bool,
     session_text: Option<String>,
 
@@ -191,7 +198,10 @@ impl Default for AreaState {
             scroll: Vec2::default(),
             viewport: Size::default(),
             content: Size::default(),
+            layout: None,
             preedit: String::new(),
+            preedit_cursor: None,
+            caret_rect: None,
             was_focused: false,
             session_text: None,
             escalate: 0,
@@ -291,6 +301,7 @@ fn line_starts(chars: &[char]) -> Vec<usize> {
     starts
 }
 
+#[cfg(test)]
 fn line_len(chars: &[char], starts: &[usize], line: usize) -> usize {
     let start = starts.get(line).copied().unwrap_or(chars.len());
     match starts.get(line + 1) {
@@ -306,6 +317,7 @@ fn line_col_of(chars: &[char], starts: &[usize], caret: usize) -> (usize, usize)
     (line, caret - starts[line])
 }
 
+#[cfg(test)]
 fn caret_of_line_col(chars: &[char], starts: &[usize], line: usize, col: usize) -> usize {
     let line = line.min(starts.len().saturating_sub(1));
     starts[line] + col.min(line_len(chars, starts, line))
@@ -313,6 +325,183 @@ fn caret_of_line_col(chars: &[char], starts: &[usize], line: usize, col: usize) 
 
 fn split_lines(text: &str) -> Vec<&str> {
     text.split('\n').collect()
+}
+
+/// One visual line: a slice of a hard line after soft wrapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowSpan {
+    line: usize,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Debug)]
+struct VisualLayout {
+    text: String,
+    width: f32,
+    size: f32,
+    weight: FontWeight,
+    wrap: bool,
+    mode: WrapMode,
+    lines: Vec<String>,
+    line_starts: Vec<usize>,
+    rows: Vec<RowSpan>,
+}
+
+trait LineMeasure {
+    fn measure_positions(&mut self, text: &str, size: f32, weight: FontWeight) -> Vec<f32>;
+}
+
+impl LineMeasure for EventCtx<'_> {
+    fn measure_positions(&mut self, text: &str, size: f32, weight: FontWeight) -> Vec<f32> {
+        self.caret_positions(text, size, weight)
+    }
+}
+
+impl LineMeasure for PaintCtx<'_> {
+    fn measure_positions(&mut self, text: &str, size: f32, weight: FontWeight) -> Vec<f32> {
+        self.caret_positions(text, size, weight)
+    }
+}
+
+fn build_layout<M: LineMeasure>(
+    m: &mut M,
+    text: String,
+    width: f32,
+    size: f32,
+    weight: FontWeight,
+    wrap: bool,
+    mode: WrapMode,
+) -> VisualLayout {
+    let lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
+    let mut line_starts = Vec::with_capacity(lines.len());
+    let mut acc = 0usize;
+    for line in &lines {
+        line_starts.push(acc);
+        acc += line.chars().count() + 1;
+    }
+
+    let mut rows: Vec<RowSpan> = Vec::with_capacity(lines.len());
+    for (li, line) in lines.iter().enumerate() {
+        let line_start = line_starts[li];
+        let lchars: Vec<char> = line.chars().collect();
+        let count = lchars.len();
+        if !wrap || width <= 0.0 || count == 0 {
+            rows.push(RowSpan {
+                line: li,
+                start: line_start,
+                end: line_start + count,
+            });
+            continue;
+        }
+        let pos = m.measure_positions(line, size, weight);
+        let full = pos.get(count).copied().unwrap_or(0.0);
+        let x_at = |i: usize| pos.get(i).copied().unwrap_or(full);
+        if full <= width {
+            rows.push(RowSpan {
+                line: li,
+                start: line_start,
+                end: line_start + count,
+            });
+            continue;
+        }
+
+        let mut row_start = 0usize;
+        let mut last_break: Option<usize> = None;
+        let mut i = 0usize;
+        while i < count {
+            let row_w = x_at(i + 1) - x_at(row_start);
+            if row_w > width && i > row_start {
+                let break_at = match last_break {
+                    Some(b) if matches!(mode, WrapMode::Word) && b > row_start => b,
+                    _ => i,
+                };
+                rows.push(RowSpan {
+                    line: li,
+                    start: line_start + row_start,
+                    end: line_start + break_at,
+                });
+                row_start = if break_at == i {
+                    i
+                } else {
+                    (break_at + 1).min(count)
+                };
+                last_break = None;
+                i = row_start;
+                continue;
+            }
+            if lchars[i] == ' ' {
+                last_break = Some(i);
+            }
+            i += 1;
+        }
+        if row_start < count {
+            rows.push(RowSpan {
+                line: li,
+                start: line_start + row_start,
+                end: line_start + count,
+            });
+        }
+    }
+    if rows.is_empty() {
+        rows.push(RowSpan {
+            line: 0,
+            start: 0,
+            end: 0,
+        });
+    }
+
+    VisualLayout {
+        text,
+        width,
+        size,
+        weight,
+        wrap,
+        mode,
+        lines,
+        line_starts,
+        rows,
+    }
+}
+
+impl VisualLayout {
+    fn row_text(&self, row: &RowSpan) -> String {
+        let base = self.line_starts[row.line];
+        self.lines[row.line]
+            .chars()
+            .skip(row.start - base)
+            .take(row.end - row.start)
+            .collect()
+    }
+
+    fn row_of(&self, caret: usize) -> usize {
+        let mut last = 0usize;
+        for (i, row) in self.rows.iter().enumerate() {
+            last = i;
+            if caret <= row.end {
+                return i;
+            }
+        }
+        last
+    }
+}
+
+fn row_prefix_x<M: LineMeasure>(
+    m: &mut M,
+    layout: &VisualLayout,
+    row: &RowSpan,
+    col: usize,
+    size: f32,
+    weight: FontWeight,
+) -> f32 {
+    let base = row.start - layout.line_starts[row.line];
+    let pos = m.measure_positions(&layout.lines[row.line], size, weight);
+    let x0 = pos.get(base).copied().unwrap_or(0.0);
+    let x1 = pos
+        .get(base + col.min(row.end - row.start))
+        .copied()
+        .unwrap_or(x0);
+    x1 - x0
 }
 
 fn leading_indent_len(line: &str) -> usize {
@@ -370,6 +559,10 @@ impl TextArea {
             indent: DEFAULT_INDENT.to_owned(),
             auto_indent: true,
             editable: true,
+            soft_wrap: false,
+            wrap_mode: WrapMode::Word,
+            disabled: false,
+            error: false,
             accept_tab: true,
             appearance: None,
             style: LayoutStyle {
@@ -520,6 +713,44 @@ impl TextArea {
         self
     }
 
+    /// Keeps the area focusable and selectable while blocking edits.
+    pub fn readonly(mut self, readonly: bool) -> Self {
+        self.editable = !readonly;
+        self
+    }
+
+    /// Soft-wraps long lines at the current width.
+    pub fn soft_wrap(mut self, on: bool) -> Self {
+        self.soft_wrap = on;
+        self
+    }
+
+    pub fn wrap_mode(mut self, mode: WrapMode) -> Self {
+        self.wrap_mode = mode;
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Draws the error border. The message itself belongs to the form field.
+    pub fn error(mut self, error: bool) -> Self {
+        self.error = error;
+        self
+    }
+
+    /// Grows the area with its content instead of filling the parent.
+    pub fn auto_size(mut self, auto: bool) -> Self {
+        self.style.height = if auto {
+            Length::Fit
+        } else {
+            Length::Fill(1.0)
+        };
+        self
+    }
+
     pub fn accept_tab(mut self, on: bool) -> Self {
         self.accept_tab = on;
         self
@@ -644,6 +875,45 @@ impl TextArea {
 
     fn chars(&self) -> Vec<char> {
         Self::chars_via(&self.source)
+    }
+
+    fn layout_for<M: LineMeasure>(
+        &self,
+        m: &mut M,
+        width: f32,
+        size: f32,
+        weight: FontWeight,
+    ) -> Rc<VisualLayout> {
+        let text = self.source.get_text();
+        if let Some(layout) = self.with_state(|s| s.layout.clone())
+            && layout.text == text
+            && (layout.width - width).abs() < 0.5
+            && (layout.size - size).abs() < 0.01
+            && layout.weight == weight
+            && layout.wrap == self.soft_wrap
+            && layout.mode == self.wrap_mode
+        {
+            return layout;
+        }
+        let layout = Rc::new(build_layout(
+            m,
+            text,
+            width.max(0.0),
+            size,
+            weight,
+            self.soft_wrap,
+            self.wrap_mode,
+        ));
+        self.with_state(|s| s.layout = Some(layout.clone()));
+        layout
+    }
+
+    fn event_layout(&self, ctx: &mut EventCtx) -> Rc<VisualLayout> {
+        let theme = ctx.environment.get::<Theme>().unwrap_or_else(Theme::dark);
+        let size = self.resolved_font_size(&theme);
+        let weight = self.font_weight();
+        let width = (ctx.rect.size.width - self.pad_x * 2.0).max(0.0);
+        self.layout_for(ctx, width, size, weight)
     }
 
     fn starts(&self, chars: &[char]) -> Vec<usize> {
@@ -1521,7 +1791,8 @@ impl TextArea {
         self.bump();
     }
 
-    fn move_home(&self, extend: bool, doc: bool) {
+    fn move_home(&self, extend: bool, doc: bool, ctx: &mut EventCtx) {
+        let layout = self.event_layout(ctx);
         let source = self.source.clone();
         self.with_state(|s| {
             source.ensure(&mut s.engine);
@@ -1530,9 +1801,8 @@ impl TextArea {
                 let next = if doc {
                     0
                 } else {
-                    let caret_b = s.engine.to_bytes(c.offset.min(len));
-                    let home_b = sequoia_buffer::line_home(s.engine.buffer(), caret_b);
-                    s.engine.to_chars(home_b)
+                    let ri = layout.row_of(c.offset.min(len));
+                    layout.rows.get(ri).map(|r| r.start).unwrap_or(0)
                 };
                 c.move_to(next, extend);
             }
@@ -1542,7 +1812,8 @@ impl TextArea {
         self.bump();
     }
 
-    fn move_end(&self, extend: bool, doc: bool) {
+    fn move_end(&self, extend: bool, doc: bool, ctx: &mut EventCtx) {
+        let layout = self.event_layout(ctx);
         let source = self.source.clone();
         self.with_state(|s| {
             source.ensure(&mut s.engine);
@@ -1551,9 +1822,8 @@ impl TextArea {
                 let next = if doc {
                     total
                 } else {
-                    let caret_b = s.engine.to_bytes(c.offset.min(total));
-                    let end_b = sequoia_buffer::line_end(s.engine.buffer(), caret_b);
-                    s.engine.to_chars(end_b)
+                    let ri = layout.row_of(c.offset.min(total));
+                    layout.rows.get(ri).map(|r| r.end).unwrap_or(total)
                 };
                 c.move_to(next, extend);
             }
@@ -1570,41 +1840,92 @@ impl TextArea {
         ((cy / line_h).floor() as isize).clamp(0, rows.saturating_sub(1) as isize) as usize
     }
 
-    fn move_page(&self, dir: isize, extend: bool, viewport_h: f32, line_h: f32) {
-        if viewport_h <= 0.0 || line_h <= 0.0 {
-            for _ in 0..3 {
-                self.step_vertical(dir, extend);
+    fn move_visual(&self, dir: isize, steps: usize, extend: bool, ctx: &mut EventCtx) {
+        let layout = self.event_layout(ctx);
+        let theme = ctx.environment.get::<Theme>().unwrap_or_else(Theme::dark);
+        let size = self.resolved_font_size(&theme);
+        let weight = self.font_weight();
+        let total = layout.rows.last().map(|r| r.end).unwrap_or(0);
+        let mains: Vec<usize> = self.with_state(|s| {
+            s.carets
+                .iter()
+                .map(|c| c.offset.min(total))
+                .collect()
+        });
+        let main_goal = self.with_state(|s| s.goal_x);
+        let mut main_goal_next = main_goal;
+        let mut nexts: Vec<Option<usize>> = Vec::with_capacity(mains.len());
+        let last = layout.rows.len().saturating_sub(1);
+        for (idx, caret) in mains.iter().enumerate() {
+            let ri = layout.row_of(*caret);
+            let target = if dir < 0 {
+                ri.saturating_sub(steps)
+            } else {
+                (ri + steps).min(last)
+            };
+            if target == ri || layout.rows.is_empty() {
+                nexts.push(None);
+                continue;
             }
-            self.bump();
+            let current = layout.rows[ri];
+            let col = caret
+                .saturating_sub(current.start)
+                .min(current.end - current.start);
+            let caret_x = row_prefix_x(ctx, &layout, &current, col, size, weight);
+            let goal = if idx == 0 {
+                match main_goal {
+                    Some(g) => g,
+                    None => {
+                        main_goal_next = Some(caret_x);
+                        caret_x
+                    }
+                }
+            } else {
+                caret_x
+            };
+            let target_row = layout.rows[target];
+            let text = layout.row_text(&target_row);
+            let target_col = ctx
+                .char_index_from_x(&text, size, weight, goal)
+                .min(target_row.end - target_row.start);
+            nexts.push(Some(target_row.start + target_col));
+        }
+        if nexts.iter().all(|n| n.is_none()) {
+            if mains.len() == 1 && !extend {
+                self.with_state(|s| s.goal_x = None);
+            }
             return;
         }
+        self.with_state(|s| {
+            for (c, next) in s.carets.iter_mut().zip(nexts.iter()) {
+                if let Some(next) = next {
+                    c.move_to(*next, extend);
+                }
+            }
+            s.goal_x = main_goal_next;
+            Self::reset_escalate(s);
+        });
+    }
 
-        let step = ((viewport_h / line_h).floor() as usize).max(1);
-        for _ in 0..step {
-            self.step_vertical(dir, extend);
-        }
+    fn move_page(
+        &self,
+        dir: isize,
+        extend: bool,
+        viewport_h: f32,
+        line_h: f32,
+        ctx: &mut EventCtx,
+    ) {
+        let step = if viewport_h <= 0.0 || line_h <= 0.0 {
+            1
+        } else {
+            ((viewport_h / line_h).floor() as usize).max(1)
+        };
+        self.move_visual(dir, step, extend, ctx);
         self.with_state(|s| {
             let max_y = (s.content.height + self.pad_y * 2.0 - viewport_h).max(0.0);
             s.scroll.y = (s.scroll.y + dir as f32 * viewport_h).clamp(0.0, max_y);
         });
         self.bump();
-    }
-
-    fn step_vertical(&self, dir: isize, extend: bool) {
-        let source = self.source.clone();
-        self.with_state(|s| {
-            source.ensure(&mut s.engine);
-            let len = s.engine.len_chars();
-            for c in s.carets.iter_mut() {
-                let caret_b = s.engine.to_bytes(c.offset.min(len));
-                let (next_b, _) = sequoia_buffer::move_lines(s.engine.buffer(), caret_b, dir, None);
-                if next_b == caret_b {
-                    continue;
-                }
-                c.move_to(s.engine.to_chars(next_b), extend);
-            }
-            Self::reset_escalate(s);
-        });
     }
 
     fn on_enter(&self) {
@@ -2732,6 +3053,7 @@ impl TextArea {
 
     fn on_key(&self, key: &KeyEvent, ctx: &mut EventCtx) {
         let extend = key.modifiers.contains(Modifiers::SHIFT);
+        let composing = self.with_state(|s| !s.preedit.is_empty());
         let ctrl =
             key.modifiers.contains(Modifiers::CONTROL) || key.modifiers.contains(Modifiers::SUPER);
         let alt = key.modifiers.contains(Modifiers::ALT);
@@ -2755,7 +3077,7 @@ impl TextArea {
                 ctx.handled();
             }
             Key::ARROW_LEFT => {
-                if ctrl && !alt {
+                if ctrl || alt {
                     self.move_word(-1, extend);
                 } else {
                     self.move_caret(-1, extend);
@@ -2764,7 +3086,7 @@ impl TextArea {
                 ctx.handled();
             }
             Key::ARROW_RIGHT => {
-                if ctrl && !alt {
+                if ctrl || alt {
                     self.move_word(1, extend);
                 } else {
                     self.move_caret(1, extend);
@@ -2783,24 +3105,24 @@ impl TextArea {
                 ctx.handled();
             }
             Key::HOME => {
-                self.move_home(extend, ctrl);
+                self.move_home(extend, ctrl, ctx);
                 self.ensure_caret_visible_ctx(ctx);
                 ctx.handled();
             }
             Key::END => {
-                self.move_end(extend, ctrl);
+                self.move_end(extend, ctrl, ctx);
                 self.ensure_caret_visible_ctx(ctx);
                 ctx.handled();
             }
             Key::PAGE_UP => {
                 let vp = self.with_state(|s| s.viewport);
-                self.move_page(-1, extend, vp.height, self.line_height());
+                self.move_page(-1, extend, vp.height, self.line_height(), ctx);
                 self.ensure_caret_visible_ctx(ctx);
                 ctx.handled();
             }
             Key::PAGE_DOWN => {
                 let vp = self.with_state(|s| s.viewport);
-                self.move_page(1, extend, vp.height, self.line_height());
+                self.move_page(1, extend, vp.height, self.line_height(), ctx);
                 self.ensure_caret_visible_ctx(ctx);
                 ctx.handled();
             }
@@ -2835,6 +3157,10 @@ impl TextArea {
                 ctx.handled();
             }
             Key::SPACE => {
+                if composing {
+                    ctx.handled();
+                    return;
+                }
                 if extend || ctrl || alt {
                     if extend && !ctrl && !alt {
                         self.move_caret(1, true);
@@ -2857,6 +3183,10 @@ impl TextArea {
                         ctx.handled();
                         return;
                     }
+                    if composing {
+                        ctx.handled();
+                        return;
+                    }
                     if self.editable {
                         if !self.try_auto_close(c) {
                             let mut s = String::new();
@@ -2874,73 +3204,7 @@ impl TextArea {
     }
 
     fn move_vertical_ctx(&self, dir: isize, extend: bool, ctx: &mut EventCtx) {
-        let chars = self.chars();
-        let starts = self.starts(&chars);
-
-        let mains: Vec<usize> =
-            self.with_state(|s| s.carets.iter().map(|c| c.offset.min(chars.len())).collect());
-        let rows = starts.len();
-        let theme = ctx.environment.get::<Theme>().unwrap_or_else(Theme::dark);
-        let size = self.resolved_font_size(&theme);
-        let weight = self.font_weight();
-        let text = self.source.get_text();
-        let lines = split_lines(&text);
-        let main_goal = self.with_state(|s| s.goal_x);
-        let mut main_goal_next = main_goal;
-        let mut nexts: Vec<Option<usize>> = Vec::with_capacity(mains.len());
-        for (idx, caret) in mains.iter().enumerate() {
-            let (line, col) = line_col_of(&chars, &starts, *caret);
-            let target = if dir < 0 {
-                line.saturating_sub(dir.unsigned_abs())
-            } else {
-                (line + dir as usize).min(rows.saturating_sub(1))
-            };
-            if target == line {
-                nexts.push(None);
-                continue;
-            }
-            let bounds_cur =
-                ctx.caret_positions(lines.get(line).copied().unwrap_or(""), size, weight);
-
-            let caret_goal = if idx == 0 {
-                if let Some(g) = main_goal {
-                    g
-                } else {
-                    let g = bounds_cur
-                        .get(col.min(bounds_cur.len().saturating_sub(1)))
-                        .copied()
-                        .unwrap_or(0.0);
-                    main_goal_next = Some(g);
-                    g
-                }
-            } else {
-                bounds_cur
-                    .get(col.min(bounds_cur.len().saturating_sub(1)))
-                    .copied()
-                    .unwrap_or(0.0)
-            };
-            let bounds_target =
-                ctx.caret_positions(lines.get(target).copied().unwrap_or(""), size, weight);
-            let target_col = closest_index(&bounds_target, caret_goal);
-            nexts.push(Some(
-                caret_of_line_col(&chars, &starts, target, target_col).min(chars.len()),
-            ));
-        }
-        if nexts.iter().all(|n| n.is_none()) {
-            if mains.len() == 1 && !extend {
-                self.with_state(|s| s.goal_x = None);
-            }
-            return;
-        }
-        self.with_state(|s| {
-            for (c, next) in s.carets.iter_mut().zip(nexts.iter()) {
-                if let Some(next) = next {
-                    c.move_to(*next, extend);
-                }
-            }
-            s.goal_x = main_goal_next;
-            Self::reset_escalate(s);
-        });
+        self.move_visual(dir, 1, extend, ctx);
         self.bump();
     }
 
@@ -2949,19 +3213,17 @@ impl TextArea {
         let size = self.resolved_font_size(&theme);
         let weight = self.font_weight();
         let line_h = self.resolved_line_height(&theme);
-        let text = self.source.get_text();
-        let chars: Vec<char> = text.chars().collect();
-        let starts = line_starts(&chars);
-        let caret = self.caret().min(chars.len());
-        let (line, col) = line_col_of(&chars, &starts, caret);
-        let lines = split_lines(&text);
-        let line_str = lines.get(line).copied().unwrap_or("");
-        let bounds = ctx.caret_positions(line_str, size, weight);
-        let x = bounds
-            .get(col.min(bounds.len().saturating_sub(1)))
-            .copied()
-            .unwrap_or(0.0);
-        self.ensure_visible(x, line, line_h);
+        let layout = self.event_layout(ctx);
+        let caret = self.caret();
+        let ri = layout.row_of(caret);
+        let Some(row) = layout.rows.get(ri) else {
+            return;
+        };
+        let col = caret
+            .saturating_sub(row.start)
+            .min(row.end - row.start);
+        let x = row_prefix_x(ctx, &layout, row, col, size, weight);
+        self.ensure_visible(x, ri, line_h);
     }
 
     fn ensure_visible(&self, caret_x: f32, line: usize, line_h: f32) {
@@ -2971,6 +3233,9 @@ impl TextArea {
             }
             let before = s.scroll;
             apply_ensure_visible(s, self.pad_x, self.pad_y, caret_x, line, line_h);
+            if self.soft_wrap {
+                s.scroll.x = 0.0;
+            }
             s.scroll != before
         });
         if changed {
@@ -2983,6 +3248,9 @@ impl TextArea {
     }
 
     fn on_ime(&self, ime: &ImeEvent) {
+        if self.disabled {
+            return;
+        }
         if !self.editable {
             if ime == &ImeEvent::Disabled {
                 let had = self.with_state(|s| {
@@ -2998,18 +3266,25 @@ impl TextArea {
         }
         match ime {
             ImeEvent::Enabled => {}
-            ImeEvent::Preedit { value, .. } => {
-                self.with_state(|s| s.preedit = value.clone());
+            ImeEvent::Preedit { value, cursor } => {
+                self.with_state(|s| {
+                    s.preedit = value.clone();
+                    s.preedit_cursor = *cursor;
+                });
                 self.bump();
             }
             ImeEvent::Commit(value) => {
-                self.with_state(|s| s.preedit.clear());
+                self.with_state(|s| {
+                    s.preedit.clear();
+                    s.preedit_cursor = None;
+                });
                 self.insert_str(&sanitize_multiline(value));
             }
             ImeEvent::Disabled => {
                 let had = self.with_state(|s| {
                     let had = !s.preedit.is_empty();
                     s.preedit.clear();
+                    s.preedit_cursor = None;
                     had
                 });
                 if had {
@@ -3086,45 +3361,24 @@ impl TextArea {
         true
     }
 
-    fn hit_test_caret(&self, bounds: &[f32], x: f32) -> usize {
-        if bounds.is_empty() {
-            return 0;
-        }
-        if x >= bounds[bounds.len() - 1] {
-            return bounds.len() - 1;
-        }
-        if x <= 0.0 {
-            return 0;
-        }
-        closest_index(bounds, x)
-    }
-
-    fn caret_from_point(
+    fn caret_at_visual(
         &self,
-        lines: &[&str],
-        chars: &[char],
-        starts: &[usize],
-        line: usize,
-        bounds: &[f32],
+        ctx: &mut EventCtx,
+        layout: &VisualLayout,
+        row_idx: usize,
         cx: f32,
+        size: f32,
+        weight: FontWeight,
     ) -> usize {
-        let _ = lines;
-        let col = self.hit_test_caret(bounds, cx);
-        caret_of_line_col(chars, starts, line, col)
+        let Some(row) = layout.rows.get(row_idx) else {
+            return 0;
+        };
+        let text = layout.row_text(row);
+        let col = ctx
+            .char_index_from_x(&text, size, weight, cx)
+            .min(row.end - row.start);
+        row.start + col
     }
-}
-
-fn closest_index(bounds: &[f32], x: f32) -> usize {
-    let mut best = 0usize;
-    let mut best_d = f32::MAX;
-    for (i, &b) in bounds.iter().enumerate() {
-        let d = (b - x).abs();
-        if d < best_d {
-            best_d = d;
-            best = i;
-        }
-    }
-    best
 }
 
 fn clamp_scroll(
@@ -3186,15 +3440,38 @@ impl View for TextArea {
     }
 
     fn focusable(&self) -> bool {
-        true
+        !self.disabled
     }
 
     fn accepts_text_input(&self) -> bool {
-        true
+        !self.disabled
+    }
+
+    fn accessibility(&self) -> Option<sequoia_view::Accessible> {
+        let text = self.source.get_text();
+        let value: String = text.chars().take(4096).collect();
+        Some(
+            sequoia_view::Accessible::new(
+                sequoia_view::AccessibleRole::TextArea,
+                if self.placeholder.is_empty() {
+                    "pole tekstowe".to_string()
+                } else {
+                    self.placeholder.clone()
+                },
+            )
+            .value(value)
+            .caret(Some(self.caret()))
+            .selection(self.selection())
+            .disabled(self.disabled),
+        )
+    }
+
+    fn ime_caret_rect(&self) -> Option<Rect> {
+        self.with_state(|s| s.caret_rect)
     }
 
     fn accepts_tab(&self) -> bool {
-        self.accept_tab
+        self.accept_tab && !self.disabled
     }
 
     fn has_visual_state(&self) -> bool {
@@ -3227,7 +3504,11 @@ impl View for TextArea {
     }
 
     fn cursor_icon(&self, _state: VisualState) -> CursorIcon {
-        CursorIcon::Text
+        if self.disabled {
+            CursorIcon::Default
+        } else {
+            CursorIcon::Text
+        }
     }
 
     fn layout_style(&self) -> LayoutStyle {
@@ -3254,7 +3535,11 @@ impl View for TextArea {
                 w = w.max(ctx.text_width_weighted(line, size, weight));
             }
         }
-        let rows = lines.len().max(self.min_lines).max(1) as f32;
+        let mut rows = lines.len().max(self.min_lines).max(1);
+        if let Some(max) = self.max_lines {
+            rows = rows.min(max.max(1));
+        }
+        let rows = rows as f32;
         Some(Size::new(
             w + self.pad_x * 2.0,
             rows * line_h + self.pad_y * 2.0,
@@ -3262,6 +3547,9 @@ impl View for TextArea {
     }
 
     fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
+        if self.disabled {
+            return;
+        }
         if ctx.phase != EventPhase::Target {
             if let Event::Pointer(PointerEvent::Wheel {
                 delta, modifiers, ..
@@ -3284,17 +3572,12 @@ impl View for TextArea {
                 let size = self.resolved_font_size(&theme);
                 let weight = self.font_weight();
                 let line_h = self.resolved_line_height(&theme);
-                let text = self.source.get_text();
-                let chars: Vec<char> = text.chars().collect();
-                let starts = line_starts(&chars);
-                let lines = split_lines(&text);
+                let layout = self.event_layout(ctx);
                 let scroll = self.with_state(|s| s.scroll);
                 let cx = pos.x - ctx.rect.left() - self.pad_x + scroll.x;
                 let cy = pos.y - ctx.rect.top() - self.pad_y + scroll.y;
-                let line = Self::row_at_y(line_h, lines.len(), cy);
-                let bounds =
-                    ctx.caret_positions(lines.get(line).copied().unwrap_or(""), size, weight);
-                let caret = self.caret_from_point(&lines, &chars, &starts, line, &bounds, cx);
+                let ri = Self::row_at_y(line_h, layout.rows.len(), cy);
+                let caret = self.caret_at_visual(ctx, &layout, ri, cx, size, weight);
                 let extend = modifiers.contains(Modifiers::SHIFT);
                 let alt = modifiers.contains(Modifiers::ALT);
                 self.handle_click(caret, extend, alt, now_ms());
@@ -3311,17 +3594,12 @@ impl View for TextArea {
                     let size = self.resolved_font_size(&theme);
                     let weight = self.font_weight();
                     let line_h = self.resolved_line_height(&theme);
-                    let text = self.source.get_text();
-                    let chars: Vec<char> = text.chars().collect();
-                    let starts = line_starts(&chars);
-                    let lines = split_lines(&text);
+                    let layout = self.event_layout(ctx);
                     let scroll = self.with_state(|s| s.scroll);
                     let cx = pos.x - ctx.rect.left() - self.pad_x + scroll.x;
                     let cy = pos.y - ctx.rect.top() - self.pad_y + scroll.y;
-                    let line = Self::row_at_y(line_h, lines.len(), cy);
-                    let bounds =
-                        ctx.caret_positions(lines.get(line).copied().unwrap_or(""), size, weight);
-                    let caret = self.caret_from_point(&lines, &chars, &starts, line, &bounds, cx);
+                    let ri = Self::row_at_y(line_h, layout.rows.len(), cy);
+                    let caret = self.caret_at_visual(ctx, &layout, ri, cx, size, weight);
                     let alt_drag = self.with_state(|s| s.alt_drag);
                     match alt_drag {
                         Some(idx) => self.with_state(|s| {
@@ -3374,38 +3652,84 @@ impl View for TextArea {
         if line_h <= 0.0 {
             return;
         }
-        let text_color = self.resolved_text_color(&theme);
-        let placeholder_color = self.resolved_placeholder_color(&theme);
+        let text_color = if self.disabled {
+            theme.disabled
+        } else {
+            self.resolved_text_color(&theme)
+        };
+        let placeholder_color = if self.disabled {
+            theme.disabled
+        } else {
+            self.resolved_placeholder_color(&theme)
+        };
         let background = self.resolved_background(&theme);
         let radius = self.resolved_radius(&theme);
 
         self.with_state(|s| s.viewport = rect.size);
 
-        let text = self.source.get_text();
-        let chars: Vec<char> = text.chars().collect();
-        let starts = line_starts(&chars);
-        let lines = split_lines(&text);
-        let rows = lines.len();
-
-        let mut content_w: f32 = 0.0;
-        for line in &lines {
-            content_w = content_w.max(ctx.text_width_weighted(line, size, weight));
-        }
+        let width = (rect.size.width - self.pad_x * 2.0).max(0.0);
+        let layout = self.layout_for(ctx, width, size, weight);
+        let total_chars = layout
+            .line_starts
+            .last()
+            .copied()
+            .unwrap_or(0)
+            + layout.lines.last().map(|l| l.chars().count()).unwrap_or(0);
+        let rows = layout.rows.len();
+        let content_w = if self.soft_wrap {
+            width
+        } else {
+            layout
+                .lines
+                .iter()
+                .map(|line| ctx.text_width_weighted(line, size, weight))
+                .fold(0.0f32, f32::max)
+        };
         let content_h = rows as f32 * line_h;
 
-        let (caret, anchor, preedit) = self.with_state(|s| {
+        let (caret, anchor, preedit, preedit_cursor) = self.with_state(|s| {
             let main = Self::main_of(s);
-            (main.offset, main.anchor, s.preedit.clone())
+            (
+                main.offset,
+                main.anchor,
+                s.preedit.clone(),
+                s.preedit_cursor,
+            )
         });
-        let caret = caret.min(chars.len());
-        let (caret_line, caret_col) = line_col_of(&chars, &starts, caret);
-
-        let caret_bounds =
-            ctx.caret_positions(lines.get(caret_line).copied().unwrap_or(""), size, weight);
-        let caret_x = caret_bounds
-            .get(caret_col.min(caret_bounds.len().saturating_sub(1)))
+        let caret = caret.min(total_chars);
+        let selection = anchor.map(|a| (a.min(caret), a.max(caret)));
+        let composing = !preedit.is_empty();
+        let comp_start = selection.map(|(a, _)| a).unwrap_or(caret);
+        let comp_end = selection.map(|(_, b)| b).unwrap_or(caret);
+        let caret_row = layout.row_of(comp_start);
+        let caret_span = layout
+            .rows
+            .get(caret_row)
             .copied()
-            .unwrap_or(0.0);
+            .unwrap_or(RowSpan {
+                line: 0,
+                start: 0,
+                end: 0,
+            });
+        let caret_col = comp_start
+            .saturating_sub(caret_span.start)
+            .min(caret_span.end - caret_span.start);
+        let base_x = row_prefix_x(ctx, &layout, &caret_span, caret_col, size, weight);
+        let caret_x = if composing {
+            let inside = match preedit_cursor {
+                Some((cur, _)) => {
+                    let mut i = cur.min(preedit.len());
+                    while i > 0 && !preedit.is_char_boundary(i) {
+                        i -= 1;
+                    }
+                    ctx.text_width_weighted(&preedit[..i], size, weight)
+                }
+                None => ctx.text_width_weighted(&preedit, size, weight),
+            };
+            base_x + inside
+        } else {
+            base_x
+        };
         self.with_state(|s| {
             s.content = Size::new(content_w, content_h);
             s.scroll = clamp_scroll(
@@ -3415,7 +3739,10 @@ impl View for TextArea {
                 rect.size,
                 (self.pad_x, self.pad_y),
             );
-            apply_ensure_visible(s, self.pad_x, self.pad_y, caret_x, caret_line, line_h);
+            apply_ensure_visible(s, self.pad_x, self.pad_y, caret_x, caret_row, line_h);
+            if self.soft_wrap {
+                s.scroll.x = 0.0;
+            }
             s.scroll = clamp_scroll(
                 s.scroll,
                 content_w,
@@ -3426,8 +3753,13 @@ impl View for TextArea {
         });
         let scroll = self.with_state(|s| s.scroll);
 
+        let border = if self.error {
+            Some((1.5, sequoia_style::FORM_ERROR))
+        } else {
+            self.resolved_border(&theme)
+        };
         if background.a > 0.0 {
-            match self.resolved_border(&theme) {
+            match border {
                 Some((w, color)) => {
                     ctx.bordered_quad(rect, background, radius, w, color);
                 }
@@ -3456,38 +3788,37 @@ impl View for TextArea {
                 b: 1.0,
                 a: 0.05,
             });
-            if color.a > 0.0 && caret_line >= first_row && caret_line <= last_row {
+            if color.a > 0.0 && caret_row >= first_row && caret_row <= last_row {
                 ctx.quad(
-                    Rect::from_xywh(rect.left(), top_at(caret_line), rect.size.width, line_h),
+                    Rect::from_xywh(rect.left(), top_at(caret_row), rect.size.width, line_h),
                     color,
                     0.0,
                 );
             }
         }
 
-        if let Some(a) = anchor {
-            let (s0, s1) = (a.min(caret).min(chars.len()), a.max(caret).min(chars.len()));
+        if let Some(a) = anchor.filter(|_| !composing) {
+            let (s0, s1) = (a.min(caret).min(total_chars), a.max(caret).min(total_chars));
             if s1 > s0 {
-                for row in first_row..=last_row.min(rows.saturating_sub(1)) {
-                    let ls = starts[row];
-                    let le = ls + line_len(&chars, &starts, row);
-                    let line_end_nl = if row + 1 < rows { le + 1 } else { le };
-                    if s0 >= line_end_nl || s1 <= ls {
+                for (ri, row) in layout.rows.iter().enumerate() {
+                    if ri < first_row || ri > last_row {
                         continue;
                     }
-                    let bounds =
-                        ctx.caret_positions(lines.get(row).copied().unwrap_or(""), size, weight);
-                    let col0 = s0.saturating_sub(ls).min(bounds.len().saturating_sub(1));
-                    let x0 = bounds.get(col0).copied().unwrap_or(0.0);
-                    let x1 = if s1 > le {
-                        (scroll.x + rect.size.width - self.pad_x).max(x0 + 4.0)
+                    if s1 <= row.start || s0 > row.end {
+                        continue;
+                    }
+                    let row_chars = row.end - row.start;
+                    let col0 = s0.saturating_sub(row.start).min(row_chars);
+                    let x0 = row_prefix_x(ctx, &layout, row, col0, size, weight);
+                    let x1 = if s1 > row.end {
+                        width.max(x0 + 4.0)
                     } else {
-                        let col1 = s1.saturating_sub(ls).min(bounds.len().saturating_sub(1));
-                        bounds.get(col1).copied().unwrap_or(x0)
+                        let col1 = s1.saturating_sub(row.start).min(row_chars);
+                        row_prefix_x(ctx, &layout, row, col1, size, weight)
                     };
                     if x1 > x0 {
                         ctx.quad(
-                            Rect::from_xywh(ox + x0, top_at(row), x1 - x0, line_h),
+                            Rect::from_xywh(ox + x0, top_at(ri), x1 - x0, line_h),
                             theme.accent_pressed,
                             0.0,
                         );
@@ -3496,7 +3827,7 @@ impl View for TextArea {
             }
         }
 
-        if chars.is_empty() && preedit.is_empty() && !self.placeholder.is_empty() {
+        if layout.text.is_empty() && preedit.is_empty() && !self.placeholder.is_empty() {
             for (row, line) in split_lines(&self.placeholder).iter().enumerate() {
                 if row < first_row || row > last_row {
                     continue;
@@ -3510,31 +3841,30 @@ impl View for TextArea {
                 );
             }
         } else {
-            for row in first_row..=last_row.min(rows.saturating_sub(1)) {
-                let line = lines.get(row).copied().unwrap_or("");
+            for ri in first_row..=last_row.min(rows.saturating_sub(1)) {
+                let Some(row) = layout.rows.get(ri) else {
+                    continue;
+                };
+                let line = layout.row_text(row);
                 if line.is_empty() {
                     continue;
                 }
-                if row == caret_line && !preedit.is_empty() && ctx.state.focused {
-                    let before: String = line
-                        .chars()
-                        .take(caret_col.min(line.chars().count()))
-                        .collect();
-                    let after: String = line
-                        .chars()
-                        .skip(caret_col.min(line.chars().count()))
-                        .collect();
+                if ri == caret_row && composing && ctx.state.focused {
+                    let line_chars = line.chars().count();
+                    let end_col = comp_end.saturating_sub(row.start).min(line_chars);
+                    let before: String = line.chars().take(caret_col.min(line_chars)).collect();
+                    let after: String = line.chars().skip(end_col).collect();
                     let bx = ctx.text_width_weighted(&before, size, weight);
                     ctx.draw_text_weighted(
                         &before,
-                        (ox, baseline_at(row)),
+                        (ox, baseline_at(ri)),
                         size,
                         weight,
                         text_color,
                     );
                     ctx.draw_text_weighted(
                         &preedit,
-                        (ox + bx, baseline_at(row)),
+                        (ox + bx, baseline_at(ri)),
                         size,
                         weight,
                         text_color,
@@ -3542,43 +3872,43 @@ impl View for TextArea {
                     let pw = ctx.text_width_weighted(&preedit, size, weight);
                     ctx.draw_text_weighted(
                         &after,
-                        (ox + bx + pw, baseline_at(row)),
+                        (ox + bx + pw, baseline_at(ri)),
                         size,
                         weight,
                         text_color,
                     );
                     ctx.quad(
-                        Rect::from_xywh(ox + bx, top_at(row) + line_h - 2.0, pw.max(1.0), 1.5),
+                        Rect::from_xywh(ox + bx, top_at(ri) + line_h - 2.0, pw.max(1.0), 1.5),
                         text_color,
                         0.0,
                     );
                 } else {
-                    ctx.draw_text_weighted(line, (ox, baseline_at(row)), size, weight, text_color);
+                    ctx.draw_text_weighted(
+                        &line,
+                        (ox, baseline_at(ri)),
+                        size,
+                        weight,
+                        text_color,
+                    );
                 }
             }
         }
 
-        if ctx.state.focused {
-            let mut dx = caret_x;
-            if !preedit.is_empty() && anchor.is_none() {
-                let line = lines.get(caret_line).copied().unwrap_or("");
-                let before: String = line
-                    .chars()
-                    .take(caret_col.min(line.chars().count()))
-                    .collect();
-                dx += ctx.text_width_weighted(&preedit, size, weight);
-                let _ = before;
-            }
-            ctx.quad(
+        let caret_rect = ctx
+            .state
+            .focused
+            .then(|| {
                 Rect::from_xywh(
-                    ox + dx,
-                    baseline_at(caret_line) - size * 0.8,
+                    ox + caret_x,
+                    baseline_at(caret_row) - size * 0.8,
                     CARET_W,
                     size * 1.05,
-                ),
-                text_color,
-                0.0,
-            );
+                )
+            })
+            .filter(|_| !self.disabled);
+        self.with_state(|s| s.caret_rect = caret_rect);
+        if let Some(r) = caret_rect {
+            ctx.quad(r, text_color, 0.0);
         }
     }
 }

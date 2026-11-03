@@ -28,6 +28,10 @@ struct FieldState {
 
     preedit: String,
 
+    preedit_cursor: Option<(usize, usize)>,
+
+    caret_rect: Option<Rect>,
+
     was_focused: bool,
 
     scroll: f32,
@@ -55,6 +59,14 @@ pub struct TextField {
     padding: Option<(f32, f32)>,
     style: LayoutStyle,
     margin: Edges,
+
+    secure: bool,
+
+    readonly: bool,
+
+    disabled: bool,
+
+    error: bool,
 
     revision: Signal<u32>,
 
@@ -91,6 +103,10 @@ impl TextField {
                 ..LayoutStyle::default()
             },
             margin: Edges::ZERO,
+            secure: false,
+            readonly: false,
+            disabled: false,
+            error: false,
             revision: Signal::new(0),
             state: Rc::new(RefCell::new(FieldState::default())),
             on_edit_start: None,
@@ -106,6 +122,45 @@ impl TextField {
 
     pub fn max_length(mut self, max: usize) -> Self {
         self.max_length = Some(max);
+        self
+    }
+
+    /// Masks the value with bullets. Copy and cut are disabled so the secret
+    /// does not leak through the clipboard, and accessibility exposes the
+    /// masked text only.
+    pub fn secure(mut self, secure: bool) -> Self {
+        self.secure = secure;
+        self
+    }
+
+    pub fn password(self, password: bool) -> Self {
+        self.secure(password)
+    }
+
+    /// Keeps the field focusable and selectable while blocking edits.
+    pub fn readonly(mut self, readonly: bool) -> Self {
+        self.readonly = readonly;
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Draws the error border. The message itself belongs to the form field.
+    pub fn error(mut self, error: bool) -> Self {
+        self.error = error;
+        self
+    }
+
+    /// Sizes the field to its content height instead of the fixed default.
+    pub fn auto_size(mut self, auto: bool) -> Self {
+        self.style.height = if auto {
+            Length::Fit
+        } else {
+            Length::Px(HEIGHT)
+        };
         self
     }
 
@@ -604,7 +659,7 @@ impl TextField {
     }
 
     fn insert_str(&self, text: &str) {
-        if text.is_empty() {
+        if text.is_empty() || self.readonly || self.disabled {
             return;
         }
 
@@ -648,6 +703,9 @@ impl TextField {
     }
 
     fn backspace(&self) {
+        if self.readonly || self.disabled {
+            return;
+        }
         if self.delete_selection() {
             return;
         }
@@ -669,6 +727,9 @@ impl TextField {
     }
 
     fn delete(&self) {
+        if self.readonly || self.disabled {
+            return;
+        }
         if self.delete_selection() {
             return;
         }
@@ -796,18 +857,105 @@ impl TextField {
         }
     }
 
+    fn displayed(&self, text: &str) -> String {
+        if self.secure {
+            "\u{2022}".repeat(text.chars().count())
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn move_word(&self, dir: isize, extend: bool) {
+        let value = self.value.clone();
+        let next = self.with_state(|s| {
+            s.engine.ensure(&value);
+            let len = s.engine.len_chars();
+            let caret_b = s.engine.to_bytes(s.caret.min(len));
+            let next_b = if dir < 0 {
+                sequoia_buffer::word_start_before(s.engine.buffer(), caret_b)
+            } else {
+                sequoia_buffer::word_end_after(s.engine.buffer(), caret_b)
+            };
+            s.engine.to_chars(next_b)
+        });
+        self.set_caret_extend(next, extend);
+        self.bump();
+    }
+
+    fn delete_word(&self, back: bool) {
+        if self.readonly || self.disabled {
+            return;
+        }
+        if self.delete_selection() {
+            return;
+        }
+        let value = self.value.clone();
+        self.with_state(|s| {
+            s.engine.ensure(&value);
+            let len = s.engine.len_chars();
+            let caret_b = s.engine.to_bytes(s.caret.min(len));
+            let (from_b, to_b) = if back {
+                (
+                    sequoia_buffer::word_start_before(s.engine.buffer(), caret_b),
+                    caret_b,
+                )
+            } else {
+                (
+                    caret_b,
+                    sequoia_buffer::word_end_after(s.engine.buffer(), caret_b),
+                )
+            };
+            if from_b < to_b {
+                s.engine.delete(from_b..to_b);
+                s.engine.commit(&value);
+                s.caret = s.engine.to_chars(from_b).min(s.engine.len_chars());
+                s.anchor = None;
+            }
+        });
+        self.bump();
+    }
+
     fn on_key(&self, key: &KeyEvent) {
         let extend = key.modifiers.contains(Modifiers::SHIFT);
+        let composing = self.with_state(|s| !s.preedit.is_empty());
         let len = self.with_state(|s| {
             s.engine.ensure(&self.value);
             s.engine.len_chars()
         });
         match key.key {
             Key::ENTER => self.submit(),
-            Key::BACKSPACE => self.backspace(),
-            Key::DELETE => self.delete(),
-            Key::ARROW_LEFT => self.move_caret(-1, extend),
-            Key::ARROW_RIGHT => self.move_caret(1, extend),
+            Key::BACKSPACE => {
+                if key.modifiers.contains(Modifiers::CONTROL) {
+                    self.delete_word(true);
+                } else {
+                    self.backspace();
+                }
+            }
+            Key::DELETE => {
+                if key.modifiers.contains(Modifiers::CONTROL) {
+                    self.delete_word(false);
+                } else {
+                    self.delete();
+                }
+            }
+            Key::ARROW_LEFT => {
+                if key.modifiers.contains(Modifiers::CONTROL)
+                    || key.modifiers.contains(Modifiers::ALT)
+                {
+                    self.move_word(-1, extend);
+                } else {
+                    self.move_caret(-1, extend);
+                }
+            }
+            Key::ARROW_RIGHT => {
+                if key.modifiers.contains(Modifiers::CONTROL)
+                    || key.modifiers.contains(Modifiers::ALT)
+                {
+                    self.move_word(1, extend);
+                } else {
+                    self.move_caret(1, extend);
+                }
+            }
             Key::HOME | Key::PAGE_UP => {
                 if extend {
                     self.move_home(true);
@@ -825,6 +973,9 @@ impl TextField {
                 }
             }
             Key::SPACE => {
+                if composing {
+                    return;
+                }
                 if extend {
                     self.move_caret(1, true);
                 } else {
@@ -849,7 +1000,7 @@ impl TextField {
                 {
                     let cmd = key.modifiers.contains(Modifiers::CONTROL)
                         || key.modifiers.contains(Modifiers::SUPER);
-                    if cmd {
+                    if cmd || composing {
                         return;
                     }
                     self.insert(c);
@@ -859,20 +1010,35 @@ impl TextField {
     }
 
     fn on_ime(&self, ime: &ImeEvent) {
+        if self.disabled {
+            return;
+        }
         match ime {
             ImeEvent::Enabled => {}
-            ImeEvent::Preedit { value, .. } => {
-                self.with_state(|s| s.preedit = value.clone());
+            ImeEvent::Preedit { value, cursor } => {
+                if self.readonly || self.secure {
+                    return;
+                }
+                self.with_state(|s| {
+                    s.preedit = value.clone();
+                    s.preedit_cursor = *cursor;
+                });
                 self.bump();
             }
             ImeEvent::Commit(value) => {
-                self.with_state(|s| s.preedit.clear());
-                self.insert_str(value);
+                self.with_state(|s| {
+                    s.preedit.clear();
+                    s.preedit_cursor = None;
+                });
+                if !self.readonly {
+                    self.insert_str(value);
+                }
             }
             ImeEvent::Disabled => {
                 let had = self.with_state(|s| {
                     let had = !s.preedit.is_empty();
                     s.preedit.clear();
+                    s.preedit_cursor = None;
                     had
                 });
                 if had {
@@ -907,6 +1073,12 @@ impl TextField {
         }
         if c == 'a' {
             self.select_all();
+            return true;
+        }
+        if self.secure && matches!(c, 'c' | 'x') {
+            return true;
+        }
+        if self.readonly && matches!(c, 'x' | 'v') {
             return true;
         }
         let Some(clip) = ctx.environment.get::<SharedClipboard>() else {
@@ -963,22 +1135,33 @@ impl View for TextField {
     }
 
     fn accessibility(&self) -> Option<sequoia_view::Accessible> {
-        Some(sequoia_view::Accessible::new(
-            sequoia_view::AccessibleRole::TextField,
-            if self.placeholder.is_empty() {
-                "pole tekstowe".to_string()
-            } else {
-                self.placeholder.clone()
-            },
-        ))
+        let text = self.value.get_untracked();
+        Some(
+            sequoia_view::Accessible::new(
+                sequoia_view::AccessibleRole::TextField,
+                if self.placeholder.is_empty() {
+                    "pole tekstowe".to_string()
+                } else {
+                    self.placeholder.clone()
+                },
+            )
+            .value(self.displayed(&text))
+            .caret(Some(self.caret()))
+            .selection(self.selection())
+            .disabled(self.disabled),
+        )
     }
 
     fn focusable(&self) -> bool {
-        true
+        !self.disabled
     }
 
     fn accepts_text_input(&self) -> bool {
-        true
+        !self.disabled
+    }
+
+    fn ime_caret_rect(&self) -> Option<Rect> {
+        self.with_state(|s| s.caret_rect)
     }
 
     fn has_visual_state(&self) -> bool {
@@ -1000,7 +1183,11 @@ impl View for TextField {
     }
 
     fn cursor_icon(&self, _state: VisualState) -> CursorIcon {
-        CursorIcon::Text
+        if self.disabled {
+            CursorIcon::Default
+        } else {
+            CursorIcon::Text
+        }
     }
 
     fn layout_style(&self) -> LayoutStyle {
@@ -1031,7 +1218,7 @@ impl View for TextField {
     }
 
     fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
-        if ctx.phase != EventPhase::Target {
+        if self.disabled || ctx.phase != EventPhase::Target {
             return;
         }
         match event {
@@ -1097,7 +1284,11 @@ impl View for TextField {
         let (pad_x, pad_y) = self.resolved_pad();
         let background = self.resolved_background();
         let radius = self.resolved_radius(&theme);
-        let border = self.resolved_border(&theme);
+        let border = if self.error {
+            Some((1.5, sequoia_style::FORM_ERROR))
+        } else {
+            self.resolved_border(&theme)
+        };
         let colors = underline::field_colors(
             &theme,
             ctx.state.hovered || ctx.state.focused,
@@ -1105,6 +1296,21 @@ impl View for TextField {
             self.resolved_text_color(),
             self.resolved_line_color(),
         );
+        let text_color = if self.disabled {
+            theme.disabled
+        } else {
+            colors.text
+        };
+        let placeholder_color = if self.disabled {
+            theme.disabled
+        } else {
+            placeholder_color
+        };
+        let line_color = if self.disabled {
+            theme.disabled
+        } else {
+            colors.line
+        };
 
         if background.a > 0.0 || border.is_some() {
             match border {
@@ -1132,33 +1338,48 @@ impl View for TextField {
         let (ipx, ipy) = (pad_x + bw, pad_y + bw + yoff);
 
         let line_w = (rect.size.width - ipx * 2.0).max(0.0);
-        if line_width > 0.0 && colors.line.a > 0.0 {
+        if line_width > 0.0 && line_color.a > 0.0 {
             let line = underline::line_rect_padded(rect, size, line_w, line_width, ipx, ipy);
-            ctx.quad(line, colors.line, line_width * 0.5);
+            ctx.quad(line, line_color, line_width * 0.5);
         }
 
         let text = self.value.get_untracked();
-        let chars: Vec<char> = text.chars().collect();
-        let (caret, anchor, preedit) = self.with_state(|s| (s.caret, s.anchor, s.preedit.clone()));
+        let shown = self.displayed(&text);
+        let chars: Vec<char> = shown.chars().collect();
+        let (caret, anchor, preedit, preedit_cursor) = self.with_state(|s| {
+            (s.caret, s.anchor, s.preedit.clone(), s.preedit_cursor)
+        });
         let caret = caret.min(chars.len());
+        let selection = anchor.map(|a| (a.min(caret), a.max(caret)));
+        let composing = !preedit.is_empty();
+        let comp_start = selection.map(|(a, _)| a).unwrap_or(caret);
+        let comp_end = selection.map(|(_, b)| b).unwrap_or(caret);
         let vis_w = (rect.size.width - ipx * 2.0).max(0.0);
 
         let mut caret_x = 0.0;
         let mut bounds: Vec<f32>;
         if ctx.state.hovered || ctx.state.focused || anchor.is_some() {
-            bounds = ctx.caret_positions(&text, size, weight);
+            bounds = ctx.caret_positions(&shown, size, weight);
 
-            if !preedit.is_empty() {
+            if composing {
                 let pw = ctx.text_width_weighted(&preedit, size, weight);
-
-                for b in bounds.iter_mut().skip(caret) {
+                for b in bounds.iter_mut().skip(comp_end) {
                     *b += pw;
                 }
-            }
-            caret_x = bounds.get(caret).copied().unwrap_or(0.0);
-
-            if !preedit.is_empty() {
-                caret_x += ctx.text_width_weighted(&preedit, size, weight);
+                let base = bounds.get(comp_start).copied().unwrap_or(0.0);
+                let inside = match preedit_cursor {
+                    Some((cur, _)) => {
+                        let mut i = cur.min(preedit.len());
+                        while i > 0 && !preedit.is_char_boundary(i) {
+                            i -= 1;
+                        }
+                        ctx.text_width_weighted(&preedit[..i], size, weight)
+                    }
+                    None => ctx.text_width_weighted(&preedit, size, weight),
+                };
+                caret_x = base + inside;
+            } else {
+                caret_x = bounds.get(caret).copied().unwrap_or(0.0);
             }
 
             let text_w = bounds.last().copied().unwrap_or(0.0);
@@ -1185,7 +1406,7 @@ impl View for TextField {
         );
         ctx.push_clip(clip_box);
 
-        if let Some(a) = anchor {
+        if let Some(a) = anchor.filter(|_| !composing) {
             let (s0, s1) = (a.min(caret).min(chars.len()), a.max(caret).min(chars.len()));
             if s1 > s0 {
                 let stored = self.stored_bounds();
@@ -1203,32 +1424,33 @@ impl View for TextField {
         if chars.is_empty() && preedit.is_empty() && !self.placeholder.is_empty() {
             ctx.draw_text_weighted(&self.placeholder, (x, y), size, weight, placeholder_color);
         } else if preedit.is_empty() {
-            ctx.draw_text_weighted(&text, (x, y), size, weight, colors.text);
+            ctx.draw_text_weighted(&shown, (x, y), size, weight, text_color);
         } else {
-            let before: String = chars[..caret.min(chars.len())].iter().collect();
-            let after: String = chars[caret.min(chars.len())..].iter().collect();
+            let before: String = chars[..comp_start.min(chars.len())].iter().collect();
+            let after: String = chars[comp_end.min(chars.len())..].iter().collect();
             let composed = format!("{before}{preedit}{after}");
-            ctx.draw_text_weighted(&composed, (x, y), size, weight, colors.text);
+            ctx.draw_text_weighted(&composed, (x, y), size, weight, text_color);
 
             let stored = self.stored_bounds();
-            let x0 = stored.get(caret).copied().unwrap_or(0.0);
+            let x0 = stored.get(comp_start).copied().unwrap_or(0.0);
             let pw = ctx.text_width_weighted(&preedit, size, weight);
             let line_y =
                 underline::line_rect_padded(rect, size, line_w, line_width, ipx, ipy).top();
             ctx.quad(
                 Rect::from_xywh(x + x0, line_y - 2.0, pw.max(1.0), 1.5),
-                colors.text,
+                text_color,
                 0.0,
             );
         }
 
-        if ctx.state.focused {
-            let top = y - size * 0.8;
-            ctx.quad(
-                Rect::from_xywh(x + caret_x, top, CARET_W, size * 1.05),
-                colors.text,
-                0.0,
-            );
+        let caret_rect = ctx
+            .state
+            .focused
+            .then(|| Rect::from_xywh(x + caret_x, y - size * 0.8, CARET_W, size * 1.05))
+            .filter(|_| !self.disabled);
+        self.with_state(|s| s.caret_rect = caret_rect);
+        if let Some(r) = caret_rect {
+            ctx.quad(r, text_color, 0.0);
         }
 
         ctx.pop_clip();

@@ -927,6 +927,8 @@ struct WindowState {
 
     last_cursor: Option<winit::window::CursorIcon>,
 
+    ime_allowed: bool,
+
     settings: WindowSettings,
 
     next_frame: Option<Instant>,
@@ -1047,6 +1049,7 @@ impl WindowState {
         }
 
         sync_cursor(&self.window, &mut self.last_cursor, &self.rt);
+        sync_ime_allowed(&self.window, &mut self.ime_allowed, &self.rt);
         sync_ime_cursor(&self.window, self.scale, &self.rt);
 
         if self.gate.borrow_mut().end_paint(superseded) {
@@ -1434,7 +1437,9 @@ impl PlatformApp {
                 .map_err(|e| AppError::Window(format!("{id}: {e}")))?,
         );
 
-        window.set_ime_allowed(true);
+        // Enabled per focus: platforms otherwise route every key through the
+        // IME, which breaks plain-key accelerators in non-text widgets.
+        window.set_ime_allowed(false);
 
         window.set_cursor_visible(s.cursor_visible);
         if s.cursor_grab
@@ -1572,6 +1577,7 @@ impl PlatformApp {
             wheel_seen: WheelDedupe::default(),
             scale,
             last_cursor: None,
+            ime_allowed: false,
             settings: s.clone(),
             next_frame: initial_next_frame(continuous_paced, s.fps_limit),
             fps_base: spec.title.clone(),
@@ -1741,6 +1747,61 @@ impl PlatformApp {
     }
 }
 
+/// Text carried by a key event that the key mapping cannot produce.
+///
+/// Windows resolves dead-key combinations to a `WM_CHAR` whose text differs
+/// from the logical key (or has no logical character at all). Returning that
+/// text lets the host deliver it as [`ImeEvent::Commit`] instead of dropping
+/// the accent, while ordinary typing — where text matches the mapped
+/// character — stays on the regular key path.
+fn ime_commit_for_key(mapped: Option<char>, text: &str) -> Option<String> {
+    if text.is_empty() || text.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    let mut chars = text.chars();
+    if let (Some(mapped), Some(only), None) = (mapped, chars.next(), chars.next())
+        && only == mapped
+    {
+        return None;
+    }
+    Some(text.to_owned())
+}
+
+#[cfg(test)]
+mod ime_key_tests {
+    use super::ime_commit_for_key;
+
+    #[test]
+    fn ordinary_typing_stays_on_the_key_path() {
+        assert_eq!(ime_commit_for_key(Some('a'), "a"), None);
+        assert_eq!(ime_commit_for_key(Some('A'), "A"), None);
+        assert_eq!(ime_commit_for_key(Some('ł'), "ł"), None);
+    }
+
+    #[test]
+    fn accent_text_becomes_a_commit() {
+        assert_eq!(ime_commit_for_key(Some('e'), "é").as_deref(), Some("é"));
+        assert_eq!(ime_commit_for_key(None, "´").as_deref(), Some("´"));
+        assert_eq!(ime_commit_for_key(None, "に").as_deref(), Some("に"));
+    }
+
+    #[test]
+    fn control_and_empty_text_is_ignored() {
+        assert_eq!(ime_commit_for_key(Some('c'), "\u{3}"), None);
+        assert_eq!(ime_commit_for_key(None, ""), None);
+    }
+}
+
+/// Enables the platform IME only while a text input owns focus.
+fn sync_ime_allowed(window: &Window, allowed: &mut bool, rt: &Runtime) {
+    let want = rt.text_input_focused();
+    if want != *allowed {
+        window.set_ime_allowed(want);
+        *allowed = want;
+    }
+}
+
+/// Places the IME candidate window at the text caret.
 fn sync_ime_cursor(window: &Window, scale: f32, rt: &Runtime) {
     let Some(rect) = rt.ime_cursor_rect() else {
         return;
@@ -1748,9 +1809,11 @@ fn sync_ime_cursor(window: &Window, scale: f32, rt: &Runtime) {
     let s = scale;
     let x = (rect.left() * s) as f64;
     let y = (rect.bottom() * s) as f64;
+    let w = (rect.size.width * s).round().max(1.0) as u32;
+    let h = (rect.size.height * s).round().max(1.0) as u32;
     window.set_ime_cursor_area(
         winit::dpi::PhysicalPosition::new(x, y),
-        winit::dpi::PhysicalSize::new(1u32, 1u32),
+        winit::dpi::PhysicalSize::new(w, h),
     );
 }
 
@@ -1936,8 +1999,21 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                 }
 
                 WindowEvent::KeyboardInput { event: kev, .. } => {
+                    let mapped = map_key(&kev.logical_key);
+                    let commit = kev
+                        .text
+                        .as_deref()
+                        .and_then(|text| ime_commit_for_key(mapped.and_then(Key::char), text));
                     if kev.state == ElementState::Pressed
-                        && let Some(k) = map_key(&kev.logical_key)
+                        && let Some(text) = commit
+                    {
+                        // The platform resolved this keystroke to text the key
+                        // mapping cannot express (dead keys, accent
+                        // composition). Treat it as a one-shot commit.
+                        ws.rt.ime(ImeEvent::Commit(text), &mut ws.text);
+                        ws.request_redraw();
+                    } else if kev.state == ElementState::Pressed
+                        && let Some(k) = mapped
                         && (!kev.repeat || k.allows_repeat())
                     {
                         let mut hit = false;
@@ -2074,6 +2150,9 @@ impl ApplicationHandler<JobWake> for PlatformApp {
 
                 _ => {}
             }
+            // Focus may have moved in this event; keep the IME in sync before
+            // the next keystroke arrives.
+            sync_ime_allowed(&ws.window, &mut ws.ime_allowed, &ws.rt);
         }
 
         self.drain_requests(event_loop);

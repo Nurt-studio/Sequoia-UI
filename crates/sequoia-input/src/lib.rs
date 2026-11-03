@@ -287,20 +287,46 @@ pub struct KeyEvent {
     pub modifiers: Modifiers,
 }
 
+/// Platform input-method events.
+///
+/// A composition starts with [`ImeEvent::Preedit`], may update the preedit text
+/// several times, and ends with [`ImeEvent::Commit`] (text was accepted) or
+/// [`ImeEvent::Disabled`] (composition was cancelled). Hosts that only care
+/// about the final text can handle `Commit` alone; text widgets show the
+/// preedit while it lasts and write it to the model on commit.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ImeEvent {
+    /// The input method is now active for the focused text input.
     Enabled,
 
+    /// Composition in progress. `value` replaces the current selection (or
+    /// sits at the caret when nothing is selected) and is not committed yet.
+    ///
+    /// `cursor` is an optional byte range inside `value`
+    /// `(cursor, selection_end)`, in the units winit reports. It lets the
+    /// widget place the caret inside the preedit, which CJK input relies on
+    /// while the composition is being converted.
     Preedit {
         value: String,
 
         cursor: Option<(usize, usize)>,
     },
 
+    /// Final text for the current composition. It replaces the selection the
+    /// composition started with, so a commit after selecting text swaps the
+    /// selection rather than inserting next to it.
     Commit(String),
 
+    /// The input method lost focus or the composition was cancelled.
     Disabled,
+}
+
+impl ImeEvent {
+    /// Whether this event leaves a composition visible.
+    pub fn is_composing(&self) -> bool {
+        matches!(self, Self::Preedit { value, .. } if !value.is_empty())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

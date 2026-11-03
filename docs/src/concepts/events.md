@@ -111,8 +111,17 @@ keys, function keys, and character keys created with `Key::from_char`.
 
 Keyboard events go to the focused element. A non-focusable view does not
 receive them. Return `true` from `Canvas::on_key` to mark the event handled, or
-call `ctx.handled()` in a custom leaf. `KeyEvent` describes a key press; it does
-not contain committed text. Text widgets and `Event::Ime` handle text entry.
+call `ctx.handled()` in a custom leaf. `KeyEvent` describes a key press; it
+does not contain committed text. Text widgets and `Event::Ime` handle text entry.
+
+`ImeEvent` covers the platform input method: `Enabled` and `Disabled` bracket
+the session, `Preedit { value, cursor }` carries the not-yet-committed
+composition, and `Commit(text)` delivers the accepted text. The optional
+`cursor` is a byte range inside `value`, which lets a widget place its caret
+inside the composition while a CJK input method converts it. Hosts enable the
+system IME only while a text input has focus and report the caret through
+`Runtime::ime_cursor_rect`, so the candidate window follows the caret on
+Windows, macOS, and Linux.
 
 Tab moves focus through the tree. The runtime finds the next focusable element
 after the current one, wrapping at the end. Shift-Tab moves backward.

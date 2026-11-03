@@ -249,6 +249,14 @@ pub trait View {
         false
     }
 
+    /// Caret rectangle in window coordinates, used to place the platform IME
+    /// candidate window. Widgets with a text caret return the box the caret
+    /// occupies; hosts fall back to the focused element's bounds when this is
+    /// `None`.
+    fn ime_caret_rect(&self) -> Option<Rect> {
+        None
+    }
+
     #[doc(hidden)]
     fn cursor_icon(&self, _state: VisualState) -> CursorIcon {
         CursorIcon::Default

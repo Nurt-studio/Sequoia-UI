@@ -68,6 +68,7 @@ pub(crate) trait ErasedView: 'static {
     fn focus_trap_erased(&self) -> bool;
     fn accepts_tab_erased(&self) -> bool;
     fn accepts_text_input_erased(&self) -> bool;
+    fn ime_caret_rect_erased(&self) -> Option<Rect>;
     fn cursor_icon_erased(&self, state: VisualState) -> CursorIcon;
     fn has_visual_state_erased(&self) -> bool;
     fn wants_hover_updates_erased(&self) -> bool;
@@ -233,6 +234,9 @@ impl<V: View + 'static> ErasedView for V {
     }
     fn accepts_text_input_erased(&self) -> bool {
         View::accepts_text_input(self)
+    }
+    fn ime_caret_rect_erased(&self) -> Option<Rect> {
+        View::ime_caret_rect(self)
     }
     fn cursor_icon_erased(&self, state: VisualState) -> CursorIcon {
         View::cursor_icon(self, state)

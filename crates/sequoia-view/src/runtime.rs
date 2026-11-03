@@ -1928,7 +1928,8 @@ impl Runtime {
     pub fn ime_cursor_rect(&self) -> Option<Rect> {
         let st = self.inner.interact.get();
         let f = st.focus?;
-        self.rect_of(f)
+        let caret = self.view_rc(f).and_then(|v| v.ime_caret_rect_erased());
+        caret.or_else(|| self.rect_of(f))
     }
 
     pub fn overlay_show(&self, entry: OverlayEntry) -> OverlayId {
@@ -2007,6 +2008,10 @@ impl Runtime {
                     element: child,
                     role: a.role,
                     label: a.label,
+                    value: a.value,
+                    caret: a.caret,
+                    selection: a.selection,
+                    disabled: a.disabled,
                     children: kids,
                 }),
                 None => out.extend(kids),

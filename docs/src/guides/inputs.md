@@ -39,10 +39,26 @@ assert!(search.selection().is_none());
   `TextFieldStyle` instead.
 - The caret and selection are also controllable: `caret`, `selection`,
   `selected_text`, `select_range`, `clear_selection`, and `select_all`.
+- `secure(true)` masks the value, blocks copy and cut, and exposes only the
+  masked text to accessibility. `readonly(true)` keeps focus, selection, and
+  copy but blocks edits; `disabled(true)` removes the field from focus and
+  input entirely. `error(true)` draws the error border for form validation.
+- `auto_size(true)` sizes the field from its content instead of the default
+  fixed height.
 
 The field handles editing keys, clipboard shortcuts, and IME composition. When
 an input method is active, preedit text is displayed but is not written to the
-signal until the composition commits.
+signal until the composition commits. A composition replaces the current
+selection, so committing after selecting text swaps that range for the
+committed string. Plain key events that arrive while a composition is active
+are ignored, so the composed text is not inserted twice. Dead keys work the
+same way: the platform reports the accent as a short preedit followed by the
+accented character as the commit.
+
+The composition caret — including the cursor the platform reports inside the
+preedit, which CJK conversion relies on — is exposed through
+`Runtime::ime_cursor_rect`, and hosts pass that rectangle to the OS so the IME
+candidate window opens at the caret instead of at the window origin.
 
 Treat the signal as the value. Internal editing state (caret, selection, and
 preedit text) is synchronized with it, but application code should read and
@@ -67,8 +83,14 @@ let editor = TextArea::new(notes)
     .width(Length::Fill(1.0));
 ```
 
-- `min_lines` and `max_lines` control the measured height. The editor scrolls
-  internally once the content exceeds `max_lines`.
+- `min_lines` sets the minimum measured height. `max_lines` caps the measured
+  height and truncates further input, so the document never grows past it. A
+  fixed `height` scrolls internally instead.
+- `soft_wrap(true)` wraps long lines at the current width; `wrap_mode` chooses
+  `WrapMode::Word` (default) or `WrapMode::Character`. Caret movement,
+  `Home`/`End`, `PageUp`/`PageDown`, and clicks all follow visual rows.
+- `auto_size(true)` grows the editor with its content up to `max_lines`.
+  `readonly(true)`, `disabled(true)`, and `error(true)` mirror `TextField`.
 - `auto_indent` repeats the previous line's indentation on Enter.
 - `accept_tab(true)` inserts a tab character; the default `false` moves focus,
   which is the right choice for prose and most forms.
@@ -80,6 +102,11 @@ The editor exposes `caret`, `selection`, `selections` (multiple carets),
 `set_caret`, `select_range`, `selected_text`, `scroll_to`, `line_count`, and
 `caret_line_col`. These are useful for toolbar actions such as bold or
 highlighting.
+
+Text inputs report a virtual caret to accessibility: `Accessible` carries the
+value, caret offset, selection range, and disabled state, so screen readers can
+follow editing without reading the paint output. Secure fields report the
+masked value only.
 
 ## Numeric and drag controls
 
