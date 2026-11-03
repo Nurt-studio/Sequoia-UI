@@ -172,13 +172,13 @@ fn parse_params(sig: &Signature) -> syn::Result<Vec<Param>> {
         let syn::FnArg::Typed(typed) = input else {
             return Err(syn::Error::new(
                 input.span(),
-                "shader nie może przyjmować `self`",
+                "shader cannot take `self`",
             ));
         };
         let Pat::Ident(pat) = typed.pat.as_ref() else {
             return Err(syn::Error::new(
                 typed.pat.span(),
-                "parametry shadera muszą mieć nazwy",
+                "shader parameters must be named",
             ));
         };
         let name = pat.ident.clone();
@@ -198,7 +198,7 @@ fn parse_params(sig: &Signature) -> syn::Result<Vec<Param>> {
             let ty = &typed.ty;
             return Err(syn::Error::new(
                 ty.span(),
-                "nieobsługiwany typ parametru shadera; dozwolone: f32, i32, u32, bool, Vec2, Vec3, Vec4, Color, Sampler2D, FragPos, FragUv, FragWorld, VertexIndex",
+                "unsupported shader parameter type; allowed: f32, i32, u32, bool, Vec2, Vec3, Vec4, Color, Sampler2D, FragPos, FragUv, FragWorld, VertexIndex",
             ));
         };
         params.push(Param { name, kind });
@@ -220,7 +220,7 @@ fn build_model(item: ShaderItem) -> syn::Result<ShaderModel> {
         if !seen.insert(name.to_string()) {
             return Err(syn::Error::new(
                 name.span(),
-                format!("duplikat parametru `{name}`"),
+                format!("duplicate parameter `{name}`"),
             ));
         }
         match param.kind {
@@ -233,7 +233,7 @@ fn build_model(item: ShaderItem) -> syn::Result<ShaderModel> {
                 if textures.len() == MAX_TEXTURES {
                     return Err(syn::Error::new(
                         name.span(),
-                        format!("shader może deklarować maksymalnie {MAX_TEXTURES} tekstury"),
+                        format!("a shader may declare at most {MAX_TEXTURES} textures"),
                     ));
                 }
                 textures.push(name);
@@ -245,7 +245,7 @@ fn build_model(item: ShaderItem) -> syn::Result<ShaderModel> {
     if size > MAX_UNIFORM_BYTES {
         return Err(syn::Error::new(
             item.sig.span(),
-            format!("uniformy shadera zajmują {size} B, limit wynosi {MAX_UNIFORM_BYTES} B"),
+            format!("shader uniforms use {size} B, the limit is {MAX_UNIFORM_BYTES} B"),
         ));
     }
 
@@ -345,7 +345,13 @@ fn build_wgsl(model: &ShaderModel) -> (String, usize) {
             InputKind::FragPos => "frag.local",
             InputKind::FragUv => "frag.uv",
             InputKind::FragWorld => "frag.world",
-            InputKind::VertexIndex => "0u",
+            InputKind::VertexIndex => {
+                debug_assert!(
+                    false,
+                    "VertexIndex is not implemented; shaders receive 0"
+                );
+                "0u"
+            }
         };
         wgsl.push_str(&format!("    let {name} = {value};\n"));
     }
@@ -443,16 +449,16 @@ fn validate_wgsl(
         Err(error) => {
             let detail = match error.location(wgsl) {
                 Some(location) => format!(
-                    "{} (linia {}, kolumna {})",
+                    "{} (line {}, column {})",
                     error,
                     user_line(location.line_number),
                     location.line_position
                 ),
                 None => error.to_string(),
             };
-            let mut message = format!("błąd WGSL: {detail}");
+            let mut message = format!("WGSL error: {detail}");
             if show {
-                message.push_str("\n\nWygenerowany WGSL:\n");
+                message.push_str("\n\nGenerated WGSL:\n");
                 message.push_str(wgsl);
             }
             return Err(syn::Error::new(span, message));
@@ -465,14 +471,13 @@ fn validate_wgsl(
     if let Err(error) = validator.validate(&module) {
         let detail = match error.location(wgsl) {
             Some(location) => format!(
-                "{} (linia {}, kolumna {})",
+                "{} (line {}, column {})",
                 error, location.line_number, location.line_position
             ),
             None => error.to_string(),
         };
-        let mut message = format!("błąd walidacji WGSL: {detail}");
-        if show {
-            message.push_str("\n\nWygenerowany WGSL:\n");
+        let mut message = format!("WGSL validation error: {detail}");
+        if show {                message.push_str("\n\nGenerated WGSL:\n");
             message.push_str(wgsl);
         }
         return Err(syn::Error::new(span, message));
@@ -484,7 +489,7 @@ fn validate_wgsl(
     if !has_fragment {
         return Err(syn::Error::new(
             span,
-            "błąd WGSL: brak punktu wejścia `fs_main`",
+            "WGSL error: missing `fs_main` entry point",
         ));
     }
     Ok(())
@@ -531,15 +536,15 @@ mod tests {
             .expect_err("invalid WGSL must fail");
         let message = error.to_string();
         assert!(message.contains("WGSL"), "{message}");
-        assert!(message.contains("linia 1"), "{message}");
-        assert!(message.contains("kolumna"), "{message}");
+        assert!(message.contains("line 1"), "{message}");
+        assert!(message.contains("column"), "{message}");
     }
 
     #[test]
     fn unsupported_parameter_is_reported() {
         let error = compile("fn broken(value: Foo) -> Color { return vec4<f32>(1.0); }")
             .expect_err("unsupported parameter must fail");
-        assert!(error.to_string().contains("nieobs"), "{error}");
+        assert!(error.to_string().contains("unsupported"), "{error}");
     }
 
     #[test]
@@ -548,7 +553,16 @@ mod tests {
             .expect_err("unknown WGSL function must fail");
         let message = error.to_string();
         assert!(message.contains("mystery"), "{message}");
-        assert!(message.contains("linia"), "{message}");
+        assert!(message.contains("line"), "{message}");
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "VertexIndex is not implemented")]
+    fn vertex_index_fallback_is_not_silent() {
+        let _ = compile(
+            "fn broken(index: VertexIndex) -> Color { return vec4<f32>(1.0); }",
+        );
     }
 
     #[test]
@@ -565,7 +579,7 @@ mod tests {
         )
         .expect_err("vec3 plus vec2 must fail");
         let message = error.to_string();
-        assert!(message.contains("linia"), "{message}");
-        assert!(message.contains("kolumna"), "{message}");
+        assert!(message.contains("line"), "{message}");
+        assert!(message.contains("column"), "{message}");
     }
 }
