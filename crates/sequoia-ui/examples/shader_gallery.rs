@@ -80,18 +80,18 @@ fn draw(g: &mut Painter) {
 
     // 2. Title text on top
     let title_rect = Rect::from_xywh(0.0, MARGIN, size.width, TITLE_HEIGHT);
-    g.text_center(title_rect, "Sequoia Shaders", 32.0, Rgba::rgba(0.95, 0.95, 0.96, 1.0));
+    g.text_center(
+        title_rect,
+        "Sequoia Shaders",
+        32.0,
+        Rgba::rgba(0.95, 0.95, 0.96, 1.0),
+    );
 
     // 3. Card rectangle: starts 24px below the title text
     let card_top = MARGIN + TITLE_HEIGHT + GAP;
-    let card_w = size.width * 0.5; 
+    let card_w = size.width * 0.5;
     let card_h = card_w; // Square aspect ratio
-    let card = Rect::from_xywh(
-        (size.width - card_w) * 0.5,
-        card_top,
-        card_w,
-        card_h,
-    );
+    let card = Rect::from_xywh((size.width - card_w) * 0.5, card_top, card_w, card_h);
 
     // 4. Paint the card content (#D9D9D9) into an offscreen target
     // We use clipped_rounded HERE so the source shape has nice corners.

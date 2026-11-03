@@ -134,10 +134,7 @@ fn group_and_blit_record_target_pass_before_the_blit() {
     let h = Harness::new(GroupView);
     h.layout(200.0, 200.0);
     let list = h.paint();
-    assert!(matches!(
-        list.items()[0],
-        RenderItem::TargetBegin { .. }
-    ));
+    assert!(matches!(list.items()[0], RenderItem::TargetBegin { .. }));
     assert!(matches!(list.items()[1], RenderItem::Quad(_)));
     assert!(matches!(list.items()[2], RenderItem::TargetEnd { .. }));
     assert!(matches!(list.items()[3], RenderItem::Blit { .. }));
@@ -145,7 +142,10 @@ fn group_and_blit_record_target_pass_before_the_blit() {
     let plan = list.target_plan();
     assert_eq!(plan.len(), 2, "{plan:?}");
     let PassNode::Render {
-        target, size, items, ..
+        target,
+        size,
+        items,
+        ..
     } = &plan[0]
     else {
         panic!("expected a Render pass: {plan:?}");

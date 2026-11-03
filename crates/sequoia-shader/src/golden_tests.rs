@@ -130,6 +130,12 @@ fn cpu_stdlib_matches_wgsl_expectations() {
         crate::stdlib::soft_light(Vec3::splat(1.0), Vec3::splat(1.0)),
         Vec3::splat(1.0)
     );
-    assert_eq!(crate::stdlib::multiply(Vec3::splat(0.5), Vec3::splat(0.5)), Vec3::splat(0.25));
-    assert_eq!(crate::stdlib::screen(Vec3::splat(0.5), Vec3::splat(0.5)), Vec3::splat(0.75));
+    assert_eq!(
+        crate::stdlib::multiply(Vec3::splat(0.5), Vec3::splat(0.5)),
+        Vec3::splat(0.25)
+    );
+    assert_eq!(
+        crate::stdlib::screen(Vec3::splat(0.5), Vec3::splat(0.5)),
+        Vec3::splat(0.75)
+    );
 }
