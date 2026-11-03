@@ -9,6 +9,7 @@ pub use rich::{
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -796,6 +797,11 @@ impl GlyphAtlas {
 
 const SHAPING_CACHE_MAX: usize = 256;
 
+/// Number of direct-mapped hot slots used before falling back to the full
+/// shaping cache. Real paint loops revisit the same labels every frame, and a
+/// slot hit avoids both key allocation and the LRU list scan.
+const SHAPE_SLOTS: usize = 4096;
+
 const CARET_CACHE_MAX: usize = 128;
 
 pub type LetterSpacing = f32;
@@ -834,7 +840,6 @@ struct MruShape {
     mode_k: u8,
     spacing_k: i32,
     line_height_k: u32,
-    key: ShapeKey,
     shaped: Rc<ShapedText>,
 }
 
@@ -847,6 +852,8 @@ pub struct TextSystem {
     shaping_order: VecDeque<ShapeKey>,
 
     mru: Option<MruShape>,
+
+    mru_slots: Vec<Option<MruShape>>,
 
     carets: HashMap<CaretKey, Rc<[f32]>>,
 
@@ -895,6 +902,7 @@ impl TextSystem {
             shaped: HashMap::new(),
             shaping_order: VecDeque::new(),
             mru: None,
+            mru_slots: vec![None; SHAPE_SLOTS],
             carets: HashMap::new(),
             carets_order: VecDeque::new(),
             rich: HashMap::new(),
@@ -966,6 +974,7 @@ impl TextSystem {
         self.shaped.clear();
         self.shaping_order.clear();
         self.mru = None;
+        self.mru_slots.fill_with(|| None);
         self.carets.clear();
         self.carets_order.clear();
         self.rich.clear();
@@ -1019,6 +1028,7 @@ impl TextSystem {
         let before = db.faces().count();
         db.load_font_data(data);
         self.mru = None;
+        self.mru_slots.fill_with(|| None);
         self.refresh_default_weights();
         self.font_system
             .db()
@@ -1048,6 +1058,7 @@ impl TextSystem {
             self.shaped.clear();
             self.shaping_order.clear();
             self.mru = None;
+            self.mru_slots.fill_with(|| None);
             self.carets.clear();
             self.carets_order.clear();
             self.rich.clear();
@@ -1165,8 +1176,33 @@ impl TextSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn shape_slot_hash(
+        text: &str,
+        size_q: u32,
+        weight_v: u16,
+        family: Option<&str>,
+        style_k: u8,
+        width_q: u32,
+        mode_k: u8,
+        spacing_k: i32,
+        line_height_k: u32,
+    ) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        size_q.hash(&mut h);
+        weight_v.hash(&mut h);
+        family.hash(&mut h);
+        style_k.hash(&mut h);
+        width_q.hash(&mut h);
+        mode_k.hash(&mut h);
+        spacing_k.hash(&mut h);
+        line_height_k.hash(&mut h);
+        h.finish()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn mru_hit(
-        &mut self,
+        &self,
         text: &str,
         size_q: u32,
         weight_v: u16,
@@ -1177,29 +1213,75 @@ impl TextSystem {
         spacing_k: i32,
         line_height_k: u32,
     ) -> Option<Rc<ShapedText>> {
-        let (key, shaped) = match self.mru.as_ref() {
-            Some(mru)
-                if mru.text == text
-                    && mru.size_q == size_q
-                    && mru.weight_v == weight_v
-                    && mru.family.as_deref() == family
-                    && mru.style_k == style_k
-                    && mru.width_q == width_q
-                    && mru.mode_k == mode_k
-                    && mru.spacing_k == spacing_k
-                    && mru.line_height_k == line_height_k =>
-            {
-                (mru.key.clone(), mru.shaped.clone())
-            }
-            _ => return None,
-        };
-        if self.shaping_order.front().is_none_or(|front| front != &key) {
-            if let Some(pos) = self.shaping_order.iter().position(|k| k == &key) {
-                self.shaping_order.remove(pos);
-            }
-            self.shaping_order.push_front(key);
-        }
-        Some(shaped)
+        let mru = self.mru.as_ref()?;
+        (mru.text == text
+            && mru.size_q == size_q
+            && mru.weight_v == weight_v
+            && mru.family.as_deref() == family
+            && mru.style_k == style_k
+            && mru.width_q == width_q
+            && mru.mode_k == mode_k
+            && mru.spacing_k == spacing_k
+            && mru.line_height_k == line_height_k)
+            .then(|| mru.shaped.clone())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn slot_hit(
+        &self,
+        hash: u64,
+        text: &str,
+        size_q: u32,
+        weight_v: u16,
+        family: Option<&str>,
+        style_k: u8,
+        width_q: u32,
+        mode_k: u8,
+        spacing_k: i32,
+        line_height_k: u32,
+    ) -> Option<Rc<ShapedText>> {
+        let slots = &self.mru_slots;
+        let slot = slots.get(hash as usize & (slots.len() - 1))?.as_ref()?;
+        (slot.text == text
+            && slot.size_q == size_q
+            && slot.weight_v == weight_v
+            && slot.family.as_deref() == family
+            && slot.style_k == style_k
+            && slot.width_q == width_q
+            && slot.mode_k == mode_k
+            && slot.spacing_k == spacing_k
+            && slot.line_height_k == line_height_k)
+            .then(|| slot.shaped.clone())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn remember_slot(
+        &mut self,
+        hash: u64,
+        text: &str,
+        size_q: u32,
+        weight_v: u16,
+        family: Option<&str>,
+        style_k: u8,
+        width_q: u32,
+        mode_k: u8,
+        spacing_k: i32,
+        line_height_k: u32,
+        shaped: Rc<ShapedText>,
+    ) {
+        let idx = hash as usize & (self.mru_slots.len() - 1);
+        self.mru_slots[idx] = Some(MruShape {
+            text: text.to_owned(),
+            size_q,
+            weight_v,
+            family: family.map(str::to_owned),
+            style_k,
+            width_q,
+            mode_k,
+            spacing_k,
+            line_height_k,
+            shaped,
+        });
     }
 
     pub fn shape_wrapped_styled_spaced(
@@ -1246,14 +1328,41 @@ impl TextSystem {
         let line_height_k = line_height.key();
 
         let weight_raw_v = weight.value();
+        let style_k = style.key();
+        let mode_k = mode.key();
         if let Some(hit) = self.mru_hit(
             text,
             size_q,
             weight_raw_v,
             family,
-            style.key(),
+            style_k,
             width_q,
-            mode.key(),
+            mode_k,
+            spacing_k,
+            line_height_k,
+        ) {
+            return hit;
+        }
+        let slot_hash = Self::shape_slot_hash(
+            text,
+            size_q,
+            weight_raw_v,
+            family,
+            style_k,
+            width_q,
+            mode_k,
+            spacing_k,
+            line_height_k,
+        );
+        if let Some(hit) = self.slot_hit(
+            slot_hash,
+            text,
+            size_q,
+            weight_raw_v,
+            family,
+            style_k,
+            width_q,
+            mode_k,
             spacing_k,
             line_height_k,
         ) {
@@ -1266,9 +1375,9 @@ impl TextSystem {
             size_q,
             weight.value(),
             eff_family.clone(),
-            style.key(),
+            style_k,
             width_q,
-            mode.key(),
+            mode_k,
             spacing_k,
             line_height_k,
         );
@@ -1283,14 +1392,26 @@ impl TextSystem {
                 size_q,
                 weight_v: weight_raw_v,
                 family: family.map(str::to_owned),
-                style_k: style.key(),
+                style_k,
                 width_q,
-                mode_k: mode.key(),
+                mode_k,
                 spacing_k,
                 line_height_k,
-                key,
                 shaped: shaped.clone(),
             });
+            self.remember_slot(
+                slot_hash,
+                text,
+                size_q,
+                weight_raw_v,
+                family,
+                style_k,
+                width_q,
+                mode_k,
+                spacing_k,
+                line_height_k,
+                shaped.clone(),
+            );
             return shaped;
         }
         let shaped = self.shape_uncached_styled(
@@ -1318,14 +1439,26 @@ impl TextSystem {
             size_q,
             weight_v: weight_raw_v,
             family: family.map(str::to_owned),
-            style_k: style.key(),
+            style_k,
             width_q,
-            mode_k: mode.key(),
+            mode_k,
             spacing_k,
             line_height_k,
-            key,
             shaped: shaped.clone(),
         });
+        self.remember_slot(
+            slot_hash,
+            text,
+            size_q,
+            weight_raw_v,
+            family,
+            style_k,
+            width_q,
+            mode_k,
+            spacing_k,
+            line_height_k,
+            shaped.clone(),
+        );
         shaped
     }
 
