@@ -413,6 +413,18 @@ impl Runtime {
         self.inner.shader_ids.borrow().get(name).copied()
     }
 
+    /// Names of every shader registered on this runtime, sorted.
+    pub fn shader_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.inner.shader_ids.borrow().keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Whether a shader with `name` is registered.
+    pub fn has_shader(&self, name: &str) -> bool {
+        self.inner.shader_ids.borrow().contains_key(name)
+    }
+
     pub fn window_id(&self) -> WindowId {
         self.inner.window.get()
     }

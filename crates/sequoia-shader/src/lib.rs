@@ -32,6 +32,7 @@ pub use sequoia_shader_macros::shader;
 
 mod builtin;
 mod math;
+mod registry;
 mod sampler;
 pub mod stdlib;
 mod traits;
@@ -39,6 +40,7 @@ mod wgsl;
 
 pub use builtin::{ApplyMask, BUILTINS};
 pub use math::{Color, Vec2, Vec3, Vec4};
+pub use registry::ShaderRegistry;
 pub use sampler::Sampler2D;
 pub use traits::{
     FragLocal, FragPos, FragUv, FragWorld, MAX_TEXTURES, SequoiShader, TEXTURE_GROUP_BASE,
