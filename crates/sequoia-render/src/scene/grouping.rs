@@ -525,18 +525,41 @@ pub(crate) fn shift_gui_runs_with_shaders(
         .collect()
 }
 
-pub(crate) fn gui_run_draws(runs: &[GuiRun], image_draws: &[(u32, wgpu::BindGroup)]) -> u64 {
+pub(crate) fn gui_run_draws(
+    runs: &[GuiRun],
+    image_draws: &[Option<ImageBinding>],
+    has_image_atlas: bool,
+) -> u64 {
     let mut draws = 0u64;
     for run in runs {
         match *run {
             GuiRun::Quads(_, _) | GuiRun::Glyphs(_, _) | GuiRun::Gradients(_, _) => draws += 1,
             GuiRun::Shader(_, _, _, _) => draws += 1,
             GuiRun::Images(start, len) => {
-                let end = start + len;
-                draws += image_draws
-                    .iter()
-                    .filter(|(idx, _)| *idx >= start && *idx < end)
-                    .count() as u64;
+                let end = (start + len) as usize;
+                let mut index = start as usize;
+                while index < end {
+                    match image_draws.get(index) {
+                        Some(Some(ImageBinding::Atlas)) => {
+                            if has_image_atlas {
+                                draws += 1;
+                            }
+                            while index < end
+                                && matches!(
+                                    image_draws.get(index),
+                                    Some(Some(ImageBinding::Atlas))
+                                )
+                            {
+                                index += 1;
+                            }
+                        }
+                        Some(Some(ImageBinding::Texture(_))) => {
+                            draws += 1;
+                            index += 1;
+                        }
+                        _ => index += 1,
+                    }
+                }
             }
         }
     }

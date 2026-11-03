@@ -17,7 +17,7 @@ use winit::window::Window;
 
 use crate::gpu::pipelines::*;
 use crate::gpu::resources::{
-    ImageCache, SharedImageCache, UserShaderEntry, lock_images, vertex_buffer,
+    ImageAtlas, ImageCache, SharedImageCache, UserShaderEntry, lock_images, vertex_buffer,
 };
 use crate::gpu::shaders::{passthrough_wgsl, validate_user_shader};
 use crate::pass::opacity::*;
@@ -79,6 +79,7 @@ pub struct GpuRenderer {
     pub(crate) depth_tex: Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>,
     pub(crate) clear_color: Color,
     pub(crate) images: SharedImageCache,
+    pub(crate) image_atlas: Option<ImageAtlas>,
     pub(crate) budget: MemoryBudget,
     pub(crate) quality: QualityLevel,
     pub(crate) quality_low_frames: u32,
@@ -107,10 +108,11 @@ pub struct GpuRenderer {
     pub(crate) scratch_blit_keys: Vec<usize>,
     pub(crate) scratch_images: Vec<BlitQuad>,
     pub(crate) scratch_image_keys: Vec<u64>,
+    pub(crate) scratch_image_sources: HashMap<u64, usize>,
     pub(crate) scratch_gradients: Vec<GpuGradient>,
     pub(crate) scratch_opacities: Vec<f32>,
     pub(crate) group_layers: Vec<GroupLayer>,
-    pub(crate) scratch_image_draws: Vec<(u32, wgpu::BindGroup)>,
+    pub(crate) scratch_image_draws: Vec<Option<ImageBinding>>,
     pub(crate) scratch_seen: Vec<usize>,
     pub(crate) scratch_cached: Vec<CachedJob>,
     pub(crate) scratch_regions: Vec<(Region, Rc<SurfaceBinding>)>,
@@ -644,6 +646,7 @@ impl GpuRenderer {
             depth_tex: None,
             clear_color: CLEAR_COLOR,
             images,
+            image_atlas: None,
             budget: MemoryBudget::default(),
             quality: QualityLevel::Full,
             quality_low_frames: 0,
@@ -672,6 +675,7 @@ impl GpuRenderer {
             scratch_blit_keys: Vec::with_capacity(INITIAL_BLIT_CAPACITY),
             scratch_images: Vec::with_capacity(INITIAL_IMAGE_CAPACITY),
             scratch_image_keys: Vec::with_capacity(INITIAL_IMAGE_CAPACITY),
+            scratch_image_sources: HashMap::new(),
             scratch_gradients: Vec::with_capacity(INITIAL_GRADIENT_CAPACITY),
             scratch_opacities: Vec::new(),
             group_layers: Vec::new(),
@@ -810,7 +814,8 @@ impl GpuRenderer {
             .sum();
         MemoryUsage {
             buffers: self.buffer_bytes(),
-            images: lock_images(&self.images).bytes(),
+            images: lock_images(&self.images).bytes()
+                + self.image_atlas.as_ref().map(|a| a.bytes()).unwrap_or(0),
             atlas,
             surfaces,
             targets,
@@ -1115,6 +1120,7 @@ impl GpuRenderer {
             texture.destroy();
         }
         self.atlas_synced = None;
+        self.image_atlas = None;
         for (_, surface) in self.surface_tex.drain() {
             surface.texture.destroy();
             if let Some((msaa, _)) = surface.msaa {
@@ -1836,6 +1842,8 @@ impl GpuRenderer {
         let glyphs = &mut self.scratch_glyphs;
         let images = &mut self.scratch_images;
         let image_keys = &mut self.scratch_image_keys;
+        let image_sources = &mut self.scratch_image_sources;
+        crate::utils::index_image_sources(scene_items, image_sources);
         let gradients = &mut self.scratch_gradients;
         let runs = &mut self.scratch_runs;
         self.shader_data = ShaderGroupData::default();
@@ -2273,26 +2281,71 @@ impl GpuRenderer {
 
         let image_draws = &mut self.scratch_image_draws;
         image_draws.clear();
+        image_draws.resize(image_keys.len(), None);
         if !images.is_empty() {
             let max_dim = self.quality.max_image_dim().max(1);
             let allow_new = self.quality.max_image_dim() > 0;
-            for key in image_keys.iter() {
-                if lock_images(&self.images).failed(*key) {
+            for (i, key) in image_keys.iter().enumerate() {
+                if let Some(target) = target_from_key(*key) {
+                    if let Some(entry) = self.render_targets.get(&target) {
+                        image_draws[i] = Some(ImageBinding::Texture(entry.bind_group.clone()));
+                    }
                     continue;
                 }
-                let Some(src) = find_image_source(list.items(), *key) else {
+                let Some(&source_index) = image_sources.get(key) else {
                     continue;
                 };
-                let needs_upload = match lock_images(&self.images).get(*key) {
-                    None => true,
-                    Some(entry) => {
-                        let version_changed = src
-                            .dynamic_version()
-                            .is_some_and(|version| Some(version) != entry.version);
-                        let extent_changed = src
-                            .extent()
-                            .is_some_and(|extent| extent != (entry.width, entry.height));
-                        version_changed || extent_changed
+                let Some(sequoia_core::RenderItem::Image(draw)) =
+                    scene_items.get(source_index)
+                else {
+                    continue;
+                };
+                let src = &draw.source;
+                let tile = match self.image_atlas.as_ref().and_then(|a| a.tile(*key)) {
+                    Some(tile) => Some(tile),
+                    None if allow_new => {
+                        if self.image_atlas.is_none() {
+                            self.image_atlas = Some(ImageAtlas::new(
+                                &self.device,
+                                &self.atlas_bgl,
+                                &self.blit_sampler,
+                            ));
+                        }
+                        self.image_atlas
+                            .as_mut()
+                            .and_then(|atlas| atlas.insert(&self.queue, *key, src))
+                    }
+                    None => None,
+                };
+                if let Some(tile) = tile {
+                    let uv = images[i].uv;
+                    let du = tile[2] - tile[0];
+                    let dv = tile[3] - tile[1];
+                    images[i].uv = [
+                        tile[0] + uv[0] * du,
+                        tile[1] + uv[1] * dv,
+                        tile[0] + uv[2] * du,
+                        tile[1] + uv[3] * dv,
+                    ];
+                    image_draws[i] = Some(ImageBinding::Atlas);
+                    continue;
+                }
+                let needs_upload = {
+                    let cache = lock_images(&self.images);
+                    if cache.failed(*key) {
+                        continue;
+                    }
+                    match cache.get(*key) {
+                        None => true,
+                        Some(entry) => {
+                            let version_changed = src
+                                .dynamic_version()
+                                .is_some_and(|version| Some(version) != entry.version);
+                            let extent_changed = src
+                                .extent()
+                                .is_some_and(|extent| extent != (entry.width, entry.height));
+                            version_changed || extent_changed
+                        }
                     }
                 };
                 if needs_upload {
@@ -2302,24 +2355,19 @@ impl GpuRenderer {
                         &self.atlas_bgl,
                         &self.blit_sampler,
                         &self.images,
-                        &src,
+                        src,
                         allow_new,
                         max_dim,
                     );
                 }
             }
+            let cache = lock_images(&self.images);
             for (i, key) in image_keys.iter().enumerate() {
-                if let Some(target) = target_from_key(*key) {
-                    if let Some(entry) = self.render_targets.get(&target) {
-                        image_draws.push((i as u32, entry.bind_group.clone()));
-                    }
+                if image_draws[i].is_some() || target_from_key(*key).is_some() {
                     continue;
                 }
-                let group = lock_images(&self.images)
-                    .get(*key)
-                    .map(|entry| entry.bind_group.clone());
-                if let Some(entry) = group {
-                    image_draws.push((i as u32, entry));
+                if let Some(entry) = cache.get(*key) {
+                    image_draws[i] = Some(ImageBinding::Texture(entry.bind_group.clone()));
                 } else {
                     self.stats.dropped_images += 1;
                 }
@@ -2585,7 +2633,7 @@ impl GpuRenderer {
                                 };
                                 need_clear = false;
                                 passes += 1;
-                                draws += gui_run_draws(&seg.runs, image_draws);
+                                draws += gui_run_draws(&seg.runs, image_draws, self.image_atlas.is_some());
                                 let mut pass =
                                     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                         label: Some("sequoia-backdrop-segment"),
@@ -2614,6 +2662,7 @@ impl GpuRenderer {
                                     &self.gradient_pipeline,
                                     &self.bind_group,
                                     self.atlas_tex.as_ref().map(|(_, bg)| bg),
+                                    self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
                                     &self.quad_buf,
                                     quads,
                                     &self.glyph_buf,
@@ -2697,6 +2746,7 @@ impl GpuRenderer {
                                     &self.blit_pipeline,
                                     &self.gradient_pipeline,
                                     self.atlas_tex.as_ref().map(|(_, bg)| bg),
+                                    self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
                                     bufs,
                                     &mut encoder,
                                     scene_target,
@@ -2718,7 +2768,7 @@ impl GpuRenderer {
                                     filter_blur,
                                 );
                                 passes += if filter_blur >= 0.5 { 3 } else { 2 };
-                                draws += gui_run_draws(&fplan.runs, image_draws) + 1;
+                                draws += gui_run_draws(&fplan.runs, image_draws, self.image_atlas.is_some()) + 1;
                                 if filter_blur >= 0.5 {
                                     draws += 1;
                                 }
@@ -2733,7 +2783,7 @@ impl GpuRenderer {
                                 };
                                 need_clear = false;
                                 passes += 1;
-                                draws += gui_run_draws(&fplan.runs, image_draws);
+                                draws += gui_run_draws(&fplan.runs, image_draws, self.image_atlas.is_some());
                                 let mut pass =
                                     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                         label: Some("sequoia-filter-fallback"),
@@ -2762,6 +2812,7 @@ impl GpuRenderer {
                                     &self.gradient_pipeline,
                                     &self.bind_group,
                                     self.atlas_tex.as_ref().map(|(_, bg)| bg),
+                                    self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
                                     &self.quad_buf,
                                     quads,
                                     &self.glyph_buf,
@@ -2790,7 +2841,7 @@ impl GpuRenderer {
                     };
                     need_clear = false;
                     passes += 1;
-                    draws += gui_run_draws(&plan.runs, image_draws);
+                    draws += gui_run_draws(&plan.runs, image_draws, self.image_atlas.is_some());
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("sequoia-backdrop-segment"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2816,6 +2867,7 @@ impl GpuRenderer {
                         &self.gradient_pipeline,
                         &self.bind_group,
                         self.atlas_tex.as_ref().map(|(_, bg)| bg),
+                        self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
                         &self.quad_buf,
                         quads,
                         &self.glyph_buf,
@@ -2928,6 +2980,7 @@ impl GpuRenderer {
                 backdrop_pipeline: &self.backdrop_pipeline,
                 bind_group: &self.bind_group,
                 atlas_bg: self.atlas_tex.as_ref().map(|(_, bg)| bg),
+                image_atlas_bg: self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
                 quad_buf: &self.quad_buf,
                 glyph_buf: &self.glyph_buf,
                 image_buf: &self.image_buf,
@@ -2960,7 +3013,8 @@ impl GpuRenderer {
                     wgpu::LoadOp::Clear(clear_color_linear(self.clear_color))
                 };
                 passes += 1;
-                draws += blit_quads.len() as u64 + gui_run_draws(runs, image_draws);
+                draws += blit_quads.len() as u64
+                    + gui_run_draws(runs, image_draws, self.image_atlas.is_some());
                 let target = if use_offscreen { scene_target } else { &view };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("sequoia-composite"),
@@ -3019,12 +3073,45 @@ impl GpuRenderer {
                             pass.set_pipeline(&self.blit_pipeline);
                             pass.set_bind_group(0, &self.bind_group, &[]);
                             pass.set_vertex_buffer(0, self.image_buf.slice(..));
-                            for (idx, bg) in image_draws.iter() {
-                                if *idx < start || *idx >= start + len {
-                                    continue;
+                            let image_atlas_bg =
+                                self.image_atlas.as_ref().map(|atlas| &atlas.bind_group);
+                            let mut index = start as usize;
+                            let end = (start + len) as usize;
+                            let mut atlas_bound = false;
+                            while index < end {
+                                match image_draws.get(index) {
+                                    Some(Some(ImageBinding::Atlas)) => {
+                                        let Some(atlas_bg) = image_atlas_bg else {
+                                            index += 1;
+                                            atlas_bound = false;
+                                            continue;
+                                        };
+                                        let run_start = index;
+                                        while index < end
+                                            && matches!(
+                                                image_draws.get(index),
+                                                Some(Some(ImageBinding::Atlas))
+                                            )
+                                        {
+                                            index += 1;
+                                        }
+                                        if !atlas_bound {
+                                            pass.set_bind_group(1, atlas_bg, &[]);
+                                            atlas_bound = true;
+                                        }
+                                        pass.draw(0..4, run_start as u32..index as u32);
+                                    }
+                                    Some(Some(ImageBinding::Texture(bg))) => {
+                                        pass.set_bind_group(1, bg, &[]);
+                                        pass.draw(0..4, index as u32..index as u32 + 1);
+                                        atlas_bound = false;
+                                        index += 1;
+                                    }
+                                    _ => {
+                                        atlas_bound = false;
+                                        index += 1;
+                                    }
                                 }
-                                pass.set_bind_group(1, bg, &[]);
-                                pass.draw(0..4, *idx..*idx + 1);
                             }
                         }
                         GuiRun::Gradients(start, len) => {

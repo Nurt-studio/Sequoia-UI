@@ -37,6 +37,7 @@ pub(crate) struct OpacityDrawContext<'a> {
     pub(crate) backdrop_pipeline: &'a wgpu::RenderPipeline,
     pub(crate) bind_group: &'a wgpu::BindGroup,
     pub(crate) atlas_bg: Option<&'a wgpu::BindGroup>,
+    pub(crate) image_atlas_bg: Option<&'a wgpu::BindGroup>,
     pub(crate) quad_buf: &'a wgpu::Buffer,
     pub(crate) glyph_buf: &'a wgpu::Buffer,
     pub(crate) image_buf: &'a wgpu::Buffer,
@@ -175,7 +176,7 @@ pub(crate) fn draw_opacity_draws(
     target: &wgpu::TextureView,
     depth: usize,
     quads: &[GpuQuad],
-    image_draws: &[(u32, wgpu::BindGroup)],
+    image_draws: &[Option<ImageBinding>],
     encoder: &mut wgpu::CommandEncoder,
     passes: &mut u64,
     draws: &mut u64,
@@ -192,7 +193,7 @@ pub(crate) fn draw_opacity_draws(
                     continue;
                 }
                 *passes += 1;
-                *draws += gui_run_draws(runs, image_draws);
+                *draws += gui_run_draws(runs, image_draws, ctx.image_atlas_bg.is_some());
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("sequoia-opacity-segment"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -218,6 +219,7 @@ pub(crate) fn draw_opacity_draws(
                     ctx.gradient_pipeline,
                     ctx.bind_group,
                     ctx.atlas_bg,
+                    ctx.image_atlas_bg,
                     ctx.quad_buf,
                     quads,
                     ctx.glyph_buf,

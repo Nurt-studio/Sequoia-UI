@@ -2,15 +2,22 @@
 
 #[allow(unused_imports)]
 use std::any::Any;
+use std::collections::HashMap;
 
 use crate::types::*;
 use sequoia_core::{Color, ImageSource, Rect, RenderItem};
 
-pub(crate) fn find_image_source(items: &[RenderItem], key: u64) -> Option<ImageSource> {
-    items.iter().find_map(|item| match item {
-        RenderItem::Image(d) if d.source.cache_key() == key => Some(d.source.clone()),
-        _ => None,
-    })
+/// Builds a key-to-item-index map for image sources in `items`.
+///
+/// Duplicate keys keep the first index, which is enough to decode and upload
+/// each distinct source once per frame.
+pub(crate) fn index_image_sources(items: &[RenderItem], out: &mut HashMap<u64, usize>) {
+    out.clear();
+    for (index, item) in items.iter().enumerate() {
+        if let RenderItem::Image(draw) = item {
+            out.entry(draw.source.cache_key()).or_insert(index);
+        }
+    }
 }
 
 /// Decodes an image into RGBA8, rejecting sources outside the upload limits.
@@ -457,5 +464,49 @@ mod tests {
         assert_eq!(scissor_rect(empty, (50, 50)), None);
         let outside = Rect::from_xywh(60.0, 0.0, 10.0, 10.0);
         assert_eq!(scissor_rect(outside, (50, 50)), None);
+    }
+
+    fn image_item(id: u64) -> RenderItem {
+        RenderItem::Image(sequoia_core::ImageDraw {
+            rect: Rect::from_xywh(0.0, 0.0, 1.0, 1.0),
+            uv: [0.0, 0.0, 1.0, 1.0],
+            source: ImageSource::Rgba {
+                id,
+                width: 1,
+                height: 1,
+                data: std::sync::Arc::new(vec![0; 4]),
+            },
+            sampling: sequoia_core::ImageSampling::Linear,
+        })
+    }
+
+    #[test]
+    fn image_source_index_keeps_first_duplicate_and_skips_non_images() {
+        let items = vec![
+            RenderItem::Quad(sequoia_core::Quad {
+                rect: Rect::from_xywh(0.0, 0.0, 1.0, 1.0),
+                color: Color::TRANSPARENT,
+                radius: 0.0,
+                border_color: Color::TRANSPARENT,
+                border_width: 0.0,
+            }),
+            image_item(7),
+            image_item(9),
+            image_item(7),
+        ];
+        let mut index = HashMap::new();
+        index_image_sources(&items, &mut index);
+        assert_eq!(index.get(&7), Some(&1));
+        assert_eq!(index.get(&9), Some(&2));
+        assert_eq!(index.len(), 2);
+    }
+
+    #[test]
+    fn image_source_index_clears_previous_entries() {
+        let mut index = HashMap::new();
+        index.insert(1, 0);
+        index_image_sources(&[image_item(7)], &mut index);
+        assert_eq!(index.get(&7), Some(&0));
+        assert!(!index.contains_key(&1));
     }
 }

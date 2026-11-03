@@ -13,7 +13,7 @@
 use crate::renderer::GpuRenderer;
 use crate::scene::grouping::group_runs_with_opacity;
 use crate::types::*;
-use crate::utils::find_image_source;
+use crate::utils::index_image_sources;
 use sequoia_core::{PassNode, RenderList, RenderTargetId, TexInput};
 
 impl GpuRenderer {
@@ -255,17 +255,24 @@ impl GpuRenderer {
             }
         }
 
-        let mut image_draws: Vec<(u32, wgpu::BindGroup)> = Vec::new();
+        let mut image_sources = std::collections::HashMap::new();
+        index_image_sources(list.items(), &mut image_sources);
+        let mut image_draws: Vec<Option<ImageBinding>> = vec![None; image_keys.len()];
         for (index, key) in image_keys.iter().enumerate() {
             if let Some(target) = target_from_key(*key) {
                 if let Some(entry) = self.render_targets.get(&target) {
-                    image_draws.push((index as u32, entry.bind_group.clone()));
+                    image_draws[index] = Some(ImageBinding::Texture(entry.bind_group.clone()));
                 }
                 continue;
             }
-            let Some(source) = find_image_source(list.items(), *key) else {
+            let Some(&source_index) = image_sources.get(key) else {
                 continue;
             };
+            let Some(sequoia_core::RenderItem::Image(draw)) = list.items().get(source_index)
+            else {
+                continue;
+            };
+            let source = &draw.source;
             let max_dim = self.quality.max_image_dim().max(1);
             let allow_new = self.quality.max_image_dim() > 0;
             if let Some(group) = Self::image_bind_group(
@@ -278,7 +285,7 @@ impl GpuRenderer {
                 allow_new,
                 max_dim,
             ) {
-                image_draws.push((index as u32, group));
+                image_draws[index] = Some(ImageBinding::Texture(group));
             } else {
                 self.stats.dropped_images += 1;
             }
@@ -380,6 +387,7 @@ impl GpuRenderer {
                 &self.gradient_pipeline,
                 &self.bind_group,
                 atlas_bg,
+                None,
                 &self.quad_buf,
                 &quads,
                 &self.glyph_buf,

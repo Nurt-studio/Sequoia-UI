@@ -255,6 +255,15 @@ pub(crate) struct CachedSurface {
     pub(crate) msaa: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
+/// How one image draw fetches its pixels during a frame.
+#[derive(Clone)]
+pub(crate) enum ImageBinding {
+    /// Samples the shared static-image atlas.
+    Atlas,
+    /// Samples a dedicated texture cached for one image key.
+    Texture(wgpu::BindGroup),
+}
+
 /// Cached GPU texture for an image source.
 pub(crate) struct GpuImage {
     pub(crate) texture: wgpu::Texture,

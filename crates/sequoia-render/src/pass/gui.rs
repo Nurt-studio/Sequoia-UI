@@ -17,6 +17,7 @@ impl crate::renderer::GpuRenderer {
         gradient_pipeline: &wgpu::RenderPipeline,
         bind_group: &wgpu::BindGroup,
         atlas_bg: Option<&wgpu::BindGroup>,
+        image_atlas_bg: Option<&wgpu::BindGroup>,
         quad_buf: &wgpu::Buffer,
         quad_insts: &[GpuQuad],
         glyph_buf: &wgpu::Buffer,
@@ -28,7 +29,7 @@ impl crate::renderer::GpuRenderer {
         shader_textures: &[ShaderTextureGroups],
         user_shaders: &std::collections::HashMap<sequoia_core::ShaderId, UserShaderEntry>,
         runs: &[GuiRun],
-        image_draws: &[(u32, wgpu::BindGroup)],
+        image_draws: &[Option<ImageBinding>],
         all_opaque: bool,
     ) {
         for run in runs.iter() {
@@ -66,12 +67,43 @@ impl crate::renderer::GpuRenderer {
                     pass.set_pipeline(blit_pipeline);
                     pass.set_bind_group(0, bind_group, &[]);
                     pass.set_vertex_buffer(0, image_buf.slice(..));
-                    for (idx, bg) in image_draws.iter() {
-                        if *idx < start || *idx >= start + len {
-                            continue;
+                    let mut index = start as usize;
+                    let end = (start + len) as usize;
+                    let mut atlas_bound = false;
+                    while index < end {
+                        match image_draws.get(index) {
+                            Some(Some(ImageBinding::Atlas)) => {
+                                let Some(atlas_bg) = image_atlas_bg else {
+                                    index += 1;
+                                    atlas_bound = false;
+                                    continue;
+                                };
+                                let run_start = index;
+                                while index < end
+                                    && matches!(
+                                        image_draws.get(index),
+                                        Some(Some(ImageBinding::Atlas))
+                                    )
+                                {
+                                    index += 1;
+                                }
+                                if !atlas_bound {
+                                    pass.set_bind_group(1, atlas_bg, &[]);
+                                    atlas_bound = true;
+                                }
+                                pass.draw(0..4, run_start as u32..index as u32);
+                            }
+                            Some(Some(ImageBinding::Texture(bg))) => {
+                                pass.set_bind_group(1, bg, &[]);
+                                pass.draw(0..4, index as u32..index as u32 + 1);
+                                atlas_bound = false;
+                                index += 1;
+                            }
+                            _ => {
+                                atlas_bound = false;
+                                index += 1;
+                            }
                         }
-                        pass.set_bind_group(1, bg, &[]);
-                        pass.draw(0..4, *idx..*idx + 1);
                     }
                 }
                 GuiRun::Shader(start, len, shader_id, blend) => {

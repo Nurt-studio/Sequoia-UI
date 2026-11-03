@@ -778,6 +778,31 @@ fn runs_collect_images_in_paint_order() {
 }
 
 #[test]
+fn gui_run_draws_batches_consecutive_atlas_images() {
+    let draws = vec![
+        Some(ImageBinding::Atlas),
+        Some(ImageBinding::Atlas),
+        None,
+        Some(ImageBinding::Atlas),
+    ];
+    assert_eq!(
+        gui_run_draws(&[GuiRun::Images(0, 4)], &draws, true),
+        2,
+        "one draw per contiguous atlas span, gaps split spans"
+    );
+    assert_eq!(
+        gui_run_draws(&[GuiRun::Images(0, 4)], &draws, false),
+        0,
+        "atlas entries are skipped when no atlas is bound"
+    );
+    assert_eq!(
+        gui_run_draws(&[GuiRun::Images(0, 2)], &[None, None], true),
+        0,
+        "missing images add no draws"
+    );
+}
+
+#[test]
 fn a_large_scene_loses_nothing() {
     use sequoia_core::Quad;
     use sequoia_core::{GlyphQuad, TextDraw};

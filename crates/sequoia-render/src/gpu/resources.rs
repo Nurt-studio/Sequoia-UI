@@ -264,6 +264,176 @@ pub(crate) fn lock_images(cache: &SharedImageCache) -> std::sync::MutexGuard<'_,
     cache.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Fixed-size shelf-packed atlas for small static images.
+///
+/// Only non-dynamic sources that fit a tile are eligible. Dynamic images and
+/// sources that do not fit keep using the per-image texture cache.
+pub(crate) struct ImageAtlas {
+    texture: wgpu::Texture,
+    pub(crate) bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+    row_height: u32,
+    tiles: HashMap<u64, [f32; 4]>,
+    rejected: HashSet<u64>,
+}
+
+impl ImageAtlas {
+    const SIZE: u32 = 1024;
+    const MAX_TILE: u32 = 256;
+    const PAD: u32 = 1;
+
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sequoia-image-atlas"),
+            size: wgpu::Extent3d {
+                width: Self::SIZE,
+                height: Self::SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sequoia-image-atlas-bg"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+        Self {
+            texture,
+            bind_group,
+            width: Self::SIZE,
+            height: Self::SIZE,
+            x: 0,
+            y: 0,
+            row_height: 0,
+            tiles: HashMap::new(),
+            rejected: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn bytes(&self) -> u64 {
+        rgba8_bytes(self.width, self.height)
+    }
+
+    pub(crate) fn tile(&self, key: u64) -> Option<[f32; 4]> {
+        self.tiles.get(&key).copied()
+    }
+
+    /// Adds `source` to the atlas and returns its UV rect, if it fits.
+    pub(crate) fn insert(
+        &mut self,
+        queue: &wgpu::Queue,
+        key: u64,
+        source: &ImageSource,
+    ) -> Option<[f32; 4]> {
+        if self.rejected.contains(&key) || source.dynamic_version().is_some() {
+            return None;
+        }
+        if let Some((w, h)) = source.extent()
+            && (w == 0 || h == 0 || w > Self::MAX_TILE || h > Self::MAX_TILE)
+        {
+            self.rejected.insert(key);
+            return None;
+        }
+        let Some((w, h, data)) = decode_image(source) else {
+            self.rejected.insert(key);
+            return None;
+        };
+        if w == 0 || h == 0 || w > Self::MAX_TILE || h > Self::MAX_TILE {
+            self.rejected.insert(key);
+            return None;
+        }
+        let tw = w + Self::PAD * 2;
+        let th = h + Self::PAD * 2;
+        if tw > self.width {
+            self.rejected.insert(key);
+            return None;
+        }
+        if self.x + tw > self.width {
+            self.x = 0;
+            self.y += self.row_height;
+            self.row_height = 0;
+        }
+        if self.y + th > self.height {
+            self.rejected.insert(key);
+            return None;
+        }
+
+        let mut padded = vec![0u8; (tw * th * 4) as usize];
+        for row in 0..th {
+            let sy = row.saturating_sub(Self::PAD).min(h - 1);
+            let src_row = (sy * w * 4) as usize;
+            let dst_row = (row * tw * 4) as usize;
+            for col in 0..tw {
+                let sx = col.saturating_sub(Self::PAD).min(w - 1);
+                let src = src_row + (sx * 4) as usize;
+                let dst = dst_row + (col * 4) as usize;
+                padded[dst..dst + 4].copy_from_slice(&data[src..src + 4]);
+            }
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: self.x,
+                    y: self.y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &padded,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(tw * 4),
+                rows_per_image: Some(th),
+            },
+            wgpu::Extent3d {
+                width: tw,
+                height: th,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let u0 = (self.x + Self::PAD) as f32 / self.width as f32;
+        let v0 = (self.y + Self::PAD) as f32 / self.height as f32;
+        let u1 = (self.x + Self::PAD + w) as f32 / self.width as f32;
+        let v1 = (self.y + Self::PAD + h) as f32 / self.height as f32;
+        let uv = [u0, v0, u1, v1];
+        self.tiles.insert(key, uv);
+        self.x += tw;
+        self.row_height = self.row_height.max(th);
+        Some(uv)
+    }
+}
+
+impl Drop for ImageAtlas {
+    fn drop(&mut self) {
+        self.texture.destroy();
+    }
+}
+
 /// Render pipelines and binding layout for one registered user shader.
 pub(crate) struct UserShaderEntry {
     pub(crate) pipelines: HashMap<BlendMode, wgpu::RenderPipeline>,
