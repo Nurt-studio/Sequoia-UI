@@ -40,7 +40,7 @@ pub use single_instance::SingleInstance;
 pub use window::{WindowSettings, WindowSpec, Windows};
 
 pub use sequoia_assets::AssetRegistry as Assets;
-use sequoia_render::FrameSkip;
+use sequoia_render::{FrameSkip, RenderStats};
 pub use sequoia_render::{
     GpuBackend, MemoryBudget, PowerPreference as GpuPowerPreference, PresentMode as GpuPresentMode,
     QualityLevel, Region, SharedGpu, WgpuFrame, WgpuRenderer, WgpuSurface, wgpu,
@@ -149,6 +149,79 @@ fn accelerator_allowed(modifiers: Modifiers, text_input_focused: bool) -> bool {
         || modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
 }
 
+#[derive(Clone, Copy, Default)]
+struct BenchSample {
+    gap_ms: f64,
+    tick_ms: f64,
+    layout_ms: f64,
+    paint_ms: f64,
+    render_ms: f64,
+    stats: RenderStats,
+}
+
+#[derive(Default)]
+struct Bench {
+    remaining: u32,
+    samples: Vec<BenchSample>,
+    done: bool,
+    reported: bool,
+}
+
+impl Bench {
+    fn new(frames: u32) -> Self {
+        Self {
+            remaining: frames.max(1),
+            samples: Vec::with_capacity(frames as usize),
+            done: false,
+            reported: false,
+        }
+    }
+
+    fn sample(&mut self, sample: BenchSample) {
+        if self.done {
+            return;
+        }
+        self.samples.push(sample);
+        self.remaining = self.remaining.saturating_sub(1);
+        self.done = self.remaining == 0;
+    }
+
+    fn print_report(&self) {
+        let skip = (self.samples.len() / 10).min(self.samples.len().saturating_sub(1));
+        let samples = &self.samples[skip..];
+        if samples.is_empty() {
+            return;
+        }
+        let n = samples.len() as f64;
+        let mean = |f: fn(&BenchSample) -> f64| samples.iter().map(f).sum::<f64>() / n;
+        let mut render: Vec<f64> = samples.iter().map(|s| s.render_ms).collect();
+        render.sort_by(f64::total_cmp);
+        let total_draws: u64 = samples.iter().map(|s| s.stats.draw_calls).sum();
+        let total_passes: u64 = samples.iter().map(|s| s.stats.passes).sum();
+        let total_quads: u64 = samples.iter().map(|s| s.stats.quad_instances).sum();
+        let total_glyphs: u64 = samples.iter().map(|s| s.stats.glyph_instances).sum();
+        let total_images: u64 = samples.iter().map(|s| s.stats.image_instances).sum();
+        println!(
+            "[stress] frames={} avg(gap={:.2} tick={:.2} layout={:.2} paint={:.2} render={:.2}ms) \
+             p50_render={:.2}ms p95_render={:.2}ms draws={:.1} passes={:.1} \
+             quads={:.1} glyphs={:.1} images={:.1}",
+            samples.len(),
+            mean(|s| s.gap_ms),
+            mean(|s| s.tick_ms),
+            mean(|s| s.layout_ms),
+            mean(|s| s.paint_ms),
+            mean(|s| s.render_ms),
+            render[render.len() / 2],
+            render[((render.len() as f64 * 0.95) as usize).min(render.len() - 1)],
+            total_draws as f64 / n,
+            total_passes as f64 / n,
+            total_quads as f64 / n,
+            total_glyphs as f64 / n,
+            total_images as f64 / n,
+        );
+    }
+}
+
 pub struct App {
     windows: Vec<WindowSpec>,
     theme: Theme,
@@ -159,6 +232,8 @@ pub struct App {
     accelerators: Vec<Accelerator>,
     global_hotkeys: Vec<(Key, Modifiers, Rc<dyn Fn()>)>,
     shaders: Vec<(String, String)>,
+    shader_watch: Option<std::path::PathBuf>,
+    bench_frames: Option<u32>,
 }
 
 impl Default for App {
@@ -176,6 +251,8 @@ impl Default for App {
                 .iter()
                 .map(|(name, wgsl)| ((*name).to_string(), (*wgsl).to_string()))
                 .collect(),
+            shader_watch: None,
+            bench_frames: None,
         }
     }
 }
@@ -284,7 +361,25 @@ impl App {
     /// are logged and the shader is skipped.
     #[must_use]
     pub fn shader(mut self, name: impl Into<String>, wgsl: impl Into<String>) -> Self {
-        self.shaders.push((name.into(), wgsl.into()));
+        let name = name.into();
+        let wgsl = wgsl.into();
+        if let Some(existing) = self.shaders.iter_mut().find(|(entry, _)| *entry == name) {
+            existing.1 = wgsl;
+        } else {
+            self.shaders.push((name, wgsl));
+        }
+        self
+    }
+
+    /// Registers every source collected in a [`sequoia_shader::ShaderRegistry`].
+    ///
+    /// Later sources replace earlier ones with the same name, matching
+    /// [`App::shader`].
+    #[must_use]
+    pub fn shader_registry(mut self, registry: sequoia_shader::ShaderRegistry) -> Self {
+        for (name, wgsl) in registry.into_entries() {
+            self = self.shader(name, wgsl);
+        }
         self
     }
 
@@ -329,10 +424,46 @@ impl App {
         self
     }
 
+    /// Loads `assets/shaders` and hot-reloads every `.wgsl` file edited while
+    /// the app runs.
+    ///
+    /// This is [`App::watch_shader_dir`] with the conventional project path.
+    #[must_use]
+    pub fn watch_shaders(self) -> Self {
+        self.watch_shader_dir("assets/shaders")
+    }
+
+    /// Loads `dir` and hot-reloads every `.wgsl` file edited while the app
+    /// runs.
+    ///
+    /// The directory is loaded immediately with [`App::shader_dir`]; afterwards
+    /// the event loop polls it a few times per second. A changed file is read,
+    /// registered on every open window, and the window repaints. Shader names
+    /// stay stable, so a reload replaces the effect in place. Compile errors
+    /// are logged and the previous shader keeps rendering.
+    #[must_use]
+    pub fn watch_shader_dir(mut self, dir: impl AsRef<std::path::Path>) -> Self {
+        let dir = dir.as_ref().to_path_buf();
+        self = self.shader_dir(&dir);
+        self.shader_watch = Some(dir);
+        self
+    }
+
     /// Returns the registered shaders as `(name, wgsl)` pairs.
     #[must_use]
     pub fn shaders(&self) -> &[(String, String)] {
         &self.shaders
+    }
+
+    /// Names of registered shaders in registration order.
+    pub fn shader_names(&self) -> impl Iterator<Item = &str> {
+        self.shaders.iter().map(|(name, _)| name.as_str())
+    }
+
+    /// Whether a shader with `name` is registered.
+    #[must_use]
+    pub fn has_shader(&self, name: &str) -> bool {
+        self.shaders.iter().any(|(entry, _)| entry == name)
     }
 
     pub fn font(self, name: impl Into<String>, data: Vec<u8>) -> Self {
@@ -497,6 +628,16 @@ impl App {
         self
     }
 
+    /// Runs `frames` frames and prints aggregated frame and renderer timings.
+    ///
+    /// The first 10% of frames are treated as warmup. The application exits
+    /// automatically after the sample window, which makes this suitable for
+    /// before/after performance comparisons from a terminal.
+    pub fn benchmark(mut self, frames: u32) -> Self {
+        self.bench_frames = Some(frames.max(1));
+        self
+    }
+
     pub fn scale_factor(mut self, scale: f64) -> Self {
         self.primary_mut().settings.scale_override = Some(scale);
         self
@@ -560,9 +701,11 @@ impl App {
                 }
             }
         };
+        let bench = self.bench_frames.map(|frames| Rc::new(RefCell::new(Bench::new(frames))));
         let mut handler = PlatformApp {
             theme: self.theme,
             backend: self.backend,
+            bench: bench.clone(),
             redraw_mode: self.redraw_mode,
             assets: self.assets,
             accelerators: self.accelerators,
@@ -578,6 +721,7 @@ impl App {
             id_map: HashMap::new(),
             error: None,
             shaders: self.shaders,
+            shader_watch: self.shader_watch.map(ShaderWatch::new),
         };
         event_loop
             .run_app(&mut handler)
@@ -796,6 +940,8 @@ struct WindowState {
     gate: Rc<RefCell<PaintGate>>,
 
     list: RenderList,
+
+    bench: Option<Rc<RefCell<Bench>>>,
 }
 
 impl WindowState {
@@ -820,6 +966,11 @@ impl WindowState {
     fn draw_frame(&mut self, wid: WinitWindowId) {
         let superseded = self.gate.borrow_mut().begin_paint();
         let gap_ms = frame_gap_ms(wid);
+        if self.bench.is_some() {
+            // A benchmark measures whole-frame paint/render cost, so opt out
+            // of damage-based skipping for every sampled frame.
+            self.rt.request_frame();
+        }
         let mut t = Instant::now();
         self.rt.tick();
         let tick_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -867,6 +1018,17 @@ impl WindowState {
         }
         let render_ms = t.elapsed().as_secs_f64() * 1000.0;
         note_frame(gap_ms, tick_ms, layout_ms, paint_ms, render_ms);
+        if let Some(bench) = &self.bench {
+            let stats = self.gpu.take_stats();
+            bench.borrow_mut().sample(BenchSample {
+                gap_ms,
+                tick_ms,
+                layout_ms,
+                paint_ms,
+                render_ms,
+                stats,
+            });
+        }
         if self.settings.show_fps {
             self.push_fps_title(tick_ms + layout_ms + paint_ms + render_ms);
         }
@@ -1144,6 +1306,8 @@ struct PlatformApp {
     id_map: HashMap<WindowId, WinitWindowId>,
     error: Option<AppError>,
     shaders: Vec<(String, String)>,
+    shader_watch: Option<ShaderWatch>,
+    bench: Option<Rc<RefCell<Bench>>>,
 }
 
 impl PlatformApp {
@@ -1154,6 +1318,49 @@ impl PlatformApp {
         log::error!("sequoia-platform: {error}");
         self.error = Some(error);
         event_loop.exit();
+    }
+
+    /// Re-reads watched shader files and hot-reloads anything that changed.
+    fn poll_shader_watch(&mut self) {
+        let changed = {
+            let Some(watch) = self.shader_watch.as_mut() else {
+                return;
+            };
+            let now = Instant::now();
+            if now < watch.next_poll {
+                return;
+            }
+            watch.next_poll = now + SHADER_WATCH_INTERVAL;
+            watch.poll()
+        };
+        if changed.is_empty() {
+            return;
+        }
+        for (name, wgsl) in &changed {
+            if let Some(entry) = self.shaders.iter_mut().find(|(entry, _)| entry == name) {
+                entry.1.clone_from(wgsl);
+            } else {
+                self.shaders.push((name.clone(), wgsl.clone()));
+            }
+        }
+        for ws in self.live.values_mut() {
+            let mut repaint = false;
+            for (name, wgsl) in &changed {
+                match ws.gpu.register_shader(name, wgsl) {
+                    Ok(id) => {
+                        ws.rt.register_shader_id_with(name.clone(), id);
+                        repaint = true;
+                        log::info!("sequoia-platform: hot-reloaded shader `{name}`");
+                    }
+                    Err(e) => {
+                        log::error!("sequoia-platform: shader `{name}` hot reload failed: {e}");
+                    }
+                }
+            }
+            if repaint {
+                ws.request_redraw();
+            }
+        }
     }
 
     fn create_window(
@@ -1373,6 +1580,7 @@ impl PlatformApp {
             continuous_paced,
             gate,
             list: RenderList::new(),
+            bench: self.bench.clone(),
         };
 
         state.draw_frame(wid);
@@ -1491,20 +1699,28 @@ impl PlatformApp {
     }
 
     fn update_control_flow(&self, event_loop: &ActiveEventLoop) {
+        let mut deadline = None;
         if self.redraw_mode == RedrawMode::Continuous
             && self.live.values().any(|ws| ws.settings.fps_limit.is_some())
         {
-            let deadline = match (self.earliest_frame_deadline(), self.fps_refresh_deadline()) {
+            deadline = match (self.earliest_frame_deadline(), self.fps_refresh_deadline()) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (Some(a), None) => Some(a),
                 (None, Some(b)) => Some(b),
                 (None, None) => None,
             };
-            event_loop.set_control_flow(pacing_control_flow(deadline));
-        } else if let Some(deadline) = self.fps_refresh_deadline() {
-            event_loop.set_control_flow(pacing_control_flow(Some(deadline)));
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
+        } else if let Some(refresh) = self.fps_refresh_deadline() {
+            deadline = Some(refresh);
+        }
+        if let Some(watch) = &self.shader_watch {
+            deadline = Some(match deadline {
+                Some(current) => current.min(watch.next_poll),
+                None => watch.next_poll,
+            });
+        }
+        match deadline {
+            Some(_) => event_loop.set_control_flow(pacing_control_flow(deadline)),
+            None => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
 
@@ -1866,6 +2082,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.drain_requests(event_loop);
+        self.poll_shader_watch();
 
         if let Some(mgr) = self.global_hotkeys.as_ref() {
             let fired = mgr.drain();
@@ -1886,6 +2103,18 @@ impl ApplicationHandler<JobWake> for PlatformApp {
 
         for ws in self.live.values_mut() {
             ws.paint_if_requested();
+        }
+        if let Some(bench) = &self.bench
+            && bench.borrow().done
+        {
+            let mut bench = bench.borrow_mut();
+            if !bench.reported {
+                bench.reported = true;
+                bench.print_report();
+            }
+            drop(bench);
+            event_loop.exit();
+            return;
         }
         for ws in self.live.values_mut() {
             ws.refresh_fps_title();
@@ -1993,10 +2222,56 @@ fn pacing_control_flow(deadline: Option<Instant>) -> ControlFlow {
     }
 }
 
-fn collect_shaders_dir(
+/// How often watched shader directories are rescanned while the app runs.
+const SHADER_WATCH_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Polls one shader directory and returns files whose source changed.
+struct ShaderWatch {
+    dir: std::path::PathBuf,
+    sources: HashMap<String, String>,
+    next_poll: Instant,
+}
+
+impl ShaderWatch {
+    fn new(dir: std::path::PathBuf) -> Self {
+        let mut watch = Self {
+            dir,
+            sources: HashMap::new(),
+            next_poll: Instant::now() + SHADER_WATCH_INTERVAL,
+        };
+        watch.scan(&mut Vec::new());
+        watch
+    }
+
+    /// Returns `(name, wgsl)` for every new or edited file.
+    fn poll(&mut self) -> Vec<(String, String)> {
+        let mut changed = Vec::new();
+        self.scan(&mut changed);
+        changed
+    }
+
+    fn scan(&mut self, changed: &mut Vec<(String, String)>) {
+        let mut paths = Vec::new();
+        if collect_shader_paths(&self.dir, &self.dir, &mut paths).is_err() {
+            return;
+        }
+        for (name, path) in paths {
+            let Ok(wgsl) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if self.sources.get(&name) == Some(&wgsl) {
+                continue;
+            }
+            self.sources.insert(name.clone(), wgsl.clone());
+            changed.push((name, wgsl));
+        }
+    }
+}
+
+fn collect_shader_paths(
     root: &std::path::Path,
     current: &std::path::Path,
-    out: &mut Vec<(String, String)>,
+    out: &mut Vec<(String, std::path::PathBuf)>,
 ) -> std::io::Result<()> {
     if !current.is_dir() {
         return Ok(());
@@ -2005,14 +2280,27 @@ fn collect_shaders_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_shaders_dir(root, &path, out)?;
+            collect_shader_paths(root, &path, out)?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("wgsl")
             && let Ok(rel) = path.strip_prefix(root)
         {
             let name = rel.with_extension("").to_string_lossy().replace('\\', "/");
-            if let Ok(wgsl) = std::fs::read_to_string(&path) {
-                out.push((name, wgsl));
-            }
+            out.push((name, path));
+        }
+    }
+    Ok(())
+}
+
+fn collect_shaders_dir(
+    root: &std::path::Path,
+    current: &std::path::Path,
+    out: &mut Vec<(String, String)>,
+) -> std::io::Result<()> {
+    let mut paths = Vec::new();
+    collect_shader_paths(root, current, &mut paths)?;
+    for (name, path) in paths {
+        if let Ok(wgsl) = std::fs::read_to_string(path) {
+            out.push((name, wgsl));
         }
     }
     Ok(())
@@ -2022,6 +2310,33 @@ fn collect_shaders_dir(
 mod tests {
     use super::*;
     use sequoia_view::Unit;
+
+    #[test]
+    fn shader_registration_dedupes_and_accepts_a_registry() {
+        let app = App::new()
+            .shader("custom", "first")
+            .shader("custom", "second")
+            .shader_registry(sequoia_shader::ShaderRegistry::new().with_raw("custom", "third"));
+
+        let matches = app
+            .shaders()
+            .iter()
+            .filter(|(name, _)| name == "custom")
+            .count();
+        assert_eq!(matches, 1);
+        assert_eq!(
+            app.shader_names().filter(|name| *name == "custom").count(),
+            1
+        );
+        assert!(app.has_shader("custom"));
+        assert_eq!(
+            app.shaders()
+                .iter()
+                .find(|(name, _)| name == "custom")
+                .map(|(_, wgsl)| wgsl.as_str()),
+            Some("third")
+        );
+    }
 
     #[test]
     fn shader_file_and_directory_register_wgsl_sources() {
@@ -2069,6 +2384,60 @@ mod tests {
         );
         assert!(!shaders.iter().any(|(name, _)| name.ends_with("notes")));
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn temp_shader_dir(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "sequoia-shader-watch-{}-{:?}-{tag}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn shader_watch_reports_only_new_or_edited_files() {
+        let root = temp_shader_dir("changes");
+        std::fs::create_dir_all(root.join("effects")).expect("create shader dir");
+        std::fs::write(root.join("base.wgsl"), "fn a() {}").expect("write base");
+
+        let mut watch = ShaderWatch::new(root.clone());
+        assert!(watch.poll().is_empty(), "unchanged files are not reported");
+
+        std::fs::write(root.join("effects/new.wgsl"), "fn b() {}").expect("write new");
+        let changed = watch.poll();
+        assert_eq!(changed.len(), 1, "only the new file changes");
+        assert_eq!(changed[0].0, "effects/new");
+        assert_eq!(changed[0].1, "fn b() {}");
+
+        std::fs::write(root.join("base.wgsl"), "fn a() { changed }").expect("edit base");
+        let changed = watch.poll();
+        assert_eq!(
+            changed,
+            vec![("base".to_string(), "fn a() { changed }".to_string())]
+        );
+        assert!(watch.poll().is_empty(), "reported edits are not repeated");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn watch_shader_dir_loads_initial_files_and_keeps_the_directory() {
+        let root = temp_shader_dir("builder");
+        std::fs::create_dir_all(&root).expect("create shader dir");
+        std::fs::write(root.join("effect.wgsl"), "fn effect() {}").expect("write effect");
+
+        let app = App::new().watch_shader_dir(&root);
+        assert!(app.has_shader("effect"), "initial files are registered");
+        assert_eq!(app.shader_watch.as_deref(), Some(root.as_path()));
+
+        let app = App::new().watch_shaders();
+        assert_eq!(
+            app.shader_watch.as_deref(),
+            Some(std::path::Path::new("assets/shaders")),
+            "the default path is assets/shaders"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
