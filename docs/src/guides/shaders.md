@@ -57,6 +57,85 @@ not need to be imported from `sequoia_ui::shader` when they appear only in the
 signature. Import the shader `Color`, `Vec2`, `Vec3`, or `Vec4` when you need to
 construct uniform values, as the example does with `ShaderColor`.
 
+## Managing shader sources
+
+`ShaderRegistry` collects shaders before they reach the app. Names are unique:
+registering a name twice replaces the earlier source, so overlapping feature
+modules or an optional override do not create duplicate pipelines.
+
+```rust,no_run
+use sequoia_ui::prelude::*;
+use sequoia_ui::shader::ShaderRegistry;
+
+let shaders = ShaderRegistry::new()
+    .with::<ProceduralGrid>()
+    .with::<Invert>()
+    .with_raw("effects/scanlines", include_str!("../shaders/scanlines.wgsl"));
+
+App::new()
+    .shader_registry(shaders)
+    .root(Canvas::new().with_shader_pass(ShaderPass::new(ProceduralGrid {
+        cell: 16.0,
+        line: ShaderColor::WHITE,
+        background: ShaderColor::BLACK,
+    })))
+    .run()
+    .expect("event loop failed");
+```
+
+`with_file` and `with_dir` load WGSL from disk; directory shaders are named by
+relative path (`effects/invert`). `get`, `contains`, and `names` make the
+registry usable outside startup, for example to assert that an optional effect
+is available. `App::shader_names` and `App::has_shader` expose the final set,
+and `Runtime::shader_names` reports what the active runtime registered.
+
+## Passes and chains
+
+`ShaderPass` configures one draw: rectangle, UV window, blend mode, and named
+texture inputs. `primary_input` binds the first `Sampler2D`, which keeps the
+common single-input effect free of string matching:
+
+```rust,no_run
+# use sequoia_ui::prelude::*;
+# use sequoia_ui::core::BlendMode;
+# shader! { pub fn invert(content: Sampler2D, uv: FragUv) -> Color {
+#     let c = textureSample(content, content_sampler, uv);
+#     return vec4<f32>(1.0 - c.rgb, c.a);
+# } }
+let view = Canvas::new().with_effect_pass(
+    ShaderPass::new(Invert)
+        .blend(BlendMode::Screen)
+        .uv([0.0, 0.0, 1.0, 0.5]),
+    |g| {
+        g.fill(g.rect(), Color::hex(0x2d7ff9).into());
+    },
+);
+# let _ = view;
+```
+
+`Canvas::with_shader_pass` draws a procedural shader without capturing content.
+`Canvas::with_layer_effect` captures two layers and binds them in declaration
+order. `ShaderChain` sequences passes with an offscreen target between them:
+
+```rust,no_run
+let view = Canvas::new().with_effect_chain(
+    |g| {
+        g.fill(g.rect(), Color::hex(0x2d7ff9).into());
+    },
+    ShaderChain::new()
+        .effect(Invert)
+        .effect(Blur { radius: 6.0 }),
+);
+# let _ = view;
+```
+
+A chain pass that is not registered is skipped and its input is forwarded; if
+the last pass is missing, the captured layer is blitted back unchanged, so an
+optional effect degrades instead of blanking the layer. Low-level callers
+can use `Painter::try_shader` and `try_shader_with_blend` to get a `bool` for
+the same diagnostics; `Painter::shader` keeps its infallible signature and logs
+a warning.
+
 ## When to use a shader
 
 Use a shader when the effect is per-pixel and not covered by the normal paint
@@ -221,6 +300,14 @@ skipped. `Painter::shader` also logs a warning and draws nothing when the name i
 not registered, so a missing `shader_type` shows up as a blank rectangle rather
 than an error.
 
+### Hot reload
+
+For development, `watch_shaders()` loads `assets/shaders` and rescans it while
+the app runs; `watch_shader_dir(dir)` does the same for another directory. An
+edited file is re-read, registered on every open window under the same name, and
+the window repaints. A shader that fails to compile is logged and the previous
+version keeps rendering.
+
 The `shader!` macro validates the generated module with `naga` at compile time,
 including entry points and type checking. Registration validates again at
 runtime, which catches hand-written modules and driver-specific restrictions.
@@ -302,6 +389,11 @@ returns varied alpha composites correctly with the standard source-over mode;
 use additive or screen modes for glows and light effects.
 
 ## Performance and pitfalls
+
+- Prefer one `with_effect_chain` over manually created targets: each link in the
+  chain is a single offscreen pass, and an empty chain draws content directly.
+- `ShaderPass` and `ShaderChain` clone cheaply (a small vector of bindings or
+  pass closures), so they can live in a view struct instead of a draw closure.
 
 - Every shader draw is a quad with per-pixel work. Full-window effects at high
   device pixel ratios can be expensive; keep passes few and reuse targets.

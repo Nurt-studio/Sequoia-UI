@@ -2,13 +2,14 @@
 
 use std::rc::Rc;
 
-use sequoia_core::{Color, Dirty, Fill, Length, Point, Rect, Size, Vec2};
+use sequoia_core::{BlendMode, Color, Dirty, Fill, Length, Point, Rect, Size, TexInput, Vec2};
 use sequoia_input::{
     CursorIcon, Event, EventPhase, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
 };
 use sequoia_layout::LayoutStyle;
 
 use crate::painter::Painter;
+use crate::shader_pass::{ShaderChain, ShaderPass};
 use crate::view::{EventCtx, PaintCtx, View};
 
 #[derive(Clone)]
@@ -217,6 +218,112 @@ impl Canvas {
                 rect,
                 &[("content", sequoia_core::TexInput::Target(target))],
             );
+        });
+        self
+    }
+
+    /// Replaces the canvas draw with a configured shader pass.
+    ///
+    /// The pass draws over the canvas bounds unless [`ShaderPass::at`] was
+    /// used. Missing registrations log a warning and skip the draw.
+    #[must_use]
+    pub fn with_shader_pass<S>(mut self, pass: ShaderPass<S>) -> Self
+    where
+        S: sequoia_shader::SequoiShader + Copy + 'static,
+    {
+        self.draw = Rc::new(move |g: &mut Painter| {
+            pass.draw(g);
+        });
+        self
+    }
+
+    /// Replaces the canvas draw with `content` piped through a configured pass.
+    ///
+    /// The pass's first declared texture is bound to the captured content unless
+    /// the pass already binds it explicitly. Use this instead of `with_effect`
+    /// when the effect has extra uniforms, a blend mode, or a UV window.
+    #[must_use]
+    pub fn with_effect_pass<S>(
+        mut self,
+        pass: ShaderPass<S>,
+        content: impl Fn(&mut Painter) + 'static,
+    ) -> Self
+    where
+        S: sequoia_shader::SequoiShader + Copy + 'static,
+    {
+        self.draw = Rc::new(move |g: &mut Painter| {
+            let rect = g.rect();
+            let (target, ()) = g.group(rect.size, BlendMode::Normal, |inner| content(inner));
+            pass.clone()
+                .at(rect)
+                .primary_input(TexInput::Target(target))
+                .draw(g);
+        });
+        self
+    }
+
+    /// Captures two layers and feeds them to the pass in declaration order.
+    ///
+    /// This is the convenient form of a transition or a two-input composite:
+    /// the first shader texture receives `first`, the second receives `second`.
+    #[must_use]
+    pub fn with_layer_effect<S>(
+        mut self,
+        pass: ShaderPass<S>,
+        first: impl Fn(&mut Painter) + 'static,
+        second: impl Fn(&mut Painter) + 'static,
+    ) -> Self
+    where
+        S: sequoia_shader::SequoiShader + Copy + 'static,
+    {
+        self.draw = Rc::new(move |g: &mut Painter| {
+            let rect = g.rect();
+            let (first_target, ()) = g.group(rect.size, BlendMode::Normal, |inner| first(inner));
+            let (second_target, ()) = g.group(rect.size, BlendMode::Normal, |inner| second(inner));
+            pass.clone()
+                .at(rect)
+                .layers(
+                    TexInput::Target(first_target),
+                    TexInput::Target(second_target),
+                )
+                .draw(g);
+        });
+        self
+    }
+
+    /// Pipes `content` through every pass in `chain`.
+    ///
+    /// Intermediate results live in offscreen targets; the final pass draws
+    /// into the canvas. A pass that is not registered is skipped and its input
+    /// is forwarded, so an optional effect does not blank the layer.
+    #[must_use]
+    pub fn with_effect_chain(
+        mut self,
+        content: impl Fn(&mut Painter) + 'static,
+        chain: ShaderChain,
+    ) -> Self {
+        self.draw = Rc::new(move |g: &mut Painter| {
+            if chain.is_empty() {
+                content(g);
+                return;
+            }
+            let rect = g.rect();
+            let (mut target, ()) = g.group(rect.size, BlendMode::Normal, |inner| content(inner));
+            let count = chain.len();
+            for (index, pass) in chain.passes().iter().enumerate() {
+                if index + 1 == count {
+                    if !(pass)(g, rect, TexInput::Target(target)) {
+                        g.blit(target, rect, [0.0, 0.0, 1.0, 1.0]);
+                    }
+                } else {
+                    let (next, drawn) = g.group(rect.size, BlendMode::Normal, |inner| {
+                        (pass)(inner, rect, TexInput::Target(target))
+                    });
+                    if drawn {
+                        target = next;
+                    }
+                }
+            }
         });
         self
     }

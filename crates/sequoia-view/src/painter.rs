@@ -583,12 +583,7 @@ impl<'a, 'b> Painter<'a, 'b> {
     ///
     /// `uv` is `[u0, v0, u1, v1]`; `[0.0, 0.0, 1.0, 1.0]` copies the whole
     /// target. The current blend mode from [`Painter::with_blend`] applies.
-    pub fn blit(
-        &mut self,
-        target: sequoia_core::RenderTargetId,
-        rect: Rect,
-        uv: [f32; 4],
-    ) -> Rect {
+    pub fn blit(&mut self, target: sequoia_core::RenderTargetId, rect: Rect, uv: [f32; 4]) -> Rect {
         if rect.is_empty() {
             return Rect::ZERO;
         }
@@ -617,7 +612,7 @@ impl<'a, 'b> Painter<'a, 'b> {
     /// Pushes a typed shader draw with explicit texture coordinates.
     ///
     /// `uv` is `[u0, v0, u1, v1]`. Use [`Painter::group`] to produce target
-    /// inputs.
+    /// inputs. Returns [`Rect::ZERO`] when the shader is not registered.
     pub fn shader_at<S: sequoia_shader::SequoiShader>(
         &mut self,
         shader: S,
@@ -625,15 +620,92 @@ impl<'a, 'b> Painter<'a, 'b> {
         uv: [f32; 4],
         inputs: &[(&str, sequoia_core::TexInput)],
     ) -> Rect {
+        if self.push_shader_draw(shader, rect, uv, inputs, None) {
+            rect
+        } else {
+            Rect::ZERO
+        }
+    }
+
+    /// Pushes a typed shader draw and reports whether it was recorded.
+    ///
+    /// Unlike [`Painter::shader`], a missing registration is visible to the
+    /// caller, which makes optional effect chains and tests explicit.
+    pub fn try_shader<S: sequoia_shader::SequoiShader>(
+        &mut self,
+        shader: S,
+        rect: Rect,
+        inputs: &[(&str, sequoia_core::TexInput)],
+    ) -> bool {
+        self.push_shader_draw(shader, rect, [0.0, 0.0, 1.0, 1.0], inputs, None)
+    }
+
+    /// Records a shader draw with explicit texture coordinates.
+    pub fn try_shader_at<S: sequoia_shader::SequoiShader>(
+        &mut self,
+        shader: S,
+        rect: Rect,
+        uv: [f32; 4],
+        inputs: &[(&str, sequoia_core::TexInput)],
+    ) -> bool {
+        self.push_shader_draw(shader, rect, uv, inputs, None)
+    }
+
+    /// Records a shader draw with an explicit blend mode.
+    pub fn try_shader_with_blend<S: sequoia_shader::SequoiShader>(
+        &mut self,
+        shader: S,
+        rect: Rect,
+        textures: &[(&str, sequoia_core::TexInput)],
+        blend: sequoia_core::BlendMode,
+    ) -> bool {
+        self.push_shader_draw(shader, rect, [0.0, 0.0, 1.0, 1.0], textures, Some(blend))
+    }
+
+    /// Records a shader draw with explicit texture coordinates and blend mode.
+    pub fn try_shader_at_with_blend<S: sequoia_shader::SequoiShader>(
+        &mut self,
+        shader: S,
+        rect: Rect,
+        uv: [f32; 4],
+        textures: &[(&str, sequoia_core::TexInput)],
+        blend: sequoia_core::BlendMode,
+    ) -> bool {
+        self.push_shader_draw(shader, rect, uv, textures, Some(blend))
+    }
+
+    /// Pushes a typed shader draw with an explicit blend mode.
+    pub fn shader_with_blend<S: sequoia_shader::SequoiShader>(
+        &mut self,
+        shader: S,
+        rect: Rect,
+        textures: &[(&str, sequoia_core::TexInput)],
+        blend: sequoia_core::BlendMode,
+    ) -> Rect {
+        if self.push_shader_draw(shader, rect, [0.0, 0.0, 1.0, 1.0], textures, Some(blend)) {
+            rect
+        } else {
+            Rect::ZERO
+        }
+    }
+
+    fn push_shader_draw<S: sequoia_shader::SequoiShader>(
+        &mut self,
+        shader: S,
+        rect: Rect,
+        uv: [f32; 4],
+        inputs: &[(&str, sequoia_core::TexInput)],
+        blend: Option<sequoia_core::BlendMode>,
+    ) -> bool {
         use sequoia_core::ShaderDraw;
         use std::sync::Arc;
 
         if rect.is_empty() {
-            return Rect::ZERO;
+            return false;
         }
         let Some(shader_id) = self.ctx.runtime().shader_id(S::NAME) else {
             log::warn!("Painter::shader: shader `{}` is not registered", S::NAME);
-            return Rect::ZERO;
+            return false;
         };
         let mut uniforms = Vec::with_capacity(S::UNIFORM_SIZE);
         shader.encode_uniforms(&mut uniforms);
@@ -663,64 +735,11 @@ impl<'a, 'b> Painter<'a, 'b> {
             shader: shader_id,
             uniforms: Arc::from(uniforms),
             textures: Arc::from(bindings),
-            blend: self.current_blend,
+            blend: blend.unwrap_or(self.current_blend),
             opacity: 1.0,
         };
         self.ctx.list.push_shader(draw);
-        rect
-    }
-
-    /// Pushes a typed shader draw with an explicit blend mode.
-    pub fn shader_with_blend<S: sequoia_shader::SequoiShader>(
-        &mut self,
-        shader: S,
-        rect: Rect,
-        textures: &[(&str, sequoia_core::TexInput)],
-        blend: sequoia_core::BlendMode,
-    ) -> Rect {
-        use sequoia_core::ShaderDraw;
-        use std::sync::Arc;
-
-        if rect.is_empty() {
-            return Rect::ZERO;
-        }
-        let Some(shader_id) = self.ctx.runtime().shader_id(S::NAME) else {
-            log::warn!("Painter::shader: shader `{}` is not registered", S::NAME);
-            return Rect::ZERO;
-        };
-        let mut uniforms = Vec::with_capacity(S::UNIFORM_SIZE);
-        shader.encode_uniforms(&mut uniforms);
-        let mut bindings = Vec::new();
-        for (slot, name) in S::TEXTURES
-            .iter()
-            .enumerate()
-            .take(sequoia_shader::MAX_TEXTURES)
-        {
-            let Some((_, input)) = textures.iter().find(|(key, _)| key == name) else {
-                continue;
-            };
-            bindings.push((slot as u32, input.clone()));
-        }
-        for (name, _) in textures {
-            if !S::TEXTURES.contains(name) {
-                log::warn!(
-                    "Painter::shader: shader `{}` has no texture input named `{name}`",
-                    S::NAME
-                );
-            }
-        }
-        let global = self.to_global_rect(rect);
-        let draw = ShaderDraw {
-            rect: global,
-            uv: [0.0, 0.0, 1.0, 1.0],
-            shader: shader_id,
-            uniforms: Arc::from(uniforms),
-            textures: Arc::from(bindings),
-            blend,
-            opacity: 1.0,
-        };
-        self.ctx.list.push_shader(draw);
-        rect
+        true
     }
 
     pub fn grid(&mut self, step: f32, color: Color) -> u32 {

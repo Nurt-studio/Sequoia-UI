@@ -412,10 +412,17 @@ let inverted = Canvas::new().with_effect(Invert, |g| {
 ```
 
 Shaders must be registered on the app with `App::shader_type::<T>()` (or
-`shader`/`shader_file`/`shader_dir` for raw WGSL). For manual multi-pass work,
-`Painter::group` captures a target and `Painter::shader` samples it. The
-[Custom shaders](shaders.md) guide covers the macro, uniforms, texture inputs,
-blending, and limits.
+`shader`/`shader_file`/`shader_dir` for raw WGSL). For configured work,
+`Canvas::with_shader_pass` draws a procedural shader, `with_effect_pass` binds
+captured content automatically, `with_layer_effect` feeds two captured layers,
+and `with_effect_chain` runs several passes with offscreen intermediates.
+`ShaderPass` carries the blend mode, UV window, and named inputs; `ShaderChain`
+skips unregistered passes instead of blanking the layer. Use `ShaderRegistry`
+to collect and deduplicate sources before `App::shader_registry`.
+
+For manual multi-pass work, `Painter::group` captures a target and
+`Painter::shader` samples it. The [Custom shaders](shaders.md) guide covers the
+macro, uniforms, texture inputs, blending, and limits.
 
 ## Testing
 

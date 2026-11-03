@@ -41,6 +41,7 @@ mod rich_text;
 mod runtime;
 mod scroll_view;
 mod scrub;
+mod shader_pass;
 mod split_panel;
 mod styleable;
 mod surface;
@@ -122,6 +123,7 @@ pub use sequoia_dock::{
     SplitAxis, decode as dock_decode, drop_from_fraction, drop_from_fraction_or_float,
     encode as dock_encode, preview_rect as dock_preview_rect,
 };
+pub use shader_pass::{ShaderChain, ShaderPass};
 pub use split_panel::SplitPanel;
 pub use styleable::{Decoratable, Styleable};
 pub use surface::{SurfaceDraw, SurfaceInputBinding};
@@ -230,6 +232,7 @@ pub mod prelude {
     pub use crate::runtime::{ElementId, InteractState, Runtime, RuntimeError, Stats, ViewState};
     pub use crate::scroll_view::{ScrollAxis, ScrollView, ScrollbarVisibility};
     pub use crate::scrub::Scrub;
+    pub use crate::shader_pass::{ShaderChain, ShaderPass};
     pub use crate::split_panel::SplitPanel;
     pub use crate::styleable::{Decoratable, Styleable};
     pub use crate::surface::{SurfaceDraw, SurfaceInputBinding};
