@@ -141,7 +141,13 @@ pub(crate) fn blend_component(mode: BlendMode) -> wgpu::BlendComponent {
             dst_factor: Factor::One,
             operation: Op::Subtract,
         },
-        _ => normal,
+        _ => {
+            debug_assert!(
+                !blend_mode_is_advanced(mode),
+                "advanced blend mode {mode:?} has no fixed-function mapping and falls back to Normal"
+            );
+            normal
+        }
     }
 }
 

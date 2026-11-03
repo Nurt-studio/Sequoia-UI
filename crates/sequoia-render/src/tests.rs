@@ -71,6 +71,13 @@ fn fixed_function_blend_modes_get_distinct_states() {
 }
 
 #[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "falls back to Normal")]
+fn advanced_blend_modes_do_not_silently_downgrade() {
+    let _ = blend_component(BlendMode::Overlay);
+}
+
+#[test]
 fn shader_items_become_instances_with_aligned_uniforms() {
     let red = [1.0f32, 0.0, 0.0, 1.0];
     let mut uniforms = Vec::new();
