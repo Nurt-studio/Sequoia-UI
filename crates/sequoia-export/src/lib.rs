@@ -145,19 +145,33 @@ pub fn render_to_image(
     root: impl View + 'static,
     opts: &ExportOptions,
 ) -> Result<RgbaImage, ExportError> {
+    render_to_image_with_assets(root, opts, AssetRegistry::with_builtin_icons())
+}
+
+/// Renders `root` with a custom asset registry.
+///
+/// Use this when the exported view relies on icons or fonts registered at
+/// runtime, for example an editor that loads its own icon directory.
+pub fn render_to_image_with_assets(
+    root: impl View + 'static,
+    opts: &ExportOptions,
+    assets: AssetRegistry,
+) -> Result<RgbaImage, ExportError> {
     let (pw, ph) = opts.physical_size()?;
     let scale = opts.sanitized_scale();
 
     let env = Environment::new();
     env.provide(opts.theme);
-    env.provide(AssetRegistry::with_builtin_icons());
+
+    let mut text = TextSystem::new();
+    text.set_scale_factor(scale);
+    install_fonts(&assets, &mut text);
+    env.provide(assets);
 
     let rt = Runtime::new();
     rt.set_environment(env);
     rt.mount(root);
 
-    let mut text = TextSystem::new();
-    text.set_scale_factor(scale);
     rt.layout(
         Rect::from_xywh(0.0, 0.0, opts.width, opts.height),
         &mut text,
@@ -176,9 +190,36 @@ pub fn render_to_image(
     Ok(rasterize(&list, text.atlas(), pw, ph, scale, opts))
 }
 
+fn install_fonts(assets: &AssetRegistry, text: &mut TextSystem) {
+    let mut families: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (alias, bytes) in assets.fonts() {
+        if let Some(family) = text.load_font(bytes.to_vec()) {
+            text.register_alias(alias.clone(), family.clone());
+            families.insert(alias, family);
+        }
+    }
+    if let Some(alias) = assets.default_font() {
+        if let Some(family) = families.get(&alias) {
+            text.set_default_family(Some(family.clone()));
+        } else if text.font_families().iter().any(|family| family == &alias) {
+            text.set_default_family(Some(alias));
+        }
+    }
+}
+
 pub fn export_png(
     root: impl View + 'static,
     opts: &ExportOptions,
+    path: impl AsRef<Path>,
+) -> Result<PathBuf, ExportError> {
+    export_png_with_assets(root, opts, AssetRegistry::with_builtin_icons(), path)
+}
+
+/// Saves a PNG rendered with a custom asset registry.
+pub fn export_png_with_assets(
+    root: impl View + 'static,
+    opts: &ExportOptions,
+    assets: AssetRegistry,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, ExportError> {
     let path = path.as_ref().to_path_buf();
@@ -188,7 +229,7 @@ pub fn export_png(
         std::fs::create_dir_all(parent)
             .map_err(|e| ExportError::Io(format!("mkdir {}: {e}", parent.display())))?;
     }
-    let img = render_to_image(root, opts)?;
+    let img = render_to_image_with_assets(root, opts, assets)?;
     img.save(&path)
         .map_err(|e| ExportError::Io(format!("save {}: {e}", path.display())))?;
     Ok(path)
