@@ -44,19 +44,68 @@ split and an inner vertical split.
 cargo run -p sequoia-ui --example split-panel
 ```
 
-## Shaders
+## Form
 
-Two GPU effect demos built with the `shader!` macro. `progressive_blur` shows a
-separable blur with a UV-space ramp; `shader_gallery` renders a blurred card
-over a background.
+A small account form with text and number fields, validation rules, a radio
+group, a slider, and a submit button. It shows how `Form` coordinates the
+fields it registers.
 
 ```text
-cargo run -p sequoia-ui --example progressive_blur
+cargo run -p sequoia-ui --example form
+```
+
+The example is in
+[`crates/sequoia-ui/examples/form.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/form.rs).
+
+## Todo
+
+A keyed list with stable IDs, toggling, removal, and derived counts. It shows
+how a `List` rebuilds from a `Signal<Vec<T>>` while keeping element state.
+
+```text
+cargo run -p sequoia-ui --example todo
+```
+
+The example is in
+[`crates/sequoia-ui/examples/todo.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/todo.rs).
+
+## Tabs
+
+A tabbed window built with `TabStrip` and a custom view that rebuilds its body
+when the active tab changes.
+
+```text
+cargo run -p sequoia-ui --example tabs
+```
+
+The example is in
+[`crates/sequoia-ui/examples/tabs.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/tabs.rs).
+
+## Seq hello
+
+A window described entirely in `.seq` source and loaded with
+`SeqLoader::load_str_with`. The button calls a Rust action through
+`HostBindings`. The `.seq` format is experimental; the Rust API is the
+supported path.
+
+```text
+cargo run -p sequoia-ui --example seq_hello
+```
+
+The example is in
+[`crates/sequoia-ui/examples/seq_hello.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/seq_hello.rs).
+
+## Shaders
+
+`shader_gallery` renders a blurred card over a background and shows a custom
+effect chain built with the `shader!` macro.
+
+```text
 cargo run -p sequoia-ui --example shader_gallery
 ```
 
 See [Custom shaders](../guides/shaders.md) for the macro, registration, and
-offscreen passes they use.
+offscreen passes it uses.
 
 ## Paint
 

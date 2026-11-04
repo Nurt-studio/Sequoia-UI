@@ -46,6 +46,11 @@ mdbook serve docs --open
 `mdbook build` fails when a page is missing from the source tree, so it is also
 a link check for the table of contents.
 
+To publish the book, upload the generated `docs/book/` directory to a static
+host or to GitHub Pages. For GitHub Pages, a CI job can run `mdbook build docs`
+and upload `docs/book` as the Pages artifact. Add an empty `.nojekyll` file to
+the artifact so GitHub Pages serves the assets unchanged.
+
 ## Crate map
 
 Sequoia is a workspace. The facade crate `sequoia-ui` re-exports the modules
