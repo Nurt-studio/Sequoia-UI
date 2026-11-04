@@ -253,9 +253,9 @@ mod tests {
     fn generated_code_roundtrips() {
         let root = Some(crate::document::demo::demo_tree());
         let code1 = to_svelte(&root);
-        let parsed = from_svelte(&code1).expect("parser akceptuje własny kod");
+        let parsed = from_svelte(&code1).expect("parser accepts its own output");
         let code2 = to_svelte(&parsed);
-        assert_eq!(code1, code2, "runda AST→kod→AST→kod musi być stabilna");
+        assert_eq!(code1, code2, "AST -> code -> AST -> code must be stable");
     }
 
     #[test]
@@ -277,6 +277,6 @@ mod tests {
         }
         let rules = code.matches(".{").count() + code.matches('{').count();
         assert!(opens > 0);
-        assert!(rules >= opens, "sekcje CSS: {rules}, tagi: {opens}");
+        assert!(rules >= opens, "CSS rules: {rules}, tags: {opens}");
     }
 }

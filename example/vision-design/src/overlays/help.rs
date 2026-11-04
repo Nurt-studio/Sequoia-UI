@@ -17,18 +17,18 @@ impl View for HelpOverlay {
         let st = self.state.clone();
 
         let shortcuts = vec![
-            ("Zaznaczanie / łapka", "V · H"),
-            ("Ramka / prostokąt", "F · R"),
-            ("Elipsa / tekst", "O · T"),
-            ("Kod Svelte", "Ctrl+E"),
-            ("Paleta komend", "Ctrl+K"),
-            ("Duplikuj / usuń", "Ctrl+D / Del"),
-            ("Cofnij / ponów", "Ctrl+Z / Ctrl+Shift+Z"),
-            ("Zoom / dopasuj", "Ctrl+Kółko / Shift+1"),
-            ("Przesuwanie canvasu", "Środkowy przycisk"),
-            ("Edycja tekstu", "Podwójne kliknięcie"),
-            ("Auto layout", "Obiekt → Auto layout"),
-            ("Import / eksport JSON", "Plik → JSON"),
+            ("Select / hand", "V · H"),
+            ("Frame / rectangle", "F · R"),
+            ("Ellipse / text", "O · T"),
+            ("Svelte code", "Ctrl+E"),
+            ("Command palette", "Ctrl+K"),
+            ("Duplicate / delete", "Ctrl+D / Del"),
+            ("Undo / redo", "Ctrl+Z / Ctrl+Shift+Z"),
+            ("Zoom / fit", "Ctrl+Wheel / Shift+1"),
+            ("Pan canvas", "Middle mouse button"),
+            ("Edit text", "Double click"),
+            ("Auto layout", "Object → Auto layout"),
+            ("Import / export JSON", "File → JSON"),
         ];
 
         let mut grid = Column::new().gap(4.0).fill_width();
@@ -77,13 +77,13 @@ impl View for HelpOverlay {
                             Column::new()
                                 .gap(10.0)
                                 .child(
-                                    Text::new("Skróty klawiszowe")
+                                    Text::new("Keyboard shortcuts")
                                         .size(14.0)
                                         .semibold()
                                         .color(Color::WHITE),
                                 )
                                 .child(
-                                    Text::new("Esc zamyka okno")
+                                    Text::new("Esc closes the window")
                                         .size(11.0)
                                         .color(colors::active().icon_inactive),
                                 )

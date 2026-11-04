@@ -20,24 +20,24 @@ impl View for CommandPalette {
         let st = self.state.clone();
 
         let actions: Vec<(&'static str, &'static str, u8)> = vec![
-            ("Kod Svelte", "Ctrl+E", 13),
-            ("Nowa ramka", "F", 1),
-            ("Nowy prostokąt", "R", 2),
-            ("Nowa elipsa", "O", 3),
-            ("Auto layout zaznaczenia", "", 18),
-            ("Dopasuj do okna", "Shift+1", 4),
+            ("Svelte code", "Ctrl+E", 13),
+            ("New frame", "F", 1),
+            ("New rectangle", "R", 2),
+            ("New ellipse", "O", 3),
+            ("Auto layout selection", "", 18),
+            ("Fit to window", "Shift+1", 4),
             ("Zoom 100%", "Ctrl+0", 5),
-            ("Przełącz siatkę", "", 6),
-            ("Eksport SVG", "", 7),
-            ("Eksportuj JSON do schowka", "", 14),
-            ("Importuj JSON ze schowka", "", 15),
-            ("Zapisz kod .svelte", "", 16),
-            ("Zapisz dokument .json", "", 17),
-            ("Cofnij", "Ctrl+Z", 8),
-            ("Ponów", "Ctrl+Shift+Z", 9),
-            ("Duplikuj", "Ctrl+D", 10),
-            ("Usuń", "Del", 11),
-            ("Skróty klawiszowe", "?", 12),
+            ("Toggle grid", "", 6),
+            ("Export SVG", "", 7),
+            ("Export JSON to clipboard", "", 14),
+            ("Import JSON from clipboard", "", 15),
+            ("Save .svelte code", "", 16),
+            ("Save .json document", "", 17),
+            ("Undo", "Ctrl+Z", 8),
+            ("Redo", "Ctrl+Shift+Z", 9),
+            ("Duplicate", "Ctrl+D", 10),
+            ("Delete", "Del", 11),
+            ("Keyboard shortcuts", "?", 12),
         ];
 
         let mut list_ui = Column::new().gap(2.0).fill_width();
@@ -150,7 +150,7 @@ impl View for CommandPalette {
         if !has_results {
             list_ui = list_ui.child(
                 Container::new().padding(Edges::xy(10.0, 10.0)).child(
-                    Text::new("Brak wyników")
+                    Text::new("No results")
                         .size(12.0)
                         .color(colors::active().icon_inactive),
                 ),
@@ -182,7 +182,7 @@ impl View for CommandPalette {
                                         .border_bottom(1.0, colors::active().stroke)
                                         .child(
                                             TextField::new(query_sig)
-                                                .placeholder("Wpisz komendę…")
+                                                .placeholder("Type a command...")
                                                 .font_size(13.0)
                                                 .text_color(Color::WHITE)
                                                 .background(Color::TRANSPARENT)

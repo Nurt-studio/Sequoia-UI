@@ -130,7 +130,7 @@ impl EditorState {
     fn with_seed(root: Option<SvelteNode>, selected: Option<u64>) -> Self {
         let state = Self {
             is_night: Signal::new(true),
-            doc_name: Signal::new(String::from("Vision Design — Bez tytułu")),
+            doc_name: Signal::new(String::from("Vision Design - Untitled")),
             zoom: Signal::new(1.0),
             status: Signal::new(String::new()),
             menus: Menus::new(),
@@ -600,12 +600,12 @@ impl EditorState {
 
     pub(crate) fn open_node_graph(&self, env: &Environment) {
         let Some(windows) = env.get::<Windows>() else {
-            self.toast_warn("Nie znaleziono usługi okien");
+            self.toast_warn("Window service not available");
             return;
         };
         let spec = crate::node_graph::node_graph_spec(self.clone());
         windows.open(spec);
-        self.toast("Otwarto Node Graph");
+        self.toast("Opened Node Graph");
     }
 }
 

@@ -82,7 +82,7 @@ pub(crate) fn create_text(signals: &CanvasSignals, wx: f32, wy: f32, grid_snap: 
     let x = if grid_snap { snap(wx) } else { wx };
     let y = if grid_snap { snap(wy) } else { wy };
     let id = signals.state.next_node_id();
-    let node = new_text(id, x, y, "Tekst");
+    let node = new_text(id, x, y, "Text");
     let target = find_parent_frame(&signals.layers.get_untracked(), x, y).unwrap_or(0);
     signals.state.push_history();
     signals

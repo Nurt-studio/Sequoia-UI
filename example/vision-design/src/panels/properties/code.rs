@@ -58,13 +58,13 @@ impl CodePanel {
                     .fill_width()
                     .gap(6.0)
                     .align_items(Align::Center)
-                    .child(Text::new("Kod Svelte").size(13.0).semibold().color(colors::active().text))
+                    .child(Text::new("Svelte code").size(13.0).semibold().color(colors::active().text))
                     .child(Spacer::flex(1.0))
                     .child(status_dot(&st2))
                     .child(status_label(&st2))
             })
             .child(
-                Text::new("źródło prawdy: drzewo dokumentu")
+                Text::new("source of truth: the document tree")
                     .size(10.0)
                     .color(colors::active().icon_inactive),
             )
@@ -80,7 +80,7 @@ impl CodePanel {
                 Row::new()
                     .gap(2.0)
                     .child(segment(
-                        "Podgląd",
+                        "Preview",
                         !editing,
                         {
                             let st = st.clone();
@@ -88,7 +88,7 @@ impl CodePanel {
                         },
                     ))
                     .child(segment(
-                        "Edycja",
+                        "Edit",
                         editing,
                         move || st.code_editing.set(true),
                     )),
@@ -103,13 +103,13 @@ impl CodePanel {
             .padding(Edges::xy(8.0, 0.0))
             .gap(4.0)
             .child_flex(
-                small_btn("Zastosuj", colors::active().sel, move || {
+                small_btn("Apply", colors::active().sel, move || {
                     st.apply_code_buffer()
                 }),
                 1.0,
             )
             .child_flex(
-                small_btn("Anuluj", Color::hex(0x2E2E30), move || {
+                small_btn("Cancel", Color::hex(0x2E2E30), move || {
                     st_revert.revert_code_buffer()
                 }),
                 1.0,
@@ -125,11 +125,11 @@ impl CodePanel {
             .padding(Edges::xy(8.0, 4.0))
             .gap(4.0)
             .child_flex(
-                tiny_btn("Zapisz .svelte", move || st.save_svelte_file()),
+                tiny_btn("Save .svelte", move || st.save_svelte_file()),
                 1.0,
             )
             .child_flex(
-                tiny_btn("Zapisz .json", move || st_json.save_json_file()),
+                tiny_btn("Save .json", move || st_json.save_json_file()),
                 1.0,
             )
     }
@@ -204,9 +204,9 @@ impl CodePanel {
                     .padding(Edges::xy(8.0, 6.0))
                     .child(
                         Text::new(if editing {
-                            "Edytuj kod i naciśnij „Zastosuj”, aby przełożyć go na canvas."
+                            "Edit the code and press \"Apply\" to update the canvas."
                         } else {
-                            "Podgląd bufora kodu. Przełącz „Edycja”, aby zmieniać dokument tekstem."
+                            "Code buffer preview. Switch to \"Edit\" to change the document as text."
                         })
                         .size(10.0)
                         .color(colors::active().icon_inactive),
@@ -237,11 +237,11 @@ fn status_label(st: &EditorState) -> impl View + 'static {
     Text::with(move || {
         let err = st2.code_error.get();
         if err.is_some() {
-            "błąd składni".to_string()
+            "syntax error".to_string()
         } else if st2.code_dirty.get() {
-            "zmiany w buforze".to_string()
+            "buffer changed".to_string()
         } else {
-            "zsynchronizowany".to_string()
+            "synchronized".to_string()
         }
     })
     .size(10.0)
@@ -271,7 +271,7 @@ fn copy_btn(state: &EditorState) -> impl View + 'static {
         .background(Color::hex(0x2E2E30))
         .hover(Color::hex(0x3E3E40))
         .on_click_env(move |env: &Environment| st.copy_code_to_clipboard(env))
-        .child(Text::new("Kopiuj").size(11.0).semibold().color(Color::WHITE))
+        .child(Text::new("Copy").size(11.0).semibold().color(Color::WHITE))
 }
 
 /// Small file button.

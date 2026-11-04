@@ -10,7 +10,7 @@ impl EditorState {
     pub(crate) fn zoom_to_fit(&self) {
         let flat = self.flat_snapshot();
         if flat.is_empty() {
-            self.toast_warn("Nie ma nic do wyświetlenia");
+            self.toast_warn("Nothing to display");
             return;
         }
         let mut x1 = f32::INFINITY;
@@ -44,7 +44,7 @@ impl EditorState {
 
     pub(crate) fn zoom_to_selection(&self) {
         let Some(id) = self.selected_layer.get_untracked() else {
-            self.toast_warn("Nic nie jest zaznaczone");
+            self.toast_warn("Nothing selected");
             return;
         };
         let flat = self.flat_snapshot();
@@ -80,8 +80,8 @@ impl EditorState {
     pub(crate) fn export_svg(&self) {
         let svg = crate::document::export::to_svg(&self.layers.get_untracked());
         match std::fs::write("export.svg", &svg) {
-            Ok(_) => self.toast("Zapisano export.svg"),
-            Err(_) => self.toast_error("Nie udało się zapisać export.svg"),
+            Ok(_) => self.toast("Saved export.svg"),
+            Err(_) => self.toast_error("Could not save export.svg"),
         }
     }
 
@@ -105,11 +105,11 @@ impl EditorState {
                 self.code_source.set(normalized);
                 self.code_error.set(None);
                 self.code_dirty.set(false);
-                self.toast("Kod zastosowany — canvas zaktualizowany");
+                self.toast("Code applied - canvas updated");
             }
             Err(e) => {
                 self.code_error.set(Some(e));
-                self.toast_error("Błąd parsowania — popraw kod i spróbuj ponownie");
+                self.toast_error("Parse error - fix the code and try again");
             }
         }
     }
@@ -119,30 +119,30 @@ impl EditorState {
         let src = self.code_source.get_untracked();
         self.code_buffer.set(src);
         self.code_error.set(None);
-        self.toast("Przywrócono kod z dokumentu");
+        self.toast("Code restored from document");
     }
 
     /// Copies the current Svelte code to the system clipboard.
     pub(crate) fn copy_code_to_clipboard(&self, env: &Environment) {
         let code = self.code_buffer.get_untracked();
         if code.is_empty() {
-            self.toast_warn("Kod jest pusty");
+            self.toast_warn("Code is empty");
             return;
         }
         if let Some(clip) = env.get::<SharedClipboard>() {
             clip.0.set_text(&code);
-            self.toast("Skopiowano kod Svelte do schowka");
+            self.toast("Svelte code copied to clipboard");
         } else {
-            self.toast_warn("Schowek systemowy niedostępny");
+            self.toast_warn("System clipboard unavailable");
         }
     }
 
-    /// Saves the current Svelte code to the `komponent.svelte` file.
+    /// Saves the current Svelte code to the `component.svelte` file.
     pub(crate) fn save_svelte_file(&self) {
         let code = self.code_buffer.get_untracked();
-        match std::fs::write("komponent.svelte", &code) {
-            Ok(_) => self.toast("Zapisano komponent.svelte"),
-            Err(_) => self.toast_error("Nie udało się zapisać komponent.svelte"),
+        match std::fs::write("component.svelte", &code) {
+            Ok(_) => self.toast("Saved component.svelte"),
+            Err(_) => self.toast_error("Could not save component.svelte"),
         }
     }
 
@@ -153,9 +153,9 @@ impl EditorState {
         let json = crate::document::json::to_json(&self.root.get_untracked());
         if let Some(clip) = env.get::<SharedClipboard>() {
             clip.0.set_text(&json);
-            self.toast("Dokument JSON skopiowany do schowka");
+            self.toast("JSON document copied to clipboard");
         } else {
-            self.toast_warn("Schowek systemowy niedostępny");
+            self.toast_warn("System clipboard unavailable");
         }
     }
 
@@ -163,19 +163,19 @@ impl EditorState {
     pub(crate) fn save_json_file(&self) {
         let json = crate::document::json::to_json(&self.root.get_untracked());
         match std::fs::write("vision-design.json", &json) {
-            Ok(_) => self.toast("Zapisano vision-design.json"),
-            Err(_) => self.toast_error("Nie udało się zapisać vision-design.json"),
+            Ok(_) => self.toast("Saved vision-design.json"),
+            Err(_) => self.toast_error("Could not save vision-design.json"),
         }
     }
 
     /// Loads a JSON document from the system clipboard.
     pub(crate) fn import_json_clipboard(&self, env: &Environment) {
         let Some(clip) = env.get::<SharedClipboard>() else {
-            self.toast_warn("Schowek systemowy niedostępny");
+            self.toast_warn("System clipboard unavailable");
             return;
         };
         let Some(text) = clip.0.get_text() else {
-            self.toast_warn("Schowek jest pusty");
+            self.toast_warn("Clipboard is empty");
             return;
         };
         self.import_json_text(&text);
@@ -189,10 +189,10 @@ impl EditorState {
                 self.root.set(new_root);
                 self.selected_layer.set(None);
                 self.active_tab.set(crate::state::Tab::Design);
-                self.toast("Zaimportowano dokument JSON");
+                self.toast("Imported JSON document");
             }
             Err(e) => {
-                self.toast_error(format!("Błąd importu JSON: {e}"));
+                self.toast_error(format!("JSON import error: {e}"));
             }
         }
     }
@@ -203,7 +203,7 @@ impl EditorState {
     pub(crate) fn auto_layout_selection(&self) {
         use crate::model::svelte_ast::{Display, FlexDir};
         let Some(id) = self.selected_layer.get_untracked() else {
-            self.toast_warn("Nic nie jest zaznaczone");
+            self.toast_warn("Nothing selected");
             return;
         };
         let mut msg = String::new();
@@ -217,30 +217,30 @@ impl EditorState {
                     Display::None => {
                         e.style.display = Display::Flex;
                         e.style.flex_dir = FlexDir::Row;
-                        msg = "Auto layout: wiersz (H)".into();
+                        msg = "Auto layout: row (H)".into();
                     }
                     Display::Flex if e.style.flex_dir == FlexDir::Row => {
                         e.style.display = Display::Flex;
                         e.style.flex_dir = FlexDir::Col;
-                        msg = "Auto layout: kolumna (V)".into();
+                        msg = "Auto layout: column (V)".into();
                     }
                     Display::Flex => {
                         e.style.display = Display::Grid;
                         if e.style.grid_cols.is_none() {
                             e.style.grid_cols = Some(2);
                         }
-                        msg = "Auto layout: siatka (G, 2 kolumny)".into();
+                        msg = "Auto layout: grid (G, 2 columns)".into();
                     }
                     Display::Grid => {
                         e.style.display = Display::None;
                         e.style.grid_cols = None;
-                        msg = "Auto layout wyłączony".into();
+                        msg = "Auto layout disabled".into();
                     }
                 }
             }
         });
         if msg.is_empty() {
-            self.toast_warn("Zaznaczona warstwa nie jest ramką");
+            self.toast_warn("Selected layer is not a frame");
         } else {
             self.toast(msg);
         }
@@ -253,11 +253,11 @@ impl EditorState {
                 self.root.set(new_root);
                 self.code_error.set(None);
                 self.code_source.set(new_code);
-                self.toast("Kod zaktualizowany");
+                self.toast("Code updated");
             }
             Err(e) => {
                 self.code_error.set(Some(e));
-                self.toast_error("Błąd parsowania");
+                self.toast_error("Parse error");
             }
         }
     }

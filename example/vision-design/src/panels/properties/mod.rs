@@ -87,13 +87,13 @@ impl View for TabStrip {
             .border_bottom(1.0, colors::active().stroke_soft)
             .align_items(Align::Center)
             .gap(10.0)
-            .child(tab_button("Projekt", tab == Tab::Design, move || {
+            .child(tab_button("Design", tab == Tab::Design, move || {
                 td.set(Tab::Design)
             }))
-            .child(tab_button("Inspekcja", tab == Tab::Inspect, move || {
+            .child(tab_button("Inspect", tab == Tab::Inspect, move || {
                 ti.set(Tab::Inspect)
             }))
-            .child(tab_button("Kod", tab == Tab::Code, move || {
+            .child(tab_button("Code", tab == Tab::Code, move || {
                 tc.set(Tab::Code)
             }))
             .child(Spacer::flex(1.0))
@@ -178,29 +178,29 @@ impl View for RightBody {
 
             let mut sections: Vec<AnyView> = vec![
                 section(
-                    "Wyrównanie",
+                    "Alignment",
                     self.state.sections.alignment.clone(),
                     body_alignment(&self.state),
                 ),
                 section(
-                    "Pozycja",
+                    "Position",
                     self.state.sections.position.clone(),
                     body_position(&self.state),
                 ),
                 section(
-                    "Rozmiar",
+                    "Size",
                     self.state.sections.size.clone(),
                     body_size(&self.state),
                 ),
                 section(
-                    "Wygląd",
+                    "Appearance",
                     self.state.sections.appearance.clone(),
                     body_appearance(&self.state),
                 ),
             ];
             if is_text {
                 sections.push(section(
-                    "Tekst",
+                    "Text",
                     self.state.sections.fill.clone(),
                     body_text(&self.state),
                 ));
@@ -214,23 +214,23 @@ impl View for RightBody {
             }
             if parent_has_al {
                 sections.push(section(
-                    "Ograniczenia",
+                    "Constraints",
                     self.state.sections.constraints.clone(),
                     body_constraints(&self.state),
                 ));
             }
             sections.push(section(
-                "Wypełnienie",
+                "Fill",
                 self.state.sections.fill.clone(),
                 body_fill(&self.state),
             ));
             sections.push(section(
-                "Obramowanie",
+                "Stroke",
                 self.state.sections.stroke.clone(),
                 body_stroke(&self.state),
             ));
             sections.push(section(
-                "Eksport",
+                "Export",
                 self.state.sections.export.clone(),
                 body_export(&self.state),
             ));

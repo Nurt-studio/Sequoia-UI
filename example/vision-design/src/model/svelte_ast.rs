@@ -241,7 +241,7 @@ pub struct TextNode {
     pub name: String,
     pub content: String,
     pub style: TextStyle,
-    pub width: Option<f32>,   // stała szerokość (opcjonalna); None = auto
+    pub width: Option<f32>,   // fixed width (optional); None = auto
     pub height: Option<f32>,
     pub visible: bool,
     pub locked: bool,
@@ -325,7 +325,7 @@ pub fn next_id(root: &Option<SvelteNode>) -> u64 {
 pub fn new_frame(id: u64, x: f32, y: f32, w: f32, h: f32) -> SvelteNode {
     SvelteNode::Element(Element {
         id,
-        name: format!("Ramka {}", id),
+        name: format!("Frame {}", id),
         tag: Tag::Div,
         style: Style {
             display: Display::Flex,
@@ -349,7 +349,7 @@ pub fn new_frame(id: u64, x: f32, y: f32, w: f32, h: f32) -> SvelteNode {
 pub fn new_rect(id: u64, x: f32, y: f32, w: f32, h: f32, hex: u32) -> SvelteNode {
     SvelteNode::Element(Element {
         id,
-        name: format!("Prostokąt {}", id),
+        name: format!("Rectangle {}", id),
         tag: Tag::Div,
         style: Style {
             display: Display::None,
@@ -374,7 +374,7 @@ pub fn new_rect(id: u64, x: f32, y: f32, w: f32, h: f32, hex: u32) -> SvelteNode
 pub fn new_ellipse(id: u64, x: f32, y: f32, w: f32, h: f32, hex: u32) -> SvelteNode {
     let mut n = new_rect(id, x, y, w, h, hex);
     if let SvelteNode::Element(e) = &mut n {
-        e.name = format!("Elipsa {}", id);
+        e.name = format!("Ellipse {}", id);
         e.style.radius = 9999.0;
     }
     n
@@ -386,7 +386,7 @@ pub fn new_text(id: u64, x: f32, y: f32, text: &str) -> SvelteNode {
     let _ = (x, y);
     SvelteNode::Text(TextNode {
         id,
-        name: format!("Tekst {}", id),
+        name: format!("Text {}", id),
         content: text.to_string(),
         style: TextStyle::default(),
         width: Some(200.0),
@@ -397,9 +397,9 @@ pub fn new_text(id: u64, x: f32, y: f32, text: &str) -> SvelteNode {
 }
 
 pub fn new_button(id: u64, x: f32, y: f32) -> SvelteNode {
-    let mut text = new_text(id + 1, 0.0, 0.0, "Przycisk");
+    let mut text = new_text(id + 1, 0.0, 0.0, "Button");
     if let SvelteNode::Text(t) = &mut text {
-        t.name = format!("Etykieta przycisku {}", id + 1);
+        t.name = format!("Button label {}", id + 1);
         t.style.color = Color::WHITE;
         t.style.color_hex = "#FFFFFF".into();
         t.style.font_size = 14.0;
@@ -408,7 +408,7 @@ pub fn new_button(id: u64, x: f32, y: f32) -> SvelteNode {
     }
     SvelteNode::Element(Element {
         id,
-        name: format!("Przycisk {}", id),
+        name: format!("Button {}", id),
         tag: Tag::Button,
         style: Style {
             display: Display::None,

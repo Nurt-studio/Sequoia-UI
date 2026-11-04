@@ -10,12 +10,12 @@ impl EditorState {
         self.zoom.set(1.0);
         self.pan_x.set(0.0);
         self.pan_y.set(0.0);
-        self.toast("Nowy dokument");
+        self.toast("New document");
     }
 
     pub(crate) fn duplicate_selected(&self) {
         let Some(id) = self.selected_layer.get_untracked() else {
-            self.toast_warn("Nic nie jest zaznaczone"); return;
+            self.toast_warn("Nothing selected"); return;
         };
         let root = self.root.get_untracked();
         let Some(node) = root.as_ref().and_then(|r| tree_ops::find(r, id)).cloned() else {
@@ -34,23 +34,23 @@ impl EditorState {
             }
         });
         self.selected_layer.set(Some(new_id));
-        self.toast("Zduplikowano");
+        self.toast("Duplicated");
     }
 
     pub(crate) fn copy_selected(&self) {
         let Some(id) = self.selected_layer.get_untracked() else {
-            self.toast_warn("Nic nie jest zaznaczone"); return;
+            self.toast_warn("Nothing selected"); return;
         };
         let root = self.root.get_untracked();
         let Some(node) = root.as_ref().and_then(|r| tree_ops::find(r, id)).cloned() else { return; };
         *self.clipboard.borrow_mut() = vec![node];
-        self.toast("Skopiowano");
+        self.toast("Copied");
     }
 
     pub(crate) fn paste(&self) {
         let clip = self.clipboard.borrow().clone();
         if clip.is_empty() {
-            self.toast_warn("Schowek wewnętrzny jest pusty"); return;
+            self.toast_warn("Internal clipboard is empty"); return;
         }
         self.push_history();
         let mut next = self.next_node_id();
@@ -66,17 +66,17 @@ impl EditorState {
             }
         });
         if let Some(id) = first_id { self.selected_layer.set(Some(id)); }
-        self.toast("Wklejono");
+        self.toast("Pasted");
     }
 
     pub(crate) fn delete_selected(&self) {
         let Some(id) = self.selected_layer.get_untracked() else {
-            self.toast_warn("Nic nie jest zaznaczone"); return;
+            self.toast_warn("Nothing selected"); return;
         };
         self.push_history();
         self.root.update(|r| { tree_ops::remove(r, id); });
         self.selected_layer.set(None);
-        self.toast("Usunięto");
+        self.toast("Deleted");
     }
 
     pub(crate) fn bring_forward(&self) { self.reorder(1); }
@@ -158,7 +158,7 @@ impl EditorState {
                 }
             }
         });
-        self.toast(if now_locked { "Zablokowano" } else { "Odblokowano" });
+        self.toast(if now_locked { "Locked" } else { "Unlocked" });
     }
 
     pub(crate) fn move_layer(&self, id: u64, x: f32, y: f32) {

@@ -34,36 +34,36 @@ impl View for ContextMenuView {
 
         let rows: Vec<AnyView> = vec![
             mrow(
-                "Duplikuj",
+                "Duplicate",
                 Some("Ctrl+D"),
                 false,
                 open.clone(),
                 move || st_dup.duplicate_selected(),
             ),
-            mrow("Kopiuj", Some("Ctrl+C"), false, open.clone(), move || {
+            mrow("Copy", Some("Ctrl+C"), false, open.clone(), move || {
                 st_cp.copy_selected()
             }),
-            mrow("Wklej", Some("Ctrl+V"), false, open.clone(), move || {
+            mrow("Paste", Some("Ctrl+V"), false, open.clone(), move || {
                 st_pst.paste()
             }),
-            mrow("Usuń", Some("Del"), true, open.clone(), move || {
+            mrow("Delete", Some("Del"), true, open.clone(), move || {
                 st_del.delete_selected()
             }),
             AnyView::new(msep()),
             mrow(
-                "Na wierzch",
+                "Bring to front",
                 Some("]"),
                 false,
                 open.clone(),
                 move || st_ff.bring_to_front(),
             ),
-            mrow("Wyżej", None, false, open.clone(), move || {
+            mrow("Bring forward", None, false, open.clone(), move || {
                 st_fr.bring_forward()
             }),
-            mrow("Niżej", None, false, open.clone(), move || {
+            mrow("Send backward", None, false, open.clone(), move || {
                 st_bk.send_backward()
             }),
-            mrow("Na spód", Some("["), false, open.clone(), move || {
+            mrow("Send to back", Some("["), false, open.clone(), move || {
                 st_bb.send_to_back()
             }),
             AnyView::new(msep()),
@@ -71,10 +71,10 @@ impl View for ContextMenuView {
                 st_al.auto_layout_selection()
             }),
             AnyView::new(msep()),
-            mrow("Zablokuj / odblokuj", None, false, open.clone(), move || {
+            mrow("Lock / unlock", None, false, open.clone(), move || {
                 st_lk.toggle_lock()
             }),
-            mrow("Pokaż / ukryj", None, false, open.clone(), move || {
+            mrow("Show / hide", None, false, open.clone(), move || {
                 st_vis.toggle_visibility()
             }),
         ];

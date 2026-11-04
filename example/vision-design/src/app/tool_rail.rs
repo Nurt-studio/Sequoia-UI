@@ -17,46 +17,46 @@ const GROUPS: &[&[ToolDef]] = &[
         ToolDef {
             key: "V",
             icon: "tool/select",
-            label: "Zaznaczanie",
+            label: "Select",
         },
         ToolDef {
             key: "H",
             icon: "tool/hand",
-            label: "Łapka",
+            label: "Hand",
         },
     ],
     &[
         ToolDef {
             key: "F",
             icon: "tool/frame",
-            label: "Ramka",
+            label: "Frame",
         },
         ToolDef {
             key: "R",
             icon: "tool/rect",
-            label: "Prostokąt",
+            label: "Rectangle",
         },
         ToolDef {
             key: "O",
             icon: "tool/ellipse",
-            label: "Elipsa",
+            label: "Ellipse",
         },
         ToolDef {
             key: "L",
             icon: "tool/line",
-            label: "Linia",
+            label: "Line",
         },
     ],
     &[
         ToolDef {
             key: "T",
             icon: "tool/text",
-            label: "Tekst",
+            label: "Text",
         },
         ToolDef {
             key: "C",
             icon: "tool/comment",
-            label: "Komentarz",
+            label: "Comment",
         },
     ],
 ];

@@ -720,8 +720,8 @@ mod tests {
             BrushKind::Brush,
         );
         let (total, partial) = ink(&px);
-        assert!((total - 157.0).abs() < 5.0, "suma krycia: {total}");
-        assert!(partial > 20, "krawędzie są wygładzone: {partial}");
+        assert!((total - 157.0).abs() < 5.0, "ink coverage: {total}");
+        assert!(partial > 20, "edges are antialiased: {partial}");
     }
 
     #[test]
@@ -736,8 +736,8 @@ mod tests {
             BrushKind::Brush,
         );
         let (total, partial) = ink(&px);
-        assert!((total - 31.0).abs() < 3.0, "suma krycia: {total}");
-        assert!(partial > 20, "krawędzie są wygładzone: {partial}");
+        assert!((total - 31.0).abs() < 3.0, "ink coverage: {total}");
+        assert!(partial > 20, "edges are antialiased: {partial}");
     }
 
     #[test]
@@ -751,7 +751,7 @@ mod tests {
             Color::BLACK,
             BrushKind::Brush,
         );
-        assert_eq!(painted(&px), 21, "pełne piksele bez rozmycia");
+        assert_eq!(painted(&px), 21, "solid pixels without blur");
         let (total, partial) = ink(&px);
         assert!((total - 21.0).abs() < 0.01, "{total}");
         assert_eq!(partial, 0);

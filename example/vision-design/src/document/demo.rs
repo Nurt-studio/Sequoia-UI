@@ -49,7 +49,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
     vec![
         base(
             1,
-            "Ramka 1",
+            "Frame 1",
             "tool/frame",
             "FRAME",
             0,
@@ -63,7 +63,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         ),
         base(
             2,
-            "Prostokąt",
+            "Rectangle",
             "tool/rect",
             "RECTANGLE",
             1,
@@ -77,7 +77,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         ),
         base(
             3,
-            "Elipsa",
+            "Ellipse",
             "tool/ellipse",
             "ELLIPSE",
             1,
@@ -91,7 +91,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         ),
         Layer {
             id: 4,
-            name: "Tytuł".into(),
+            name: "Title".into(),
             icon: "tool/text",
             kind: "TEXT",
             level: 1,
@@ -111,7 +111,7 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
             stroke: Color::TRANSPARENT,
             stroke_hex: "#00000000".into(),
             stroke_width: 0.0,
-            text: "Zaprojektuj w Sequoia".into(),
+            text: "Design with Sequoia".into(),
             font_size: 28.0,
             layout: "NONE",
             gap: 0.0,
@@ -196,8 +196,8 @@ pub(crate) fn demo_tree() -> SvelteNode {
             }),
             SvelteNode::Text(TextNode {
                 id: 4,
-                name: "Tytuł".into(),
-                content: "Zaprojektuj w Sequoia".into(),
+                name: "Title".into(),
+                content: "Design with Sequoia".into(),
                 style: TextStyle {
                     font_size: 28.0,
                     font_weight: 400,

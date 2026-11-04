@@ -536,16 +536,16 @@ mod tests {
     #[test]
     fn tag_and_attribute_are_colored() {
         let lines = highlight_svelte("<div class=\"box\">Hi</div>\n");
-        assert!(lines.len() >= 2, "powinny być 2 linie");
+        assert!(lines.len() >= 2, "expected at least 2 lines");
         let joined: Vec<String> = lines.iter().map(|l| l.text()).collect();
         assert_eq!(joined[0], "<div class=\"box\">Hi</div>");
         // tag name uses the tag color, attribute uses the attribute color
         let has_tag = lines[0].runs.iter().any(|r| r.text == "div" && r.color == c(C_TAG));
         let has_attr = lines[0].runs.iter().any(|r| r.text == "class" && r.color == c(C_ATTR));
         let has_str = lines[0].runs.iter().any(|r| r.text == "\"box\"" && r.color == c(C_STRING));
-        assert!(has_tag, "tag bez koloru tagów: {:?}", lines[0].runs);
-        assert!(has_attr, "atrybut bez koloru: {:?}", lines[0].runs);
-        assert!(has_str, "atrybut string bez koloru: {:?}", lines[0].runs);
+        assert!(has_tag, "tag name is not colored: {:?}", lines[0].runs);
+        assert!(has_attr, "attribute is not colored: {:?}", lines[0].runs);
+        assert!(has_str, "string attribute is not colored: {:?}", lines[0].runs);
     }
 
     #[test]

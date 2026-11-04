@@ -298,7 +298,7 @@ impl<'a> BodyParser<'a> {
             if c.is_alphanumeric() { tag_str.push(c); self.pos += 1; } else { break; }
         }
         let Some(tag) = Tag::from_str(&tag_str) else {
-            return Err(format!("Nieznany tag: {tag_str}"));
+            return Err(format!("Unknown tag: {tag_str}"));
         };
         // attributes
         let mut class: Option<String> = None;
@@ -321,7 +321,7 @@ impl<'a> BodyParser<'a> {
                 key.push(c); self.pos += 1;
             }
             if self.consume("=") {
-                let quote = self.bump().ok_or("brak cudzysłowu")?;
+                let quote = self.bump().ok_or("missing quote")?;
                 let mut val = String::new();
                 while let Some(c) = self.bump() {
                     if c == quote { break; }

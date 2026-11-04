@@ -1,6 +1,7 @@
 //! Application bootstrap: modules, window and startup only.
 
 #![allow(dead_code)]
+#![allow(unreachable_pub)]
 
 mod app;
 mod canvas;

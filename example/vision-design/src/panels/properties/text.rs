@@ -28,7 +28,7 @@ pub(super) fn body_text(state: &EditorState) -> impl View + 'static {
                 .child_flex(drag_num(state.sel_font_size.clone(), 6.0, 200.0, 0), 1.0),
         )
         .child(
-            Button::new("Edytuj na canvasie")
+            Button::new("Edit on canvas")
                 .style(
                     ButtonStyle::new()
                         .background(colors::active().bg_lighter)

@@ -325,10 +325,10 @@ pub fn from_json(src: &str) -> Result<Option<SvelteNode>, String> {
     let value = p.parse_value()?;
     p.skip_ws();
     if p.pos != p.chars.len() {
-        return Err(format!("Nieoczekiwane dane po pozycji {}", p.pos));
+        return Err(format!("Unexpected data after position {}", p.pos));
     }
     if value.get("version").and_then(|v| v.as_num()) != Some(1.0) {
-        return Err("Brak pola \"version\": 1 — to nie jest dokument Vision Design".into());
+        return Err("Missing \"version\": 1 field — this is not a Vision Design document".into());
     }
     match value.get("root") {
         None | Some(Json::Null) => Ok(None),
@@ -360,7 +360,7 @@ impl JsonParser {
             Ok(())
         } else {
             Err(format!(
-                "Oczekiwano '{}', znaleziono {:?} (pozycja {})",
+                "Expected '{}', found {:?} (position {})",
                 c,
                 self.peek(),
                 self.pos
@@ -378,8 +378,8 @@ impl JsonParser {
             Some('f') => self.parse_lit("false", Json::Bool(false)),
             Some('n') => self.parse_lit("null", Json::Null),
             Some(c) if c == '-' || c.is_ascii_digit() => self.parse_num(),
-            Some(c) => Err(format!("Nieoczekiwany znak '{}' (pozycja {})", c, self.pos)),
-            None => Err("Nieoczekiwany koniec danych".into()),
+            Some(c) => Err(format!("Unexpected character '{}' (position {})", c, self.pos)),
+            None => Err("Unexpected end of input".into()),
         }
     }
 
@@ -405,7 +405,7 @@ impl JsonParser {
         let s: String = self.chars[start..self.pos].iter().collect();
         s.parse::<f32>()
             .map(Json::Num)
-            .map_err(|_| format!("Nieprawidłowa liczba: '{s}'"))
+            .map_err(|_| format!("Invalid number: '{s}'"))
     }
 
     fn parse_string(&mut self) -> Result<String, String> {
@@ -413,7 +413,7 @@ impl JsonParser {
         let mut out = String::new();
         loop {
             match self.peek() {
-                None => return Err("Nieoczekiwany koniec tekstu".into()),
+                None => return Err("Unexpected end of string".into()),
                 Some('"') => {
                     self.pos += 1;
                     return Ok(out);
@@ -433,15 +433,15 @@ impl JsonParser {
                             self.pos += 1;
                             let mut code = 0u32;
                             for _ in 0..4 {
-                                let c = self.peek().ok_or("Niepełna sekwencja \\u")?;
+                                let c = self.peek().ok_or("Incomplete \\u sequence")?;
                                 code = code * 16
-                                    + c.to_digit(16).ok_or("Nieprawidłowa cyfra szesnastkowa")?;
+                                    + c.to_digit(16).ok_or("Invalid hexadecimal digit")?;
                                 self.pos += 1;
                             }
                             out.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
                             continue;
                         }
-                        other => return Err(format!("Nieznana sekwencja \\{other:?}")),
+                        other => return Err(format!("Unknown escape sequence \\{other:?}")),
                     }
                     self.pos += 1;
                 }
@@ -472,7 +472,7 @@ impl JsonParser {
                     self.pos += 1;
                     return Ok(Json::Arr(items));
                 }
-                other => return Err(format!("Oczekiwano ',' lub ']', znaleziono {other:?}")),
+                other => return Err(format!("Expected ',' or ']', found {other:?}")),
             }
         }
     }
@@ -501,7 +501,7 @@ impl JsonParser {
                     self.pos += 1;
                     return Ok(Json::Obj(pairs));
                 }
-                other => return Err(format!("Oczekiwano ',' lub '}}', znaleziono {other:?}")),
+                other => return Err(format!("Expected ',' or '}}', found {other:?}")),
             }
         }
     }
@@ -513,7 +513,7 @@ fn parse_node(v: &Json) -> Result<SvelteNode, String> {
     let id = v
         .get("id")
         .and_then(|x| x.as_num())
-        .ok_or("Brak pola \"id\"")? as u64;
+        .ok_or("Missing \"id\" field")? as u64;
     let name = v
         .get("name")
         .and_then(|x| x.as_str())
@@ -521,7 +521,7 @@ fn parse_node(v: &Json) -> Result<SvelteNode, String> {
         .to_string();
     match v.get("type").and_then(|x| x.as_str()) {
         Some("text") => {
-            let style_v = v.get("style").ok_or("Tekst bez pola \"style\"")?;
+            let style_v = v.get("style").ok_or("Text node is missing the \"style\" field")?;
             let color_hex = style_v
                 .get("color")
                 .and_then(|x| x.as_str())
@@ -584,7 +584,7 @@ fn parse_node(v: &Json) -> Result<SvelteNode, String> {
                 instance: v.get("instance").and_then(|x| x.as_bool()).unwrap_or(false),
             }))
         }
-        Some(other) => Err(format!("Nieznany typ węzła: '{other}'")),
+        Some(other) => Err(format!("Unknown node type: '{other}'")),
     }
 }
 
@@ -698,8 +698,8 @@ mod tests {
     fn demo_tree_roundtrip() {
         let root = Some(demo_tree());
         let json = to_json(&root);
-        let back = from_json(&json).expect("parsowanie JSON");
-        assert_eq!(root, back, "AST po rundzie JSON musi być identyczne");
+        let back = from_json(&json).expect("JSON parsing");
+        assert_eq!(root, back, "AST must be identical after a JSON round trip");
     }
 
     #[test]
@@ -710,8 +710,8 @@ mod tests {
 
     #[test]
     fn rejects_garbage() {
-        assert!(from_json("to nie json").is_err());
-        assert!(from_json("{}").is_err(), "brak pola version");
+        assert!(from_json("not json").is_err());
+        assert!(from_json("{}").is_err(), "missing version field");
     }
 
     #[test]

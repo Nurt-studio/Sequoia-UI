@@ -27,9 +27,9 @@ impl EditorState {
             self.can_undo.set(!self.history.borrow().is_empty());
             self.can_redo.set(true);
             self.fix_selection_after_history();
-            self.toast("Cofnięto");
+            self.toast("Undone");
         } else {
-            self.toast_warn("Nie ma czego cofnąć");
+            self.toast_warn("Nothing to undo");
         }
     }
 
@@ -40,9 +40,9 @@ impl EditorState {
             self.can_undo.set(true);
             self.can_redo.set(!self.future.borrow().is_empty());
             self.fix_selection_after_history();
-            self.toast("Ponowiono");
+            self.toast("Redone");
         } else {
-            self.toast_warn("Nie ma czego ponowić");
+            self.toast_warn("Nothing to redo");
         }
     }
 
