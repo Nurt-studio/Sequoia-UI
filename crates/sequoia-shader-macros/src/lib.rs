@@ -6,13 +6,11 @@ use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use sequoia_shader_wgsl::{WGSL_EPILOGUE as EPILOGUE, WGSL_PRELUDE as PRELUDE, WGSL_STD};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Attribute, Ident, Pat, Signature, Type, Visibility, braced, parse_macro_input};
 
-const PRELUDE: &str = include_str!("../../sequoia-shader/src/wgsl/prelude.wgsl");
-const EPILOGUE: &str = include_str!("../../sequoia-shader/src/wgsl/epilogue.wgsl");
-const WGSL_STD: &str = include_str!("../../sequoia-shader/src/wgsl/std.wgsl");
 const MAX_UNIFORM_BYTES: usize = 256;
 const MAX_TEXTURES: usize = 3;
 

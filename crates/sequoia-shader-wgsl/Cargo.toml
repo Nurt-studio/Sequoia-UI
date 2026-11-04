@@ -1,0 +1,12 @@
+[package]
+name = "sequoia-shader-wgsl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared WGSL sources used by the Sequoia shader runtime and macro"
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true

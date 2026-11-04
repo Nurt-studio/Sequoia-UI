@@ -17,6 +17,7 @@ members = [
     "crates/sequoia-text",
     "crates/sequoia-render",
     "crates/sequoia-shader",
+    "crates/sequoia-shader-wgsl",
     "crates/sequoia-shader-macros",
     "crates/sequoia-style",
     "crates/sequoia-assets",
@@ -82,6 +83,7 @@ sequoia-seq = { version = "0.1.4", path = "crates/sequoia-seq" }
 sequoia-seq-lsp = { version = "0.1.4", path = "crates/sequoia-seq-lsp" }
 sequoia-render = { version = "0.1.4", path = "crates/sequoia-render" }
 sequoia-shader = { version = "0.1.4", path = "crates/sequoia-shader" }
+sequoia-shader-wgsl = { version = "0.1.4", path = "crates/sequoia-shader-wgsl" }
 sequoia-shader-macros = { version = "0.1.4", path = "crates/sequoia-shader-macros" }
 sequoia-style = { version = "0.1.4", path = "crates/sequoia-style" }
 sequoia-test = { version = "0.1.4", path = "crates/sequoia-test" }

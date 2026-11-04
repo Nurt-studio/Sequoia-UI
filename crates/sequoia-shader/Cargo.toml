@@ -10,6 +10,7 @@ categories.workspace = true
 
 [dependencies]
 bytemuck = { workspace = true }
+sequoia-shader-wgsl = { workspace = true }
 sequoia-shader-macros = { workspace = true }
 
 [lints]

@@ -5,6 +5,7 @@
 //! shaders, so the renderer treats them like any other registered shader.
 
 use crate::SequoiShader;
+use crate::wgsl::WGSL_APPLY_MASK;
 
 /// Keeps `layer` and multiplies its alpha by the alpha of `mask`.
 ///
@@ -15,7 +16,7 @@ pub struct ApplyMask;
 
 impl SequoiShader for ApplyMask {
     const NAME: &'static str = "apply_mask";
-    const WGSL: &'static str = APPLY_MASK_WGSL;
+    const WGSL: &'static str = WGSL_APPLY_MASK;
     const TEXTURES: &'static [&'static str] = &["mask", "layer"];
     const UNIFORM_SIZE: usize = 16;
 
@@ -23,23 +24,6 @@ impl SequoiShader for ApplyMask {
         out.extend_from_slice(&[0u8; Self::UNIFORM_SIZE]);
     }
 }
-
-const APPLY_MASK_WGSL: &str = concat!(
-    include_str!("wgsl/prelude.wgsl"),
-    r#"
-@group(1) @binding(0) var mask: texture_2d<f32>;
-@group(1) @binding(1) var mask_sampler: sampler;
-@group(2) @binding(0) var layer: texture_2d<f32>;
-@group(2) @binding(1) var layer_sampler: sampler;
-
-fn fs_user(frag: ShaderVarying) -> vec4<f32> {
-    let m = textureSample(mask, mask_sampler, frag.uv).a;
-    let l = textureSample(layer, layer_sampler, frag.uv);
-    return vec4<f32>(l.rgb, l.a * m);
-}
-"#,
-    include_str!("wgsl/epilogue.wgsl"),
-);
 
 /// Shaders registered by the engine on every app, as `(name, wgsl)` pairs.
 pub const BUILTINS: &[(&str, &str)] = &[(ApplyMask::NAME, ApplyMask::WGSL)];
