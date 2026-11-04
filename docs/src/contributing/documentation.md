@@ -46,10 +46,12 @@ mdbook serve docs --open
 `mdbook build` fails when a page is missing from the source tree, so it is also
 a link check for the table of contents.
 
-To publish the book, upload the generated `docs/book/` directory to a static
-host or to GitHub Pages. For GitHub Pages, a CI job can run `mdbook build docs`
-and upload `docs/book` as the Pages artifact. Add an empty `.nojekyll` file to
-the artifact so GitHub Pages serves the assets unchanged.
+The `Docs` workflow in `.github/workflows/docs.yml` builds `docs/book` on every
+push to `main` and deploys it to GitHub Pages. Enable it once under
+**Settings → Pages → Build and deployment → Source: GitHub Actions**. The
+workflow adds an empty `.nojekyll` file to the artifact so Pages serves the
+assets unchanged. The published book is at
+<https://nurt-studio.github.io/Sequoia-UI/>.
 
 ## Crate map
 

@@ -4,6 +4,10 @@ A native, reactive GUI framework for Rust built on `wgpu`. Sequoia keeps a
 retained view tree and updates it with fine-grained signals. There is no
 Virtual DOM, no WebView, and no JavaScript runtime.
 
+**[Documentation](https://nurt-studio.github.io/Sequoia-UI/)** ·
+[API reference](https://docs.rs/sequoia-ui) ·
+[crates.io](https://crates.io/crates/sequoia-ui)
+
 <p align="center">
   <img src="docs/src/assets/vision-design.png" alt="Vision Design editor built with Sequoia" width="900">
 </p>
@@ -199,6 +203,8 @@ cargo run -p sequoia-ui --example shader_gallery
 
 ## Documentation
 
+Read the book at **<https://nurt-studio.github.io/Sequoia-UI/>**.
+
 The book is an [mdBook](https://rust-lang.github.io/mdBook/) project in
 `docs/`. Build it locally with:
 
@@ -208,10 +214,9 @@ mdbook build docs
 mdbook serve docs --open
 ```
 
-To share it, publish the generated `docs/book/` directory. A typical setup is a
-GitHub Actions job that runs `mdbook build docs` and uploads `docs/book` as a
-Pages artifact. Add an empty `.nojekyll` file to that artifact so GitHub Pages
-serves the assets without extra configuration.
+The `Docs` workflow in `.github/workflows/docs.yml` builds the book on every
+push to `main` and deploys it to GitHub Pages. In the repository settings, set
+**Pages → Build and deployment → Source** to **GitHub Actions** once.
 
 - Book source: [docs/src/SUMMARY.md](docs/src/SUMMARY.md)
 - API docs: <https://docs.rs/sequoia-ui>

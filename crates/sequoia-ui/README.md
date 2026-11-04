@@ -144,7 +144,7 @@ the generated type with `App::shader_type::<T>()`, then draw it with
 
 The framework also ships backdrop blur, gradients, masks, and reusable effect
 chains for effects that do not need a custom shader. See
-[Custom shaders](https://github.com/Nurt-studio/Sequoia-UI/blob/main/docs/src/guides/shaders.md)
+[Custom shaders](https://nurt-studio.github.io/Sequoia-UI/guides/shaders.html)
 for complete examples.
 
 ## Modules
@@ -199,7 +199,8 @@ supported path.
 
 ## Documentation
 
-- Book: <https://github.com/Nurt-studio/Sequoia-UI/tree/main/docs/src>
+- Book: <https://nurt-studio.github.io/Sequoia-UI/>
+- Book source: <https://github.com/Nurt-studio/Sequoia-UI/tree/main/docs/src>
 - API reference: <https://docs.rs/sequoia-ui>
 - Repository: <https://github.com/Nurt-studio/Sequoia-UI>
 - Main README: <https://github.com/Nurt-studio/Sequoia-UI#readme>
