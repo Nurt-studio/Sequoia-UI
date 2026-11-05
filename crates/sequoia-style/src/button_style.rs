@@ -18,6 +18,10 @@ pub struct ButtonStyle {
 
     pub font_weight: Option<u16>,
 
+    pub width: Option<f32>,
+
+    pub height: Option<f32>,
+
     pub radius: Option<f32>,
 
     pub padding: Option<(f32, f32)>,
@@ -38,6 +42,8 @@ impl ButtonStyle {
             text_disabled: None,
             font_size: None,
             font_weight: None,
+            width: None,
+            height: None,
             radius: None,
             padding: None,
             border_width: None,
@@ -54,6 +60,8 @@ impl ButtonStyle {
         text_disabled: None,
         font_size: None,
         font_weight: Some(600),
+        width: None,
+        height: None,
         radius: None,
         padding: None,
         border_width: None,
@@ -69,6 +77,8 @@ impl ButtonStyle {
         text_disabled: None,
         font_size: None,
         font_weight: None,
+        width: None,
+        height: None,
         radius: None,
         padding: None,
         border_width: None,
@@ -84,6 +94,8 @@ impl ButtonStyle {
         text_disabled: None,
         font_size: None,
         font_weight: Some(600),
+        width: None,
+        height: None,
         radius: None,
         padding: None,
         border_width: None,
@@ -99,6 +111,8 @@ impl ButtonStyle {
         text_disabled: None,
         font_size: None,
         font_weight: None,
+        width: None,
+        height: None,
         radius: None,
         padding: None,
         border_width: None,
@@ -115,6 +129,8 @@ impl ButtonStyle {
         text_disabled: None,
         font_size: None,
         font_weight: Some(500),
+        width: None,
+        height: None,
         radius: None,
         padding: None,
         border_width: Some(1.0),
@@ -130,6 +146,8 @@ impl ButtonStyle {
         text_disabled: None,
         font_size: Some(12.0),
         font_weight: Some(500),
+        width: None,
+        height: None,
         radius: None,
         padding: Some((12.0, 6.0)),
         border_width: None,
@@ -145,6 +163,8 @@ impl ButtonStyle {
         text_disabled: None,
         font_size: Some(12.0),
         font_weight: Some(600),
+        width: None,
+        height: None,
         radius: None,
         padding: Some((12.0, 6.0)),
         border_width: Some(1.0),
@@ -219,6 +239,22 @@ impl ButtonStyle {
         self
     }
 
+    pub const fn width(mut self, px: f32) -> Self {
+        self.width = Some(px);
+        self
+    }
+
+    pub const fn height(mut self, px: f32) -> Self {
+        self.height = Some(px);
+        self
+    }
+
+    pub const fn size(mut self, px: f32) -> Self {
+        self.width = Some(px);
+        self.height = Some(px);
+        self
+    }
+
     pub const fn radius(mut self, radius: f32) -> Self {
         self.radius = Some(radius);
         self
@@ -282,6 +318,21 @@ mod tests {
         const S: ButtonStyle = ButtonStyle::new().border(1.0, Color::WHITE);
         assert_eq!(S.border_width, Some(1.0));
         assert_eq!(S.border_color, Some(Color::WHITE));
+    }
+
+    #[test]
+    fn size_builders_set_width_and_height() {
+        const W: ButtonStyle = ButtonStyle::new().width(120.0);
+        assert_eq!(W.width, Some(120.0));
+        assert_eq!(W.height, None);
+
+        const H: ButtonStyle = ButtonStyle::new().height(32.0);
+        assert_eq!(H.width, None);
+        assert_eq!(H.height, Some(32.0));
+
+        const S: ButtonStyle = ButtonStyle::new().size(48.0);
+        assert_eq!(S.width, Some(48.0));
+        assert_eq!(S.height, Some(48.0));
     }
 
     #[test]

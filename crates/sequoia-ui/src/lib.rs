@@ -70,11 +70,12 @@ pub mod prelude {
     pub use sequoia_elements::{
         Avatar, Badge, Button, Checkbox, Chip, ColorPicker, Command, CommandPalette,
         CommandRegistry, Container, ContextMenu, DateField, Dialog, Divider, DividerAxis,
-        DragValue, Draggable, Drawer, DrawerSide, DropdownButton, Droppable, Field, FloatingMenu,
-        Form, Kbd, MenuBar, Modal, ModalScrim, MultiSelect, NumberField, PIPETTE_SVG, Picker,
-        PickerFloat, PopupState, ProgressBar, RadioButton, RadioGroup, ResizeHandle, Sheet,
-        SheetSide, Skeleton, Slider, Slider1D, Spinner, SvPad, Switch, TabStrip, TabTear, TextArea,
-        TextField, Toast, ToastKind, ToastQueue, ToastStack, Tooltip, ValidField, WindowControls,
+        DragValue, DragValueVariant, Draggable, Drawer, DrawerSide, DropdownButton, Droppable,
+        Field, FloatingMenu, Form, Kbd, MenuBar, Modal, ModalScrim, MultiSelect, NumberField,
+        PIPETTE_SVG, Picker, PickerFloat, PopupState, ProgressBar, RadioButton, RadioGroup,
+        ResizeHandle, Sheet, SheetSide, Skeleton, Slider, Slider1D, Spinner, SvPad, Switch,
+        TabStrip, TabTear, TextArea, TextField, Toast, ToastKind, ToastQueue, ToastStack, Tooltip,
+        ValidField, WindowControls,
     };
     pub use sequoia_elements::{Clipboard, MemClipboard, SharedClipboard};
     pub use sequoia_elements::{avatar_color_for, badge_label, divider_line_rect, initials_for};
@@ -97,7 +98,7 @@ pub mod prelude {
     pub use sequoia_style::Effect as StyleEffect;
     pub use sequoia_style::{
         AvatarStyle, Backdrop, BadgeStyle, BorderSide, BoxStyle, ButtonStyle, ChipStyle,
-        DIALOG_DANGER, DialogStyle, DividerStyle, DrawerStyle, FORM_ERROR, Filter,
+        DIALOG_DANGER, DialogStyle, DividerStyle, DragValueStyle, DrawerStyle, FORM_ERROR, Filter,
         FloatingMenuStyle, FocusRingStyle, FormStyle, GradientAlphas, KbdStyle, Mask, ModalStyle,
         RadioStyle, ShadowSpec, SheetStyle, SplitPanelStyle, Style, SwitchStyle, TableStyle,
         TextAreaStyle, TextFieldStyle, TextStyle, Theme, ToastStyle, TreeStyle, VERTICAL,

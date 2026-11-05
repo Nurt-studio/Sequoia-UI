@@ -30,7 +30,7 @@ fn button_keeps_intrinsic_height_so_background_matches_text() {
     let h = Harness::new(
         Column::new()
             .width(200.0)
-            .height(40.0)
+            .height(20.0)
             .child(Button::labeled("OK"))
             .child(Button::labeled("Cancel")),
     );
@@ -40,7 +40,7 @@ fn button_keeps_intrinsic_height_so_background_matches_text() {
     for k in kids {
         let r = h.rect(k).unwrap();
         assert!(
-            r.size.height >= 26.0,
+            r.size.height >= 16.0,
             "Button must not become a thin strip, got {r:?}"
         );
     }

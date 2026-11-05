@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use sequoia_core::{Color, Edges, Length};
-use sequoia_layout::LayoutStyle;
+use sequoia_layout::{Align, Justify, LayoutStyle};
 use sequoia_reactive::Environment;
 use sequoia_style::ButtonStyle;
 use sequoia_text::FontWeight;
@@ -9,8 +9,6 @@ use sequoia_view::{AnimSpec, AnyView, Column, Icon, Text, View};
 
 use crate::container::{ClickTrigger, Container};
 
-const PAD_X: f32 = 10.0;
-const PAD_Y: f32 = 5.0;
 const ICON_DEFAULT_PX: f32 = 16.0;
 const RIBBON_ICON_PX: f32 = 28.0;
 const RIBBON_GAP: f32 = 2.0;
@@ -56,6 +54,8 @@ pub struct Button {
 
     width: Option<f32>,
     height: Option<f32>,
+    align_x: Align,
+    align_y: Align,
 
     trigger: ClickTrigger,
 }
@@ -104,6 +104,8 @@ impl Button {
             max_height: None,
             width: None,
             height: None,
+            align_x: Align::Center,
+            align_y: Align::Center,
             trigger: ClickTrigger::default(),
         }
     }
@@ -324,6 +326,26 @@ impl Button {
         self
     }
 
+    pub fn align(mut self, align: Align) -> Self {
+        self.align_x = align;
+        self.align_y = align;
+        self
+    }
+
+    pub fn align_x(mut self, align: Align) -> Self {
+        self.align_x = align;
+        self
+    }
+
+    pub fn align_y(mut self, align: Align) -> Self {
+        self.align_y = align;
+        self
+    }
+
+    pub fn center(self) -> Self {
+        self.align(Align::Center)
+    }
+
     pub fn margin(mut self, margin: impl Into<Edges>) -> Self {
         let m = margin.into();
         self.margin = Edges::only(
@@ -378,11 +400,31 @@ fn sanitize_margin(v: f32) -> f32 {
     if v.is_finite() { v.max(0.0) } else { 0.0 }
 }
 
+fn justify_for(align: Align) -> Justify {
+    match align {
+        Align::Center => Justify::Center,
+        Align::End => Justify::End,
+        _ => Justify::Start,
+    }
+}
+
+fn resolved_px(value: Option<f32>) -> Option<f32> {
+    value.filter(|v| v.is_finite()).map(|v| v.max(0.0))
+}
+
 impl Button {
     fn merged_padding(&self) -> (f32, f32) {
         self.padding
             .or_else(|| self.style.and_then(|s| s.padding))
-            .unwrap_or((PAD_X, PAD_Y))
+            .unwrap_or((0.0, 0.0))
+    }
+
+    fn resolved_width(&self) -> Option<f32> {
+        resolved_px(self.width.or_else(|| self.style.and_then(|s| s.width)))
+    }
+
+    fn resolved_height(&self) -> Option<f32> {
+        resolved_px(self.height.or_else(|| self.style.and_then(|s| s.height)))
     }
 
     fn text_tint(&self) -> Option<Color> {
@@ -458,6 +500,8 @@ impl Button {
             .disabled(self.disabled)
             .trigger(self.trigger)
             .blend_rate(rate)
+            .align_items(self.align_y)
+            .justify_content(justify_for(self.align_x))
             .background(
                 self.background
                     .or(style.background)
@@ -469,10 +513,10 @@ impl Button {
                     .or(style.pressed)
                     .unwrap_or(Color::hex(0x3A3A3A)),
             );
-        if let Some(v) = self.width {
+        if let Some(v) = self.resolved_width() {
             p = p.width(v);
         }
-        if let Some(v) = self.height {
+        if let Some(v) = self.resolved_height() {
             p = p.height(v);
         }
         if let Some(v) = self.min_width {
@@ -551,10 +595,10 @@ impl View for Button {
         if let Some(v) = self.max_height {
             style = style.max_height(v);
         }
-        if let Some(v) = self.width {
+        if let Some(v) = self.resolved_width() {
             style = style.width(Length::Px(v));
         }
-        if let Some(v) = self.height {
+        if let Some(v) = self.resolved_height() {
             style = style.height(Length::Px(v));
         }
         style
@@ -642,6 +686,45 @@ mod tests {
             .no_animation()
             .composed();
         assert!(over.effective_blend_rate() <= 0.0);
+    }
+
+    #[test]
+    fn style_size_applies_unless_explicit_size_wins() {
+        use sequoia_core::Length;
+
+        let style = ButtonStyle::new().width(120.0).height(32.0);
+        let styled = Button::new("x").style(style).layout_style();
+        assert_eq!(styled.width, Length::Px(120.0));
+        assert_eq!(styled.height, Length::Px(32.0));
+
+        let explicit = Button::new("x")
+            .style(style)
+            .width(80.0)
+            .height(20.0)
+            .layout_style();
+        assert_eq!(explicit.width, Length::Px(80.0));
+        assert_eq!(explicit.height, Length::Px(20.0));
+
+        let clamped = Button::new("x")
+            .style(ButtonStyle::new().width(-10.0).height(f32::NAN))
+            .layout_style();
+        assert_eq!(clamped.width, Length::Px(0.0));
+        assert_eq!(clamped.height, Length::Fit);
+    }
+
+    #[test]
+    fn default_button_padding_is_zero() {
+        assert_eq!(Button::new("x").merged_padding(), (0.0, 0.0));
+        assert_eq!(
+            Button::new("x").padding(4.0, 2.0).merged_padding(),
+            (4.0, 2.0)
+        );
+        assert_eq!(
+            Button::new("x")
+                .style(ButtonStyle::new().padding_xy(6.0, 3.0))
+                .merged_padding(),
+            (6.0, 3.0)
+        );
     }
 
     #[test]

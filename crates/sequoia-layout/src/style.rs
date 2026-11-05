@@ -67,6 +67,9 @@ impl Inset {
 }
 
 /// Optional indents from each edge of a container's content box.
+///
+/// An indent replaces the container gap on the boundary it touches instead of
+/// being added to it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Indents {
     /// Indent from the left edge, or `None` to use the default.
@@ -186,13 +189,13 @@ pub struct LayoutStyle {
     pub align_self: Option<Align>,
     /// Preferred width-to-height ratio.
     pub aspect_ratio: Option<f32>,
-    /// Extra indent from the top edge of a docked container.
+    /// Indent from the top edge; replaces the container gap when set.
     pub indent_top: Option<f32>,
-    /// Extra indent from the bottom edge of a docked container.
+    /// Indent from the bottom edge; replaces the container gap when set.
     pub indent_bottom: Option<f32>,
-    /// Extra indent from the left edge of a docked container.
+    /// Indent from the left edge; replaces the container gap when set.
     pub indent_left: Option<f32>,
-    /// Extra indent from the right edge of a docked container.
+    /// Indent from the right edge; replaces the container gap when set.
     pub indent_right: Option<f32>,
     /// Positioning mode.
     pub position: Position,

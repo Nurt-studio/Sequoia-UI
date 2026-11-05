@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use sequoia_core::{Color, Length, Point, RenderItem};
-use sequoia_elements::{Container, DragValue};
+use sequoia_elements::{Container, DragValue, DragValueStyle, DragValueVariant};
 use sequoia_reactive::Signal;
 use sequoia_test::Harness;
 use sequoia_text::TextSystem;
@@ -664,4 +664,146 @@ fn wheel_steps_value_like_slider() {
         Modifiers::CONTROL,
     );
     assert!((value.get_untracked() - 34.1).abs() < 1e-4);
+}
+
+#[test]
+fn variants_step_through_values_with_drag_wheel_and_arrows() {
+    let value = Signal::new(2.0);
+    let h = Harness::new(
+        DragValue::new(value.clone())
+            .variants([2.0, 4.0, 8.0, 16.0])
+            .wrap_variants(true)
+            .width(200.0)
+            .height(40.0),
+    );
+    h.layout(200.0, 80.0);
+    let r = h.rect(h.root().unwrap()).unwrap();
+    let (x, y) = (r.left() + 100.0, r.top() + 20.0);
+
+    h.pointer_down(x, y);
+    h.pointer_move(x + 25.0, y);
+    assert_eq!(value.get_untracked(), 4.0);
+    h.pointer_move(x + 45.0, y);
+    assert_eq!(value.get_untracked(), 8.0);
+    h.pointer_up(x + 45.0, y);
+
+    h.wheel(x, y, -120.0);
+    assert_eq!(value.get_untracked(), 16.0);
+    h.wheel(x, y, -120.0);
+    assert_eq!(value.get_untracked(), 2.0, "wrap to the first variant");
+
+    h.runtime().set_focus(h.root());
+    h.key(Key::ARROW_LEFT);
+    assert_eq!(value.get_untracked(), 16.0, "arrow wraps backwards");
+    h.key(Key::ARROW_RIGHT);
+    assert_eq!(value.get_untracked(), 2.0);
+}
+
+#[test]
+fn variants_clamp_without_wrap() {
+    let value = Signal::new(16.0);
+    let h = Harness::new(
+        DragValue::new(value.clone())
+            .variants([2.0, 4.0, 8.0, 16.0])
+            .width(200.0)
+            .height(40.0),
+    );
+    h.layout(200.0, 80.0);
+    let r = h.rect(h.root().unwrap()).unwrap();
+    let (x, y) = (r.left() + 100.0, r.top() + 20.0);
+
+    h.wheel(x, y, -120.0);
+    assert_eq!(value.get_untracked(), 16.0);
+    h.pointer_down(x, y);
+    h.pointer_move(x + 60.0, y);
+    assert_eq!(value.get_untracked(), 16.0);
+    h.pointer_up(x + 60.0, y);
+}
+
+#[test]
+fn editing_a_variant_does_not_clamp_to_the_numeric_range() {
+    let value = Signal::new(16.0);
+    let h = Harness::new(
+        DragValue::new(value.clone())
+            .variants([2.0, 4.0, 8.0, 16.0])
+            .min(0.0)
+            .max(1.0)
+            .precision(0)
+            .width(200.0)
+            .height(40.0),
+    );
+    h.layout(200.0, 80.0);
+
+    h.click(100.0, 20.0);
+    h.key(Key::ENTER);
+    assert_eq!(value.get_untracked(), 16.0);
+}
+
+#[test]
+fn variants_can_show_text_labels() {
+    let value = Signal::new(1.0);
+    let h = Harness::new(
+        DragValue::new(value.clone())
+            .variants([
+                DragValueVariant::text("Off"),
+                DragValueVariant::text("Auto"),
+                DragValueVariant::labeled(10.0, "Full"),
+            ])
+            .wrap_variants(true)
+            .font_size(FONT)
+            .precision(0)
+            .width(200.0)
+            .height(40.0),
+    );
+    h.layout(200.0, 80.0);
+    let r = h.rect(h.root().unwrap()).unwrap();
+
+    if has_fonts() {
+        assert_eq!(glyph_count(&h.paint()), "Auto".chars().count());
+    }
+
+    h.wheel(r.left() + 4.0, r.top() + 4.0, -120.0);
+    assert_eq!(value.get_untracked(), 10.0);
+    if has_fonts() {
+        assert_eq!(glyph_count(&h.paint()), "Full".chars().count());
+    }
+
+    h.wheel(r.left() + 4.0, r.top() + 4.0, -120.0);
+    assert_eq!(value.get_untracked(), 0.0, "wraps to the first variant");
+    if has_fonts() {
+        assert_eq!(glyph_count(&h.paint()), "Off".chars().count());
+    }
+}
+
+#[test]
+fn style_can_paint_background_border_and_padding() {
+    let style = DragValueStyle::new()
+        .background(Color::RED)
+        .hover_background(Color::GREEN)
+        .border(2.0, Color::BLUE)
+        .radius(4.0)
+        .padding_xy(10.0, 3.0)
+        .line_width(LINE_W);
+    let h = Harness::new(
+        DragValue::new(Signal::new(24.0))
+            .font_size(FONT)
+            .height(40.0)
+            .appearance(style),
+    );
+    h.layout(300.0, 80.0);
+    let rect = h.rect(h.root().unwrap()).unwrap();
+
+    let paint = h.paint();
+    let quads: Vec<_> = paint.quads().collect();
+    assert_eq!(quads.len(), 2, "surface and underline");
+    assert_eq!(quads[0].color, Color::RED);
+    assert_eq!(quads[0].border_width, 2.0);
+    assert_eq!(quads[0].border_color, Color::BLUE);
+    assert_eq!(quads[0].radius, 4.0);
+    assert_eq!(quads[1].rect.left(), rect.left() + 12.0);
+    assert_eq!(quads[1].rect.top(), rect.top() + 2.0 + 3.0 + LINE_Y);
+
+    h.pointer_move(rect.left() + 5.0, rect.top() + 5.0);
+    h.tick();
+    assert_eq!(h.paint().quads().next().unwrap().color, Color::GREEN);
 }

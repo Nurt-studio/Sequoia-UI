@@ -4487,7 +4487,8 @@ impl Runtime {
         for (i, info) in infos.iter().enumerate() {
             let (child, base, _, _, cross, _, _, cs) = *info;
             if i > 0 {
-                cursor += Self::indent_leading(&cs, cstyle.axis, cstyle.gap, false) + gap_step;
+                let prev_cs = infos[i - 1].7;
+                cursor += Self::indent_between(&prev_cs, &cs, cstyle.axis, cstyle.gap) + gap_step;
             }
             let (margin_main_start, margin_cross_start) = match cstyle.axis {
                 Axis::Horizontal => (cs.margin.left, cs.margin.top),
@@ -4516,7 +4517,10 @@ impl Runtime {
                 ),
             };
             let _ = margin_cross_start;
-            cursor += base + Self::indent_trailing(&cs, cstyle.axis);
+            cursor += base;
+            if i + 1 == infos.len() {
+                cursor += Self::indent_trailing(&cs, cstyle.axis);
+            }
             self.arrange(
                 child,
                 Rect::from_xywh(rx, ry, rw.max(0.0), rh.max(0.0)),
@@ -5020,13 +5024,13 @@ impl Runtime {
         if v.is_finite() { v.max(0.0) } else { 0.0 }
     }
 
-    fn indent_leading(cs: &LayoutStyle, axis: Axis, default_gap: f32, is_first: bool) -> f32 {
-        if is_first {
-            return 0.0;
-        }
-        match cs.indent_main_start(axis) {
-            Some(v) => Self::sanitize_gap_value(v),
-            None => Self::sanitize_gap_value(default_gap),
+    fn indent_between(prev: &LayoutStyle, next: &LayoutStyle, axis: Axis, default_gap: f32) -> f32 {
+        match (prev.indent_main_end(axis), next.indent_main_start(axis)) {
+            (None, None) => Self::sanitize_gap_value(default_gap),
+            (trailing, leading) => {
+                Self::sanitize_gap_value(trailing.unwrap_or(0.0))
+                    + Self::sanitize_gap_value(leading.unwrap_or(0.0))
+            }
         }
     }
 
@@ -5039,9 +5043,11 @@ impl Runtime {
 
     fn indents_main_total(styles: &[LayoutStyle], axis: Axis, default_gap: f32) -> f32 {
         let mut total = 0.0;
-        for (i, cs) in styles.iter().enumerate() {
-            total += Self::indent_leading(cs, axis, default_gap, i == 0);
-            total += Self::indent_trailing(cs, axis);
+        for pair in styles.windows(2) {
+            total += Self::indent_between(&pair[0], &pair[1], axis, default_gap);
+        }
+        if let Some(last) = styles.last() {
+            total += Self::indent_trailing(last, axis);
         }
         total
     }

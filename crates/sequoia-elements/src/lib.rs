@@ -52,7 +52,7 @@ pub use container::{ClickTrigger, Container};
 pub use context_menu::ContextMenu;
 pub use dialog::Dialog;
 pub use divider::{Divider, DividerAxis, divider_line_rect};
-pub use drag_value::DragValue;
+pub use drag_value::{DragValue, DragValueVariant};
 pub use draggable::Draggable;
 pub use drawer::{Drawer, DrawerSide};
 pub use dropdown::DropdownButton;
@@ -101,7 +101,7 @@ pub mod prelude {
     pub use crate::context_menu::ContextMenu;
     pub use crate::dialog::Dialog;
     pub use crate::divider::{Divider, DividerAxis, divider_line_rect};
-    pub use crate::drag_value::DragValue;
+    pub use crate::drag_value::{DragValue, DragValueVariant};
     pub use crate::draggable::Draggable;
     pub use crate::drawer::{Drawer, DrawerSide};
     pub use crate::dropdown::DropdownButton;

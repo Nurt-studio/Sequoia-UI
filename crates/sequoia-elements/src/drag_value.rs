@@ -22,7 +22,82 @@ const MAX_PRECISION: usize = 9;
 
 const CLICK_SLOP: f32 = 3.0;
 
+const VARIANT_DRAG_PX: f32 = 20.0;
+
 const CARET: char = '|';
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DragValueVariant {
+    value: Option<f32>,
+    label: Option<String>,
+}
+
+impl DragValueVariant {
+    pub fn new(value: f32) -> Self {
+        Self {
+            value: Some(value),
+            label: None,
+        }
+    }
+
+    pub fn labeled(value: f32, label: impl Into<String>) -> Self {
+        Self {
+            value: Some(value),
+            label: Some(label.into()),
+        }
+    }
+
+    pub fn text(label: impl Into<String>) -> Self {
+        Self {
+            value: None,
+            label: Some(label.into()),
+        }
+    }
+
+    pub fn value(mut self, value: f32) -> Self {
+        self.value = Some(value);
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    fn resolved_value(&self, index: usize) -> f32 {
+        self.value.unwrap_or(index as f32)
+    }
+}
+
+impl From<f32> for DragValueVariant {
+    fn from(value: f32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<(f32, &str)> for DragValueVariant {
+    fn from((value, label): (f32, &str)) -> Self {
+        Self::labeled(value, label)
+    }
+}
+
+impl From<(f32, String)> for DragValueVariant {
+    fn from((value, label): (f32, String)) -> Self {
+        Self::labeled(value, label)
+    }
+}
+
+impl From<&str> for DragValueVariant {
+    fn from(label: &str) -> Self {
+        Self::text(label)
+    }
+}
+
+impl From<String> for DragValueVariant {
+    fn from(label: String) -> Self {
+        Self::text(label)
+    }
+}
 
 #[derive(Clone, Copy)]
 struct DragState {
@@ -52,11 +127,20 @@ pub struct DragValue {
     text_color: Option<Color>,
     line_color: Option<Color>,
     line_width: Option<f32>,
-    line_full: bool,
+    line_full: Option<bool>,
+    background: Option<Color>,
+    hover_background: Option<Color>,
+    pressed_background: Option<Color>,
+    border_color: Option<Color>,
+    border_width: Option<f32>,
+    radius: Option<f32>,
+    padding: Option<(f32, f32)>,
     trim_zeros: bool,
     font_size: Option<f32>,
     weight: Option<FontWeight>,
     appearance: Option<DragValueStyle>,
+    variants: Vec<DragValueVariant>,
+    wrap_variants: bool,
     style: LayoutStyle,
     margin: Edges,
     align: Align,
@@ -84,11 +168,20 @@ impl DragValue {
             text_color: None,
             line_color: None,
             line_width: None,
-            line_full: false,
+            line_full: None,
+            background: None,
+            hover_background: None,
+            pressed_background: None,
+            border_color: None,
+            border_width: None,
+            radius: None,
+            padding: None,
             trim_zeros: false,
             font_size: None,
             weight: None,
             appearance: None,
+            variants: Vec::new(),
+            wrap_variants: false,
             style: LayoutStyle {
                 width: Length::Fit,
                 height: Length::Px(HEIGHT),
@@ -163,7 +256,78 @@ impl DragValue {
     }
 
     pub fn line_full(mut self, full: bool) -> Self {
-        self.line_full = full;
+        self.line_full = Some(full);
+        self
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    pub fn hover_background(mut self, color: Color) -> Self {
+        self.hover_background = Some(color);
+        self
+    }
+
+    pub fn pressed_background(mut self, color: Color) -> Self {
+        self.pressed_background = Some(color);
+        self
+    }
+
+    pub fn border_color(mut self, color: Color) -> Self {
+        self.border_color = Some(color);
+        self
+    }
+
+    pub fn border_width(mut self, width: f32) -> Self {
+        self.border_width = Some(width.max(0.0));
+        self
+    }
+
+    pub fn border(mut self, width: f32, color: Color) -> Self {
+        self.border_width = Some(width.max(0.0));
+        self.border_color = Some(color);
+        self
+    }
+
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius.max(0.0));
+        self
+    }
+
+    pub fn padding(mut self, pad_x: f32, pad_y: f32) -> Self {
+        self.padding = Some((pad_x.max(0.0), pad_y.max(0.0)));
+        self
+    }
+
+    pub fn padding_xy(self, pad_x: f32, pad_y: f32) -> Self {
+        self.padding(pad_x, pad_y)
+    }
+
+    pub fn variants<I, V>(mut self, variants: I) -> Self
+    where
+        I: IntoIterator<Item = V>,
+        V: Into<DragValueVariant>,
+    {
+        self.variants = variants
+            .into_iter()
+            .map(Into::into)
+            .filter(|v| v.value.is_none_or(f32::is_finite))
+            .collect();
+        self
+    }
+
+    pub fn variant(mut self, variant: impl Into<DragValueVariant>) -> Self {
+        let variant = variant.into();
+        if variant.value.is_none_or(f32::is_finite) {
+            self.variants.push(variant);
+        }
+        self
+    }
+
+    pub fn wrap_variants(mut self, wrap: bool) -> Self {
+        self.wrap_variants = wrap;
         self
     }
 
@@ -383,7 +547,11 @@ impl DragValue {
         let before = self.value.get_untracked();
         self.stop_edit();
         if let Ok(parsed) = buffer.trim().replace(',', ".").parse::<f32>() {
-            self.set_value(parsed);
+            if self.variants.is_empty() {
+                self.set_value(parsed);
+            } else {
+                self.set_value_raw(parsed);
+            }
         }
         self.commit_if_changed(before);
     }
@@ -441,8 +609,17 @@ impl DragValue {
     fn display(&self, value: f32) -> String {
         match self.edit_buffer() {
             Some(buffer) => format!("{buffer}{CARET}"),
-            None => self.text(value),
+            None => self.display_value(value),
         }
+    }
+
+    fn display_value(&self, value: f32) -> String {
+        if let Some(index) = self.variant_exact_index(value)
+            && let Some(label) = &self.variants[index].label
+        {
+            return label.clone();
+        }
+        self.text(value)
     }
 
     fn font_weight(&self) -> FontWeight {
@@ -484,6 +661,170 @@ impl DragValue {
     fn resolved_line_color(&self) -> Option<Color> {
         self.line_color
             .or_else(|| self.appearance.and_then(|s| s.line))
+    }
+
+    fn resolved_line_full(&self) -> bool {
+        self.line_full
+            .or_else(|| self.appearance.and_then(|s| s.line_full))
+            .unwrap_or(false)
+    }
+
+    fn resolved_pad(&self) -> (f32, f32) {
+        self.padding
+            .or_else(|| self.appearance.and_then(|s| s.padding))
+            .unwrap_or((underline::PAD_X, 0.0))
+    }
+
+    fn resolved_background(&self, state: VisualState) -> Color {
+        let style = self.appearance.unwrap_or_default();
+        let idle = self
+            .background
+            .or(style.background)
+            .unwrap_or(Color::TRANSPARENT);
+        if state.pressed {
+            self.pressed_background
+                .or(style.pressed_background)
+                .or(self.hover_background)
+                .or(style.hover_background)
+                .unwrap_or(idle)
+        } else if state.hovered {
+            self.hover_background
+                .or(style.hover_background)
+                .unwrap_or(idle)
+        } else {
+            idle
+        }
+    }
+
+    fn resolved_border(&self, theme: &Theme) -> Option<(f32, Color)> {
+        let width_opt = self
+            .border_width
+            .or_else(|| self.appearance.and_then(|s| s.border_width));
+        let color_opt = self
+            .border_color
+            .or_else(|| self.appearance.and_then(|s| s.border));
+        match (width_opt, color_opt) {
+            (None, None) => None,
+            (Some(w), Some(c)) => {
+                let w = w.max(0.0);
+                if w <= 0.0 || c.a <= 0.0 {
+                    None
+                } else {
+                    Some((w, c))
+                }
+            }
+            (Some(w), None) => {
+                let w = w.max(0.0);
+                if w <= 0.0 || theme.border.a <= 0.0 {
+                    None
+                } else {
+                    Some((w, theme.border))
+                }
+            }
+            (None, Some(c)) => {
+                if c.a <= 0.0 {
+                    None
+                } else {
+                    Some((1.0, c))
+                }
+            }
+        }
+    }
+
+    fn resolved_radius(&self, theme: &Theme) -> f32 {
+        self.radius
+            .or_else(|| self.appearance.and_then(|s| s.radius))
+            .unwrap_or(theme.radius)
+            .max(0.0)
+    }
+
+    fn approx_border_w(&self) -> f32 {
+        if let Some(w) = self
+            .border_width
+            .or_else(|| self.appearance.and_then(|s| s.border_width))
+        {
+            return w.max(0.0);
+        }
+        let has_color =
+            self.border_color.is_some() || self.appearance.and_then(|s| s.border).is_some();
+        if has_color { 1.0 } else { 0.0 }
+    }
+
+    fn current_value(&self) -> f32 {
+        let value = self.value.get_untracked();
+        if self.variants.is_empty() {
+            self.clamped(value)
+        } else {
+            value
+        }
+    }
+
+    fn variant_value(&self, index: usize) -> f32 {
+        self.variants[index].resolved_value(index)
+    }
+
+    fn variant_exact_index(&self, value: f32) -> Option<usize> {
+        (0..self.variants.len()).find(|&i| {
+            let delta = (self.variant_value(i) - value).abs();
+            delta <= 1e-6 * value.abs().max(1.0)
+        })
+    }
+
+    fn variant_index_for(&self, value: f32) -> usize {
+        let mut best = 0;
+        let mut best_delta = f32::INFINITY;
+        for i in 0..self.variants.len() {
+            let delta = (self.variant_value(i) - value).abs();
+            if delta < best_delta {
+                best_delta = delta;
+                best = i;
+            }
+        }
+        best
+    }
+
+    fn variant_after(&self, index: usize, steps: isize) -> usize {
+        let len = self.variants.len();
+        if len == 0 {
+            return 0;
+        }
+        let len_i = len as isize;
+        if self.wrap_variants {
+            let steps = steps.rem_euclid(len_i);
+            ((index as isize + steps) % len_i) as usize
+        } else {
+            (index as isize + steps.clamp(-len_i, len_i)).clamp(0, len_i - 1) as usize
+        }
+    }
+
+    fn step_variant(&self, steps: isize) {
+        self.step_variant_from(self.value.get_untracked(), steps);
+    }
+
+    fn step_variant_from(&self, value: f32, steps: isize) {
+        if self.variants.is_empty() {
+            return;
+        }
+        let start = self.variant_index_for(value);
+        let next = self.variant_after(start, steps);
+        self.set_variant(next);
+    }
+
+    fn set_variant(&self, index: usize) {
+        if self.variants.is_empty() {
+            return;
+        }
+        self.set_value_raw(self.variant_value(index));
+    }
+
+    fn set_value_raw(&self, value: f32) {
+        if !value.is_finite() {
+            return;
+        }
+        if value != self.value.get_untracked() {
+            self.announce();
+            self.value.set(value);
+        }
     }
 }
 
@@ -542,7 +883,7 @@ impl View for DragValue {
     fn intrinsic_size(&self, ctx: &mut LayoutCtx) -> Option<Size> {
         let appearance = self.appearance.unwrap_or_default();
         let size = self.font_size.or(appearance.font_size).unwrap_or(14.0);
-        let text = self.display(self.clamped(self.value.get_untracked()));
+        let text = self.display(self.current_value());
         let w = ctx.text_width_weighted(&text, size, self.font_weight());
         let line_width = self.resolved_line_width();
         let h = if line_width > 0.0 {
@@ -550,7 +891,12 @@ impl View for DragValue {
         } else {
             LayoutCtx::text_line_height(size)
         };
-        Some(Size::new(w + underline::PAD_X * 2.0, h))
+        let (pad_x, pad_y) = self.resolved_pad();
+        let bw = self.approx_border_w();
+        Some(Size::new(
+            w + pad_x * 2.0 + bw * 2.0,
+            h + pad_y * 2.0 + bw * 2.0,
+        ))
     }
 
     fn reuse_state(&self, old: &Self) {
@@ -576,7 +922,11 @@ impl View for DragValue {
                         let before = self.value.get_untracked();
                         self.stop_edit();
                         self.with_gesture(|g| g.drag = None);
-                        self.set_value(reset);
+                        if self.variants.is_empty() {
+                            self.set_value(reset);
+                        } else {
+                            self.set_value_raw(reset);
+                        }
                         self.commit_if_changed(before);
                         ctx.handled();
                     }
@@ -609,7 +959,13 @@ impl View for DragValue {
 
                     Axis::Vertical => drag.origin.y - pos.y,
                 };
-                self.set_value(drag.value + delta * self.units_per_px());
+                if self.variants.is_empty() {
+                    self.set_value(drag.value + delta * self.units_per_px());
+                } else if delta.is_finite() {
+                    let len = self.variants.len() as f32;
+                    let steps = (delta / VARIANT_DRAG_PX).round().clamp(-len, len) as isize;
+                    self.step_variant_from(drag.value, steps);
+                }
                 ctx.handled();
             }
             Event::Pointer(PointerEvent::Up { pos, .. }) => {
@@ -640,6 +996,18 @@ impl View for DragValue {
                     ctx.handled();
                     return;
                 }
+                if !self.variants.is_empty() {
+                    let steps = match key.key {
+                        Key::ARROW_LEFT | Key::ARROW_DOWN => -1,
+                        Key::ARROW_RIGHT | Key::ARROW_UP => 1,
+                        _ => return,
+                    };
+                    let before = self.value.get_untracked();
+                    self.step_variant(steps);
+                    self.commit_if_changed(before);
+                    ctx.handled();
+                    return;
+                }
                 let delta = match key.key {
                     Key::ARROW_LEFT | Key::ARROW_DOWN => -self.key_step(),
                     Key::ARROW_RIGHT | Key::ARROW_UP => self.key_step(),
@@ -657,19 +1025,31 @@ impl View for DragValue {
                 if self.is_editing() {
                     return;
                 }
-                let mult = if modifiers.contains(Modifiers::SHIFT) {
-                    0.1
-                } else if modifiers.contains(Modifiers::CONTROL)
-                    || modifiers.contains(Modifiers::SUPER)
-                {
-                    10.0
+                let dir = if delta.y < 0.0 {
+                    1
+                } else if delta.y > 0.0 {
+                    -1
                 } else {
-                    1.0
+                    0
                 };
-                let dir = if delta.y < 0.0 { 1.0 } else { -1.0 };
-                let before = self.value.get_untracked();
-                self.set_value(before + self.span() / 100.0 * mult * dir);
-                self.commit_if_changed(before);
+                if dir != 0 && !self.variants.is_empty() {
+                    let before = self.value.get_untracked();
+                    self.step_variant(dir);
+                    self.commit_if_changed(before);
+                } else if dir != 0 {
+                    let mult = if modifiers.contains(Modifiers::SHIFT) {
+                        0.1
+                    } else if modifiers.contains(Modifiers::CONTROL)
+                        || modifiers.contains(Modifiers::SUPER)
+                    {
+                        10.0
+                    } else {
+                        1.0
+                    };
+                    let before = self.value.get_untracked();
+                    self.set_value(before + self.span() / 100.0 * mult * dir as f32);
+                    self.commit_if_changed(before);
+                }
                 ctx.handled();
             }
             _ => {}
@@ -690,6 +1070,10 @@ impl View for DragValue {
         let weight = self.font_weight();
         let line_width = self.resolved_line_width();
         let editing = self.is_editing();
+        let (pad_x, pad_y) = self.resolved_pad();
+        let background = self.resolved_background(ctx.state);
+        let radius = self.resolved_radius(&theme);
+        let border = self.resolved_border(&theme);
         let colors = underline::field_colors(
             &theme,
             ctx.state.hovered || ctx.state.pressed || editing,
@@ -697,27 +1081,35 @@ impl View for DragValue {
             self.resolved_text_color(),
             self.resolved_line_color(),
         );
-        let text = self.display(self.clamped(self.value.get_untracked()));
+        let text = self.display(self.current_value());
         let text_width = ctx.text_width_weighted(&text, size, weight);
 
+        if background.a > 0.0 || border.is_some() {
+            match border {
+                Some((w, color)) => ctx.bordered_quad(rect, background, radius, w, color),
+                None => ctx.quad(rect, background, radius),
+            }
+        }
+
+        let bw = border.map(|(w, _)| w).unwrap_or(0.0);
+        let inner_w = (rect.size.width - (pad_x + bw) * 2.0).max(0.0);
+        let inner_h = (rect.size.height - (pad_y + bw) * 2.0).max(0.0);
         let line_h = LayoutCtx::text_line_height(size);
         let draws_line = line_width > 0.0 && colors.line.a > 0.0;
-        // Without an underline we do not reserve space for the line, so the text
-        // is vertically centered in the whole field. With a line the layout stays as before.
         let text_top = if draws_line {
-            rect.top()
+            rect.top() + bw + pad_y
         } else {
-            rect.top() + ((rect.size.height - line_h) * 0.5).max(0.0)
+            rect.top() + bw + pad_y + ((inner_h - line_h) * 0.5).max(0.0)
         };
 
         if draws_line {
-            let w = if self.line_full {
-                (rect.size.width - underline::PAD_X * 2.0).max(0.0)
+            let w = if self.resolved_line_full() {
+                inner_w
             } else {
-                text_width.min((rect.size.width - underline::PAD_X * 2.0).max(0.0))
+                text_width.min(inner_w)
             };
             let line = Rect::from_xywh(
-                rect.left() + underline::PAD_X,
+                rect.left() + pad_x + bw,
                 text_top + line_h + underline::LINE_GAP,
                 w,
                 line_width,
@@ -726,9 +1118,9 @@ impl View for DragValue {
         }
 
         let x = match self.align {
-            Align::Center => rect.left() + (rect.size.width - text_width) * 0.5,
-            Align::End => rect.right() - underline::PAD_X - text_width,
-            _ => rect.left() + underline::PAD_X,
+            Align::Center => rect.left() + pad_x + bw + (inner_w - text_width) * 0.5,
+            Align::End => rect.right() - pad_x - bw - text_width,
+            _ => rect.left() + pad_x + bw,
         };
         let x = x.max(rect.left());
         let y = text_top + line_h * 0.5 + size * 0.35;

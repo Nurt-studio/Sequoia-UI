@@ -31,7 +31,7 @@ fn row_indent_left_overrides_gap() {
 }
 
 #[test]
-fn row_indent_right_shifts_next() {
+fn row_indent_right_overrides_gap() {
     let h = Harness::new(
         Row::new()
             .gap(10.0)
@@ -40,7 +40,24 @@ fn row_indent_right_shifts_next() {
     );
     h.layout(400.0, 100.0);
     let r = cells(&h, h.root().unwrap());
-    assert!((r[1].origin.x - (50.0 + 25.0 + 10.0)).abs() < 0.5, "{r:?}");
+    assert!((r[1].origin.x - (50.0 + 25.0)).abs() < 0.5, "{r:?}");
+}
+
+#[test]
+fn row_indent_right_used_as_small_gap() {
+    let h = Harness::new(
+        Row::new()
+            .gap(24.0)
+            .child(Panel::new().size(30.0, 20.0).indent_right(4.0))
+            .child(Panel::new().size(20.0, 20.0))
+            .child(Panel::new().size(30.0, 20.0).indent_right(4.0))
+            .child(Panel::new().size(20.0, 20.0)),
+    );
+    h.layout(400.0, 100.0);
+    let r = cells(&h, h.root().unwrap());
+    assert!((r[1].origin.x - 34.0).abs() < 0.5, "{r:?}");
+    assert!((r[2].origin.x - 78.0).abs() < 0.5, "{r:?}");
+    assert!((r[3].origin.x - 112.0).abs() < 0.5, "{r:?}");
 }
 
 #[test]
@@ -84,7 +101,7 @@ fn column_indent_top_overrides_gap() {
 }
 
 #[test]
-fn column_indent_bottom_shifts_next() {
+fn column_indent_bottom_overrides_gap() {
     let h = Harness::new(
         Column::new()
             .gap(10.0)
@@ -93,7 +110,7 @@ fn column_indent_bottom_shifts_next() {
     );
     h.layout(400.0, 400.0);
     let r = cells(&h, h.root().unwrap());
-    assert!((r[1].origin.y - (20.0 + 25.0 + 10.0)).abs() < 0.5, "{r:?}");
+    assert!((r[1].origin.y - (20.0 + 25.0)).abs() < 0.5, "{r:?}");
 }
 
 #[test]
