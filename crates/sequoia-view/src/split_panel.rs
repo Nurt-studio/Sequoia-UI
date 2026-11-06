@@ -348,22 +348,22 @@ impl SplitPanel {
         self
     }
 
-    pub fn indent_top(mut self, v: f32) -> Self {
+    pub fn indent_top(mut self, v: impl Into<Length>) -> Self {
         self.layout = self.layout.indent_top(v);
         self
     }
 
-    pub fn indent_bottom(mut self, v: f32) -> Self {
+    pub fn indent_bottom(mut self, v: impl Into<Length>) -> Self {
         self.layout = self.layout.indent_bottom(v);
         self
     }
 
-    pub fn indent_left(mut self, v: f32) -> Self {
+    pub fn indent_left(mut self, v: impl Into<Length>) -> Self {
         self.layout = self.layout.indent_left(v);
         self
     }
 
-    pub fn indent_right(mut self, v: f32) -> Self {
+    pub fn indent_right(mut self, v: impl Into<Length>) -> Self {
         self.layout = self.layout.indent_right(v);
         self
     }

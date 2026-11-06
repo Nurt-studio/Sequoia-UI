@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use sequoia_core::Length;
 use sequoia_test::Harness;
 use sequoia_view::prelude::*;
 use sequoia_view::{Indents, LayoutStyle};
@@ -145,22 +146,22 @@ fn indent_builders_cover_api() {
         .indent_bottom(2.0)
         .indent_left(3.0)
         .indent_right(4.0);
-    assert_eq!(s.indent_top, Some(1.0));
-    assert_eq!(s.indent_bottom, Some(2.0));
-    assert_eq!(s.indent_left, Some(3.0));
-    assert_eq!(s.indent_right, Some(4.0));
+    assert_eq!(s.indent_top, Some(Length::px(1.0)));
+    assert_eq!(s.indent_bottom, Some(Length::px(2.0)));
+    assert_eq!(s.indent_left, Some(Length::px(3.0)));
+    assert_eq!(s.indent_right, Some(Length::px(4.0)));
     let s = s.indent(Indents::xy(5.0, 6.0));
-    assert_eq!(s.indent_left, Some(5.0));
-    assert_eq!(s.indent_right, Some(5.0));
-    assert_eq!(s.indent_top, Some(6.0));
-    assert_eq!(s.indent_bottom, Some(6.0));
+    assert_eq!(s.indent_left, Some(Length::px(5.0)));
+    assert_eq!(s.indent_right, Some(Length::px(5.0)));
+    assert_eq!(s.indent_top, Some(Length::px(6.0)));
+    assert_eq!(s.indent_bottom, Some(Length::px(6.0)));
     let s = s.indent_all(7.0);
     assert_eq!(s.indents(), Indents::all(7.0));
     let s = s.indent_axes(8.0, 9.0);
-    assert_eq!(s.indent_left, Some(8.0));
-    assert_eq!(s.indent_right, Some(8.0));
-    assert_eq!(s.indent_top, Some(9.0));
-    assert_eq!(s.indent_bottom, Some(9.0));
+    assert_eq!(s.indent_left, Some(Length::px(8.0)));
+    assert_eq!(s.indent_right, Some(Length::px(8.0)));
+    assert_eq!(s.indent_top, Some(Length::px(9.0)));
+    assert_eq!(s.indent_bottom, Some(Length::px(9.0)));
     let s = s.clear_indents();
     assert!(s.indents().is_none());
 
@@ -168,8 +169,86 @@ fn indent_builders_cover_api() {
         .indent_left(-5.0)
         .indent_top(f32::NAN)
         .indent_right(f32::INFINITY);
-    assert_eq!(s.indent_left, Some(0.0));
-    assert_eq!(s.indent_top, Some(0.0));
-    assert_eq!(s.indent_right, Some(0.0));
+    assert_eq!(s.indent_left, Some(Length::px(0.0)));
+    assert_eq!(s.indent_top, Some(Length::px(0.0)));
+    assert_eq!(s.indent_right, Some(Length::px(0.0)));
     assert_eq!(s.indent_bottom, None);
+}
+
+#[test]
+fn row_indent_fill_pushes_next_to_the_end() {
+    let h = Harness::new(
+        Row::new()
+            .width(200.0)
+            .gap(10.0)
+            .child(Panel::new().size(30.0, 20.0))
+            .child(Panel::new().size(30.0, 20.0))
+            .child(Panel::new().size(30.0, 20.0).indent_left(Length::Fill(1.0))),
+    );
+    h.layout(200.0, 100.0);
+    let r = cells(&h, h.root().unwrap());
+    assert!((r[0].origin.x - 0.0).abs() < 0.5, "{r:?}");
+    assert!((r[1].origin.x - 40.0).abs() < 0.5, "{r:?}");
+    assert!((r[2].origin.x - 170.0).abs() < 0.5, "{r:?}");
+}
+
+#[test]
+fn row_indent_percent_uses_main_axis_space() {
+    let h = Harness::new(
+        Row::new()
+            .width(200.0)
+            .gap(10.0)
+            .child(Panel::new().size(20.0, 20.0))
+            .child(
+                Panel::new()
+                    .size(20.0, 20.0)
+                    .indent_left(Length::Percent(25.0)),
+            ),
+    );
+    h.layout(200.0, 100.0);
+    let r = cells(&h, h.root().unwrap());
+    assert!((r[1].origin.x - 70.0).abs() < 0.5, "{r:?}");
+}
+
+#[test]
+fn row_cross_indent_percent_uses_cross_axis_space() {
+    let h = Harness::new(
+        Row::new().height(100.0).gap(0.0).child(
+            Panel::new()
+                .size(20.0, 20.0)
+                .indent_top(Length::Percent(10.0)),
+        ),
+    );
+    h.layout(200.0, 100.0);
+    let r = cells(&h, h.root().unwrap());
+    assert!((r[0].origin.y - 10.0).abs() < 0.5, "{r:?}");
+}
+
+#[test]
+fn text_indent_fill_aligns_to_row_end() {
+    let h = Harness::new(
+        Row::new()
+            .width(200.0)
+            .child(Text::new("left"))
+            .child(Text::new("right").indent_left(Length::Fill(1.0))),
+    );
+    h.layout(200.0, 100.0);
+    let r = cells(&h, h.root().unwrap());
+    let right = r[1].origin.x + r[1].size.width;
+    assert!((right - 200.0).abs() < 0.5, "{r:?}");
+}
+
+#[test]
+fn row_indent_fill_shares_free_space_by_weight() {
+    let h = Harness::new(
+        Row::new()
+            .width(200.0)
+            .child(Panel::new().size(20.0, 20.0))
+            .child(Panel::new().size(20.0, 20.0).indent_left(Length::Fill(1.0)))
+            .child(Panel::new().size(20.0, 20.0).indent_left(Length::Fill(3.0))),
+    );
+    h.layout(200.0, 100.0);
+    let r = cells(&h, h.root().unwrap());
+    assert!((r[1].origin.x - 55.0).abs() < 0.5, "{r:?}");
+    assert!((r[2].origin.x - 180.0).abs() < 0.5, "{r:?}");
 }

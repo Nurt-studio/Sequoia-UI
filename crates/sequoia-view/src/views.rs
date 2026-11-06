@@ -67,22 +67,22 @@ macro_rules! impl_style_extras {
                 self
             }
 
-            pub fn indent_top(mut self, v: f32) -> Self {
+            pub fn indent_top(mut self, v: impl Into<Length>) -> Self {
                 self.style = self.style.indent_top(v);
                 self
             }
 
-            pub fn indent_bottom(mut self, v: f32) -> Self {
+            pub fn indent_bottom(mut self, v: impl Into<Length>) -> Self {
                 self.style = self.style.indent_bottom(v);
                 self
             }
 
-            pub fn indent_left(mut self, v: f32) -> Self {
+            pub fn indent_left(mut self, v: impl Into<Length>) -> Self {
                 self.style = self.style.indent_left(v);
                 self
             }
 
-            pub fn indent_right(mut self, v: f32) -> Self {
+            pub fn indent_right(mut self, v: impl Into<Length>) -> Self {
                 self.style = self.style.indent_right(v);
                 self
             }
@@ -705,22 +705,22 @@ impl Text {
         self
     }
 
-    pub fn indent_top(mut self, v: f32) -> Self {
+    pub fn indent_top(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_top(v);
         self
     }
 
-    pub fn indent_bottom(mut self, v: f32) -> Self {
+    pub fn indent_bottom(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_bottom(v);
         self
     }
 
-    pub fn indent_left(mut self, v: f32) -> Self {
+    pub fn indent_left(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_left(v);
         self
     }
 
-    pub fn indent_right(mut self, v: f32) -> Self {
+    pub fn indent_right(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_right(v);
         self
     }
@@ -1296,23 +1296,23 @@ impl Margined {
         self
     }
 
-    pub fn indent_top(mut self, v: f32) -> Self {
-        self.indents.top = Some(sequoia_layout::sanitize_indent(v));
+    pub fn indent_top(mut self, v: impl Into<Length>) -> Self {
+        self.indents.top = Some(sequoia_layout::sanitize_indent_length(v.into()));
         self
     }
 
-    pub fn indent_bottom(mut self, v: f32) -> Self {
-        self.indents.bottom = Some(sequoia_layout::sanitize_indent(v));
+    pub fn indent_bottom(mut self, v: impl Into<Length>) -> Self {
+        self.indents.bottom = Some(sequoia_layout::sanitize_indent_length(v.into()));
         self
     }
 
-    pub fn indent_left(mut self, v: f32) -> Self {
-        self.indents.left = Some(sequoia_layout::sanitize_indent(v));
+    pub fn indent_left(mut self, v: impl Into<Length>) -> Self {
+        self.indents.left = Some(sequoia_layout::sanitize_indent_length(v.into()));
         self
     }
 
-    pub fn indent_right(mut self, v: f32) -> Self {
-        self.indents.right = Some(sequoia_layout::sanitize_indent(v));
+    pub fn indent_right(mut self, v: impl Into<Length>) -> Self {
+        self.indents.right = Some(sequoia_layout::sanitize_indent_length(v.into()));
         self
     }
 
@@ -1323,16 +1323,16 @@ impl Margined {
 
     pub fn indent(mut self, indents: Indents) -> Self {
         if let Some(v) = indents.top {
-            self.indents.top = Some(sequoia_layout::sanitize_indent(v));
+            self.indents.top = Some(sequoia_layout::sanitize_indent_length(v));
         }
         if let Some(v) = indents.bottom {
-            self.indents.bottom = Some(sequoia_layout::sanitize_indent(v));
+            self.indents.bottom = Some(sequoia_layout::sanitize_indent_length(v));
         }
         if let Some(v) = indents.left {
-            self.indents.left = Some(sequoia_layout::sanitize_indent(v));
+            self.indents.left = Some(sequoia_layout::sanitize_indent_length(v));
         }
         if let Some(v) = indents.right {
-            self.indents.right = Some(sequoia_layout::sanitize_indent(v));
+            self.indents.right = Some(sequoia_layout::sanitize_indent_length(v));
         }
         self
     }
@@ -1579,22 +1579,22 @@ macro_rules! impl_flex_container {
                 self
             }
 
-            pub fn indent_top(mut self, v: f32) -> Self {
+            pub fn indent_top(mut self, v: impl Into<Length>) -> Self {
                 self.0.style = self.0.style.indent_top(v);
                 self
             }
 
-            pub fn indent_bottom(mut self, v: f32) -> Self {
+            pub fn indent_bottom(mut self, v: impl Into<Length>) -> Self {
                 self.0.style = self.0.style.indent_bottom(v);
                 self
             }
 
-            pub fn indent_left(mut self, v: f32) -> Self {
+            pub fn indent_left(mut self, v: impl Into<Length>) -> Self {
                 self.0.style = self.0.style.indent_left(v);
                 self
             }
 
-            pub fn indent_right(mut self, v: f32) -> Self {
+            pub fn indent_right(mut self, v: impl Into<Length>) -> Self {
                 self.0.style = self.0.style.indent_right(v);
                 self
             }

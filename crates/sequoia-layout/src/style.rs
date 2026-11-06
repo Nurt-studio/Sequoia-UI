@@ -69,17 +69,19 @@ impl Inset {
 /// Optional indents from each edge of a container's content box.
 ///
 /// An indent replaces the container gap on the boundary it touches instead of
-/// being added to it.
+/// being added to it. Along the main axis, [`Length::Fill`] indents share free
+/// space like flexible spacers, so `indent_left(Length::Fill(1.0))` can push a
+/// child to the end of a row without adding a separate [`crate::FlexItem`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Indents {
     /// Indent from the left edge, or `None` to use the default.
-    pub left: Option<f32>,
+    pub left: Option<Length>,
     /// Indent from the top edge, or `None` to use the default.
-    pub top: Option<f32>,
+    pub top: Option<Length>,
     /// Indent from the right edge, or `None` to use the default.
-    pub right: Option<f32>,
+    pub right: Option<Length>,
     /// Indent from the bottom edge, or `None` to use the default.
-    pub bottom: Option<f32>,
+    pub bottom: Option<Length>,
 }
 
 impl Indents {
@@ -93,7 +95,7 @@ impl Indents {
 
     /// Sets the same indent on every side.
     pub fn all(v: f32) -> Self {
-        let v = sanitize_indent(v);
+        let v = Length::Px(sanitize_indent(v));
         Self {
             left: Some(v),
             top: Some(v),
@@ -105,10 +107,10 @@ impl Indents {
     /// Sets horizontal and vertical indents.
     pub fn xy(x: f32, y: f32) -> Self {
         Self {
-            left: Some(sanitize_indent(x)),
-            top: Some(sanitize_indent(y)),
-            right: Some(sanitize_indent(x)),
-            bottom: Some(sanitize_indent(y)),
+            left: Some(Length::Px(sanitize_indent(x))),
+            top: Some(Length::Px(sanitize_indent(y))),
+            right: Some(Length::Px(sanitize_indent(x))),
+            bottom: Some(Length::Px(sanitize_indent(y))),
         }
     }
 
@@ -119,7 +121,7 @@ impl Indents {
 
     /// Sets the left and right indents.
     pub fn horizontal(v: f32) -> Self {
-        let v = sanitize_indent(v);
+        let v = Length::Px(sanitize_indent(v));
         Self {
             left: Some(v),
             right: Some(v),
@@ -130,7 +132,7 @@ impl Indents {
 
     /// Sets the top and bottom indents.
     pub fn vertical(v: f32) -> Self {
-        let v = sanitize_indent(v);
+        let v = Length::Px(sanitize_indent(v));
         Self {
             left: None,
             right: None,
@@ -141,10 +143,10 @@ impl Indents {
 
     /// Builds indents from each side, `None` meaning unset.
     pub const fn only(
-        left: Option<f32>,
-        top: Option<f32>,
-        right: Option<f32>,
-        bottom: Option<f32>,
+        left: Option<Length>,
+        top: Option<Length>,
+        right: Option<Length>,
+        bottom: Option<Length>,
     ) -> Self {
         Self {
             left,
@@ -190,13 +192,13 @@ pub struct LayoutStyle {
     /// Preferred width-to-height ratio.
     pub aspect_ratio: Option<f32>,
     /// Indent from the top edge; replaces the container gap when set.
-    pub indent_top: Option<f32>,
+    pub indent_top: Option<Length>,
     /// Indent from the bottom edge; replaces the container gap when set.
-    pub indent_bottom: Option<f32>,
+    pub indent_bottom: Option<Length>,
     /// Indent from the left edge; replaces the container gap when set.
-    pub indent_left: Option<f32>,
+    pub indent_left: Option<Length>,
     /// Indent from the right edge; replaces the container gap when set.
-    pub indent_right: Option<f32>,
+    pub indent_right: Option<Length>,
     /// Positioning mode.
     pub position: Position,
     /// Overflow handling for content that exceeds the view.
@@ -623,26 +625,26 @@ impl LayoutStyle {
     }
 
     /// Sets the top indent.
-    pub fn indent_top(mut self, v: f32) -> Self {
-        self.indent_top = Some(sanitize_indent(v));
+    pub fn indent_top(mut self, v: impl Into<Length>) -> Self {
+        self.indent_top = Some(sanitize_indent_length(v.into()));
         self
     }
 
     /// Sets the bottom indent.
-    pub fn indent_bottom(mut self, v: f32) -> Self {
-        self.indent_bottom = Some(sanitize_indent(v));
+    pub fn indent_bottom(mut self, v: impl Into<Length>) -> Self {
+        self.indent_bottom = Some(sanitize_indent_length(v.into()));
         self
     }
 
     /// Sets the left indent.
-    pub fn indent_left(mut self, v: f32) -> Self {
-        self.indent_left = Some(sanitize_indent(v));
+    pub fn indent_left(mut self, v: impl Into<Length>) -> Self {
+        self.indent_left = Some(sanitize_indent_length(v.into()));
         self
     }
 
     /// Sets the right indent.
-    pub fn indent_right(mut self, v: f32) -> Self {
-        self.indent_right = Some(sanitize_indent(v));
+    pub fn indent_right(mut self, v: impl Into<Length>) -> Self {
+        self.indent_right = Some(sanitize_indent_length(v.into()));
         self
     }
 
@@ -682,23 +684,23 @@ impl LayoutStyle {
     /// Applies the set sides from `indents`.
     pub fn indent(mut self, indents: Indents) -> Self {
         if let Some(v) = indents.top {
-            self.indent_top = Some(sanitize_indent(v));
+            self.indent_top = Some(sanitize_indent_length(v));
         }
         if let Some(v) = indents.bottom {
-            self.indent_bottom = Some(sanitize_indent(v));
+            self.indent_bottom = Some(sanitize_indent_length(v));
         }
         if let Some(v) = indents.left {
-            self.indent_left = Some(sanitize_indent(v));
+            self.indent_left = Some(sanitize_indent_length(v));
         }
         if let Some(v) = indents.right {
-            self.indent_right = Some(sanitize_indent(v));
+            self.indent_right = Some(sanitize_indent_length(v));
         }
         self
     }
 
     /// Sets the same indent on every side.
     pub fn indent_all(mut self, v: f32) -> Self {
-        let v = sanitize_indent(v);
+        let v = Length::Px(sanitize_indent(v));
         self.indent_top = Some(v);
         self.indent_bottom = Some(v);
         self.indent_left = Some(v);
@@ -708,8 +710,8 @@ impl LayoutStyle {
 
     /// Sets the horizontal and vertical indents.
     pub fn indent_xy(mut self, x: f32, y: f32) -> Self {
-        let x = sanitize_indent(x);
-        let y = sanitize_indent(y);
+        let x = Length::Px(sanitize_indent(x));
+        let y = Length::Px(sanitize_indent(y));
         self.indent_left = Some(x);
         self.indent_right = Some(x);
         self.indent_top = Some(y);
@@ -723,7 +725,7 @@ impl LayoutStyle {
     }
 
     /// Returns the indent at the main-axis start for the given axis.
-    pub fn indent_main_start(self, axis: Axis) -> Option<f32> {
+    pub fn indent_main_start(self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.indent_left,
             Axis::Vertical => self.indent_top,
@@ -731,7 +733,7 @@ impl LayoutStyle {
     }
 
     /// Returns the indent at the main-axis end for the given axis.
-    pub fn indent_main_end(self, axis: Axis) -> Option<f32> {
+    pub fn indent_main_end(self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.indent_right,
             Axis::Vertical => self.indent_bottom,
@@ -739,7 +741,7 @@ impl LayoutStyle {
     }
 
     /// Returns the indent at the cross-axis start for the given main axis.
-    pub fn indent_cross_start(self, axis: Axis) -> Option<f32> {
+    pub fn indent_cross_start(self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.indent_top,
             Axis::Vertical => self.indent_left,
@@ -747,7 +749,7 @@ impl LayoutStyle {
     }
 
     /// Returns the indent at the cross-axis end for the given main axis.
-    pub fn indent_cross_end(self, axis: Axis) -> Option<f32> {
+    pub fn indent_cross_end(self, axis: Axis) -> Option<Length> {
         match axis {
             Axis::Horizontal => self.indent_bottom,
             Axis::Vertical => self.indent_right,
@@ -796,6 +798,16 @@ fn sanitize_edge(v: f32) -> f32 {
 /// Clamps an indent to a finite, non-negative value.
 pub fn sanitize_indent(v: f32) -> f32 {
     if v.is_finite() { v.max(0.0) } else { 0.0 }
+}
+
+/// Sanitizes a length used as an indent.
+pub fn sanitize_indent_length(v: Length) -> Length {
+    match v {
+        Length::Px(v) => Length::Px(sanitize_indent(v)),
+        Length::Percent(v) => Length::Percent(sanitize_indent(v)),
+        Length::Fill(v) => Length::Fill(sanitize_flex(v)),
+        Length::Fit => Length::Px(0.0),
+    }
 }
 
 fn sanitize_min(v: f32) -> f32 {

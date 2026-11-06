@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use sequoia_animation::{Easing, animate};
 use sequoia_core::{Color, Edges, Length, Vec2};
-use sequoia_layout::{Indents, LayoutStyle, sanitize_indent};
+use sequoia_layout::{Indents, LayoutStyle, sanitize_indent_length};
 use sequoia_reactive::Signal;
 use sequoia_style::ShadowSpec;
 
@@ -967,31 +967,31 @@ pub trait ViewModifiers: View + Sized + 'static {
         Margined::new(self, Edges::bottom(v))
     }
 
-    fn indent_top(self, v: f32) -> Margined {
+    fn indent_top(self, v: impl Into<Length>) -> Margined {
         Margined::with_indents(
             self,
-            Indents::only(None, Some(sanitize_indent(v)), None, None),
+            Indents::only(None, Some(sanitize_indent_length(v.into())), None, None),
         )
     }
 
-    fn indent_bottom(self, v: f32) -> Margined {
+    fn indent_bottom(self, v: impl Into<Length>) -> Margined {
         Margined::with_indents(
             self,
-            Indents::only(None, None, None, Some(sanitize_indent(v))),
+            Indents::only(None, None, None, Some(sanitize_indent_length(v.into()))),
         )
     }
 
-    fn indent_left(self, v: f32) -> Margined {
+    fn indent_left(self, v: impl Into<Length>) -> Margined {
         Margined::with_indents(
             self,
-            Indents::only(Some(sanitize_indent(v)), None, None, None),
+            Indents::only(Some(sanitize_indent_length(v.into())), None, None, None),
         )
     }
 
-    fn indent_right(self, v: f32) -> Margined {
+    fn indent_right(self, v: impl Into<Length>) -> Margined {
         Margined::with_indents(
             self,
-            Indents::only(None, None, Some(sanitize_indent(v)), None),
+            Indents::only(None, None, Some(sanitize_indent_length(v.into())), None),
         )
     }
 

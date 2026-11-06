@@ -8056,7 +8056,7 @@ fn indents_of(
         match arg.name.as_str() {
             "indent" => {
                 any = true;
-                let n = san_indent(num(file, arg, res, row)?);
+                let n = Length::Px(san_indent(num(file, arg, res, row)?));
                 ind.top = Some(n);
                 ind.bottom = Some(n);
                 ind.left = Some(n);
@@ -8064,31 +8064,31 @@ fn indents_of(
             }
             "indent_x" => {
                 any = true;
-                let n = san_indent(num(file, arg, res, row)?);
+                let n = Length::Px(san_indent(num(file, arg, res, row)?));
                 ind.left = Some(n);
                 ind.right = Some(n);
             }
             "indent_y" => {
                 any = true;
-                let n = san_indent(num(file, arg, res, row)?);
+                let n = Length::Px(san_indent(num(file, arg, res, row)?));
                 ind.top = Some(n);
                 ind.bottom = Some(n);
             }
             "indent_left" => {
                 any = true;
-                ind.left = Some(san_indent(num(file, arg, res, row)?));
+                ind.left = Some(Length::Px(san_indent(num(file, arg, res, row)?)));
             }
             "indent_right" => {
                 any = true;
-                ind.right = Some(san_indent(num(file, arg, res, row)?));
+                ind.right = Some(Length::Px(san_indent(num(file, arg, res, row)?)));
             }
             "indent_top" => {
                 any = true;
-                ind.top = Some(san_indent(num(file, arg, res, row)?));
+                ind.top = Some(Length::Px(san_indent(num(file, arg, res, row)?)));
             }
             "indent_bottom" => {
                 any = true;
-                ind.bottom = Some(san_indent(num(file, arg, res, row)?));
+                ind.bottom = Some(Length::Px(san_indent(num(file, arg, res, row)?)));
             }
             _ => {}
         }

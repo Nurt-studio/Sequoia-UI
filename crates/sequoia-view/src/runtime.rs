@@ -3306,13 +3306,8 @@ impl Runtime {
             items.push(FlexItem::new(base, grow, shrink, mn, mx));
             child_styles.push(self.child_layout_style(child));
         }
-        let gaps = Self::indents_main_total(&child_styles, cstyle.axis, cstyle.gap);
-
-        {
-            let mut sizes = bases.clone();
-            distribute_flex(&items, &mut sizes, gaps, avail_main);
-            bases = sizes;
-        }
+        let gaps = Self::main_gap_specs(&child_styles, cstyle.axis, cstyle.gap, avail_main);
+        let resolved_gaps = Self::distribute_main(&items, &mut bases, &gaps, avail_main);
 
         if need_cross && avail_main.is_finite() {
             for (k, &(_, child)) in flow.iter().enumerate() {
@@ -3323,7 +3318,7 @@ impl Runtime {
             }
         }
 
-        let total_main = bases.iter().sum::<f32>() + gaps;
+        let total_main = bases.iter().sum::<f32>() + resolved_gaps.iter().sum::<f32>();
         let cross_max = if need_cross {
             crosses.iter().cloned().fold(0.0_f32, f32::max)
         } else {
@@ -4430,19 +4425,20 @@ impl Runtime {
             infos.push((child, base, grow, shrink, cross, mn, mx, cs));
         }
         let child_styles: Vec<LayoutStyle> = infos.iter().map(|info| info.7).collect();
-        let gaps = Self::indents_main_total(&child_styles, cstyle.axis, cstyle.gap);
+        let gaps = Self::main_gap_specs(&child_styles, cstyle.axis, cstyle.gap, avail_main);
 
-        {
+        let resolved_gaps = {
             let items: Vec<FlexItem> = infos
                 .iter()
                 .map(|(_, b, g, s, _, mn, mx, _)| FlexItem::new(*b, *g, *s, *mn, *mx))
                 .collect();
             let mut bases: Vec<f32> = infos.iter().map(|(_, b, ..)| *b).collect();
-            distribute_flex(&items, &mut bases, gaps, avail_main);
+            let resolved = Self::distribute_main(&items, &mut bases, &gaps, avail_main);
             for (info, base) in infos.iter_mut().zip(bases) {
                 info.1 = base;
             }
-        }
+            resolved
+        };
 
         if avail_main.is_finite() {
             for info in infos.iter_mut() {
@@ -4452,7 +4448,8 @@ impl Runtime {
             }
         }
 
-        let used_main: f32 = infos.iter().map(|(_, b, ..)| *b).sum::<f32>() + gaps;
+        let used_main: f32 =
+            infos.iter().map(|(_, b, ..)| *b).sum::<f32>() + resolved_gaps.iter().sum::<f32>();
         let extra = Self::extra_main(avail_main, used_main);
         let (mut cursor, gap_step) = cstyle.justify.distribute(infos.len(), cstyle.gap, extra);
 
@@ -4487,15 +4484,14 @@ impl Runtime {
         for (i, info) in infos.iter().enumerate() {
             let (child, base, _, _, cross, _, _, cs) = *info;
             if i > 0 {
-                let prev_cs = infos[i - 1].7;
-                cursor += Self::indent_between(&prev_cs, &cs, cstyle.axis, cstyle.gap) + gap_step;
+                cursor += resolved_gaps.get(i - 1).copied().unwrap_or(0.0) + gap_step;
             }
             let (margin_main_start, margin_cross_start) = match cstyle.axis {
                 Axis::Horizontal => (cs.margin.left, cs.margin.top),
                 Axis::Vertical => (cs.margin.top, cs.margin.left),
             };
             let (cross_off, cross_size) = self.place_cross(child, cstyle, cross, avail_cross);
-            let shift = Self::indent_cross_shift(&cs, cstyle.axis);
+            let shift = Self::indent_cross_shift(&cs, cstyle.axis, avail_cross);
             let baseline_shift = if baseline_aligned[i] {
                 (max_baseline - baselines[i]).max(0.0)
             } else {
@@ -4519,7 +4515,7 @@ impl Runtime {
             let _ = margin_cross_start;
             cursor += base;
             if i + 1 == infos.len() {
-                cursor += Self::indent_trailing(&cs, cstyle.axis);
+                cursor += resolved_gaps.last().copied().unwrap_or(0.0);
             }
             self.arrange(
                 child,
@@ -5024,38 +5020,123 @@ impl Runtime {
         if v.is_finite() { v.max(0.0) } else { 0.0 }
     }
 
-    fn indent_between(prev: &LayoutStyle, next: &LayoutStyle, axis: Axis, default_gap: f32) -> f32 {
-        match (prev.indent_main_end(axis), next.indent_main_start(axis)) {
-            (None, None) => Self::sanitize_gap_value(default_gap),
-            (trailing, leading) => {
-                Self::sanitize_gap_value(trailing.unwrap_or(0.0))
-                    + Self::sanitize_gap_value(leading.unwrap_or(0.0))
+    fn main_gap_spec(
+        trailing: Option<Length>,
+        leading: Option<Length>,
+        default_gap: f32,
+        avail_main: f32,
+    ) -> (f32, f32) {
+        let mut fixed = 0.0;
+        let mut fill = 0.0;
+        let mut any = false;
+        for indent in [trailing, leading].into_iter().flatten() {
+            any = true;
+            match indent {
+                Length::Px(v) => fixed += Self::sanitize_gap_value(v),
+                Length::Percent(p) => {
+                    if avail_main.is_finite() {
+                        let p = Self::sanitize_gap_value(p);
+                        fixed += (avail_main * p / 100.0).max(0.0);
+                    }
+                }
+                Length::Fill(w) => fill += Self::sanitize_gap_value(w),
+                Length::Fit => {}
             }
         }
-    }
-
-    fn indent_trailing(cs: &LayoutStyle, axis: Axis) -> f32 {
-        match cs.indent_main_end(axis) {
-            Some(v) => Self::sanitize_gap_value(v),
-            None => 0.0,
+        if !any {
+            fixed = Self::sanitize_gap_value(default_gap);
         }
+        (fixed, fill)
     }
 
-    fn indents_main_total(styles: &[LayoutStyle], axis: Axis, default_gap: f32) -> f32 {
-        let mut total = 0.0;
+    fn main_gap_specs(
+        styles: &[LayoutStyle],
+        axis: Axis,
+        default_gap: f32,
+        avail_main: f32,
+    ) -> Vec<(f32, f32)> {
+        let mut gaps = Vec::with_capacity(styles.len());
         for pair in styles.windows(2) {
-            total += Self::indent_between(&pair[0], &pair[1], axis, default_gap);
+            gaps.push(Self::main_gap_spec(
+                pair[0].indent_main_end(axis),
+                pair[1].indent_main_start(axis),
+                default_gap,
+                avail_main,
+            ));
         }
         if let Some(last) = styles.last() {
-            total += Self::indent_trailing(last, axis);
+            gaps.push(Self::main_gap_spec(
+                None,
+                last.indent_main_end(axis),
+                0.0,
+                avail_main,
+            ));
         }
-        total
+        gaps
     }
 
-    fn indent_cross_shift(cs: &LayoutStyle, axis: Axis) -> f32 {
-        let start = cs.indent_cross_start(axis).map(Self::sanitize_gap_value);
-        let end = cs.indent_cross_end(axis).map(Self::sanitize_gap_value);
-        start.unwrap_or(0.0) - end.unwrap_or(0.0)
+    fn distribute_main(
+        items: &[FlexItem],
+        sizes: &mut [f32],
+        gaps: &[(f32, f32)],
+        avail_main: f32,
+    ) -> Vec<f32> {
+        let fixed_total: f32 = gaps.iter().map(|gap| gap.0).sum();
+        let fill_count = gaps.iter().filter(|gap| gap.1 > 0.0).count();
+        if fill_count == 0 {
+            distribute_flex(items, sizes, fixed_total, avail_main);
+            return gaps.iter().map(|gap| gap.0).collect();
+        }
+
+        let mut combined = Vec::with_capacity(items.len() + fill_count);
+        let mut combined_sizes = Vec::with_capacity(items.len() + fill_count);
+        combined.extend_from_slice(items);
+        combined_sizes.extend_from_slice(sizes);
+
+        let mut slots = Vec::with_capacity(fill_count);
+        for (gap_index, gap) in gaps.iter().enumerate() {
+            if gap.1 > 0.0 {
+                slots.push((gap_index, combined.len()));
+                combined.push(FlexItem::new(0.0, gap.1, 0.0, 0.0, f32::INFINITY));
+                combined_sizes.push(0.0);
+            }
+        }
+
+        distribute_flex(&combined, &mut combined_sizes, fixed_total, avail_main);
+        sizes.copy_from_slice(&combined_sizes[..items.len()]);
+
+        let mut resolved: Vec<f32> = gaps.iter().map(|gap| gap.0).collect();
+        for (gap_index, slot) in slots {
+            resolved[gap_index] += combined_sizes[slot];
+        }
+        resolved
+    }
+
+    fn resolve_cross_indent(indent: Length, avail_cross: f32) -> f32 {
+        match indent {
+            Length::Px(v) => Self::sanitize_gap_value(v),
+            Length::Percent(p) => {
+                if avail_cross.is_finite() {
+                    let p = Self::sanitize_gap_value(p);
+                    (avail_cross * p / 100.0).max(0.0)
+                } else {
+                    0.0
+                }
+            }
+            Length::Fill(_) | Length::Fit => 0.0,
+        }
+    }
+
+    fn indent_cross_shift(cs: &LayoutStyle, axis: Axis, avail_cross: f32) -> f32 {
+        let start = cs
+            .indent_cross_start(axis)
+            .map(|v| Self::resolve_cross_indent(v, avail_cross))
+            .unwrap_or(0.0);
+        let end = cs
+            .indent_cross_end(axis)
+            .map(|v| Self::resolve_cross_indent(v, avail_cross))
+            .unwrap_or(0.0);
+        start - end
     }
 
     fn place_cross(

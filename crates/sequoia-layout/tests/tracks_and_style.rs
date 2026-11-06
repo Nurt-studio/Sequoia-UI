@@ -348,19 +348,19 @@ fn style_axis_helpers_follow_the_axis() {
     assert_eq!(s.margin_cross(sequoia_layout::Axis::Horizontal), 12.0);
     assert_eq!(
         s.indent_main_start(sequoia_layout::Axis::Horizontal),
-        Some(1.0)
+        Some(Length::px(1.0))
     );
     assert_eq!(
         s.indent_main_end(sequoia_layout::Axis::Horizontal),
-        Some(2.0)
+        Some(Length::px(2.0))
     );
     assert_eq!(
         s.indent_cross_start(sequoia_layout::Axis::Horizontal),
-        Some(3.0)
+        Some(Length::px(3.0))
     );
     assert_eq!(
         s.indent_cross_end(sequoia_layout::Axis::Horizontal),
-        Some(4.0)
+        Some(Length::px(4.0))
     );
     assert_eq!(s.outer_size(Size::new(50.0, 40.0)), Size::new(58.0, 52.0));
 }
@@ -368,12 +368,17 @@ fn style_axis_helpers_follow_the_axis() {
 #[test]
 fn style_indent_helpers_sanitize_and_can_be_cleared() {
     let s = LayoutStyle::default().indent_all(f32::NAN);
-    assert_eq!(s.indent_top, Some(0.0));
+    assert_eq!(s.indent_top, Some(Length::px(0.0)));
     assert!(s.clear_indents().indents().is_none());
 
-    let s = LayoutStyle::default().indent(Indents::only(Some(-2.0), None, Some(3.0), None));
-    assert_eq!(s.indent_left, Some(0.0));
-    assert_eq!(s.indent_right, Some(3.0));
+    let s = LayoutStyle::default().indent(Indents::only(
+        Some(Length::px(-2.0)),
+        None,
+        Some(Length::px(3.0)),
+        None,
+    ));
+    assert_eq!(s.indent_left, Some(Length::px(0.0)));
+    assert_eq!(s.indent_right, Some(Length::px(3.0)));
     assert_eq!(s.indent_top, None);
 }
 

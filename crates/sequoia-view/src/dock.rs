@@ -381,22 +381,22 @@ impl DockArea {
         self
     }
 
-    pub fn indent_top(mut self, v: f32) -> Self {
+    pub fn indent_top(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_top(v);
         self
     }
 
-    pub fn indent_bottom(mut self, v: f32) -> Self {
+    pub fn indent_bottom(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_bottom(v);
         self
     }
 
-    pub fn indent_left(mut self, v: f32) -> Self {
+    pub fn indent_left(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_left(v);
         self
     }
 
-    pub fn indent_right(mut self, v: f32) -> Self {
+    pub fn indent_right(mut self, v: impl Into<Length>) -> Self {
         self.style = self.style.indent_right(v);
         self
     }
