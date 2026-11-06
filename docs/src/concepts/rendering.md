@@ -17,8 +17,9 @@ A frame has four stages:
    builders as dirty. Dirty subtrees are rebuilt and laid out.
 3. **Paint.** The runtime walks the tree and emits quads, text runs, images,
    shadows, waveforms, and backdrop requests into a `RenderList`.
-4. **Render.** The backend uploads the list and draws it. On wgpu this is
-   handled by `WgpuRenderer`.
+4. **Render.** The backend uploads the list and draws it. Views that need their
+   own `wgpu` pipelines are embedded with `WgpuSurface` and implement the
+   `WgpuRenderer` trait; see [Embedded GPU surfaces](../guides/gpu-surfaces.md).
 
 `App::run` owns this loop. For most applications you never call these stages
 yourself.
@@ -179,6 +180,20 @@ let plot = Canvas::new()
 
 The canvas chapter of the guide covers transforms, cameras, hit testing, and
 pointer handling in detail.
+
+## Embedded GPU surfaces
+
+`WgpuSurface` is a leaf view that hands a layout rectangle to your own
+`WgpuRenderer` implementation. The renderer receives the window device, queue,
+encoder, target, and the surface's visible `region`, and records its own draw
+calls there. Surfaces can render directly into the scene or cache an offscreen
+texture with `.cached(true)`, and they participate in normal layout, clipping,
+scrolling, pointer input, and focus.
+
+This path is for content that cannot be expressed in the render list: 3D
+viewports, games, video frames, or custom multi-pass pipelines. The
+[Embedded GPU surfaces](../guides/gpu-surfaces.md) guide covers the frame
+contract, caching, formats, input, and pitfalls.
 
 ## Backends and presentation
 

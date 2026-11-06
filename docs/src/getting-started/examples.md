@@ -95,6 +95,21 @@ cargo run -p sequoia-ui --example seq_hello
 The example is in
 [`crates/sequoia-ui/examples/seq_hello.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/seq_hello.rs).
 
+## Wgpu surface
+
+A custom `wgpu` pipeline embedded in a normal `Column`/`Row` layout. The side
+panel pauses or resets the animation through `WgpuSurface::renderer()`, showing
+how application widgets and raw GPU drawing share state.
+
+```text
+cargo run -p sequoia-ui --example wgpu_surface
+```
+
+The example is in
+[`crates/sequoia-ui/examples/wgpu_surface.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/wgpu_surface.rs).
+See [Embedded GPU surfaces](../guides/gpu-surfaces.md) for the render contract,
+cached mode, formats, and input handling.
+
 ## Shaders
 
 `shader_gallery` renders a blurred card over a background and shows a custom

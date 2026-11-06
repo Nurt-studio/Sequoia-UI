@@ -425,4 +425,5 @@ use additive or screen modes for glows and light effects.
 
 See [Canvas](canvas.md) for the painter lifecycle and offscreen groups, and
 [Rendering](../concepts/rendering.md) for how shader draws fit into the render
-list.
+list. For raw `wgpu` pipelines that draw their own geometry, use
+[Embedded GPU surfaces](gpu-surfaces.md) instead of a shader pass.

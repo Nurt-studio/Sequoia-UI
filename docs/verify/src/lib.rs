@@ -32,6 +32,7 @@
 #![doc = include_str!("../../src/guides/drag-and-drop.md")]
 #![doc = include_str!("../../src/guides/docking.md")]
 #![doc = include_str!("../../src/guides/canvas.md")]
+#![doc = include_str!("../../src/guides/gpu-surfaces.md")]
 #![doc = include_str!("../../src/guides/shaders.md")]
 #![doc = include_str!("../../src/guides/assets.md")]
 #![doc = include_str!("../../src/guides/seq.md")]

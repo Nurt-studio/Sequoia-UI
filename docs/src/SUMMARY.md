@@ -34,6 +34,7 @@
 - [Drag and drop](guides/drag-and-drop.md)
 - [Docking](guides/docking.md)
 - [Canvas](guides/canvas.md)
+- [Embedded GPU surfaces](guides/gpu-surfaces.md)
 - [Custom shaders](guides/shaders.md)
 - [Assets](guides/assets.md)
 - [Seq](guides/seq.md)

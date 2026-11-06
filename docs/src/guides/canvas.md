@@ -483,5 +483,8 @@ update a tracked `Signal` and paint again; the canvas should be dirty.
   math utilities; implement gestures and undo yourself.
 - Paint callbacks should not allocate large temporary structures per frame.
   Cache paths, text widths, and bitmaps.
+- `Canvas` draws through the Sequoia render list. For raw `wgpu` pipelines or
+  3D content, use `WgpuSurface` instead; see
+  [Embedded GPU surfaces](gpu-surfaces.md).
 - The auto grid is capped at roughly 4096 vertical and 8192 horizontal lines;
   `dots` stops at 16384 dots. For denser visuals, draw your own visible subset.
