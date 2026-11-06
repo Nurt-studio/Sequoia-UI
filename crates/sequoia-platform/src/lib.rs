@@ -701,7 +701,9 @@ impl App {
                 }
             }
         };
-        let bench = self.bench_frames.map(|frames| Rc::new(RefCell::new(Bench::new(frames))));
+        let bench = self
+            .bench_frames
+            .map(|frames| Rc::new(RefCell::new(Bench::new(frames))));
         let mut handler = PlatformApp {
             theme: self.theme,
             backend: self.backend,
@@ -1042,10 +1044,14 @@ impl WindowState {
 
                 Some(_) => {}
             }
+        }
 
-            if self.gpu.take_redraw_request() {
-                self.gate.borrow_mut().request();
-            }
+        // A surface drew during `render_with_damage_regions` and asked for
+        // another frame through `WgpuFrame::request_frame`. Feeding that into
+        // the runtime marks motion, so the next `paint_if_dirty` paints instead
+        // of skipping and the animation keeps running without input events.
+        if self.gpu.take_redraw_request() {
+            self.rt.request_frame();
         }
 
         sync_cursor(&self.window, &mut self.last_cursor, &self.rt);
