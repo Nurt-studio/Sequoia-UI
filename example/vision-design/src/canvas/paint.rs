@@ -76,10 +76,48 @@ pub(crate) fn draw_layer(p: &mut Painter, l: &Layer) {
     }
 }
 
-pub(crate) fn draw_selection(p: &mut Painter, l: &Layer, zoom: f32) {
+/// Hairline rectangle drawn as four filled quads.
+///
+/// A stroked outline is a shape-cache entry per rectangle; above the cache's
+/// 256-entry capacity every frame re-tessellates all outlines and frame time
+/// jumps from <1 ms to >20 ms. Four quads look the same for axis-aligned
+/// rectangles, use four render items instead of eighteen and skip the cache.
+fn rect_hairline(p: &mut Painter, rect: Rect, width: f32, color: Color) {
+    let w = width.max(0.0);
+    if w <= 0.0 || rect.is_empty() {
+        return;
+    }
+    // Strokes are centered on the edge, so the ring extends half a width out.
+    let half = w * 0.5;
+    let x = rect.left() - half;
+    let y = rect.top() - half;
+    let outer_w = rect.size.width + w;
+    let outer_h = rect.size.height + w;
+    let sides = (outer_h - w * 2.0).max(0.0);
+    p.fill(Rect::from_xywh(x, y, outer_w, w), Fill::solid(color));
+    p.fill(
+        Rect::from_xywh(x, y + outer_h - w, outer_w, w),
+        Fill::solid(color),
+    );
+    if sides > 0.0 {
+        p.fill(Rect::from_xywh(x, y + w, w, sides), Fill::solid(color));
+        p.fill(
+            Rect::from_xywh(x + outer_w - w, y + w, w, sides),
+            Fill::solid(color),
+        );
+    }
+}
+
+/// Draws one selected item. Resize handles are only shown for a single
+/// selection; a marquee selection just outlines every item it covers.
+pub(crate) fn draw_selection(p: &mut Painter, l: &Layer, zoom: f32, handles: bool) {
     let hs = HANDLE_PX / zoom;
     let rect = Rect::from_xywh(l.x, l.y, l.w, l.h);
-    p.rect_outline(rect, 0.0, BrushStroke::screen(1.5), SEL_COLOR);
+    // `BrushStroke::screen(1.5)` is 1.5 logical px regardless of zoom.
+    rect_hairline(p, rect, 1.5 / zoom.max(0.01), SEL_COLOR);
+    if !handles {
+        return;
+    }
     let h2 = hs * 0.5;
     let pts = [
         (l.x, l.y),

@@ -43,6 +43,9 @@ pub(crate) struct EditorState {
 
     pub(crate) root: Signal<Option<SvelteNode>>,
     pub(crate) selected_layer: Signal<Option<u64>>,
+    /// Everything selected on the canvas; `selected_layer` stays the primary
+    /// item used by the properties panel.
+    pub(crate) selected_layers: Signal<Vec<u64>>,
     pub(crate) layers: Signal<Vec<Layer>>,
     pub(crate) layer_query: Signal<String>,
     pub(crate) sec_page_open: Signal<bool>,
@@ -127,7 +130,7 @@ impl EditorState {
         Self::with_seed(Some(root), Some(2))
     }
 
-    fn with_seed(root: Option<SvelteNode>, selected: Option<u64>) -> Self {
+    pub(crate) fn with_seed(root: Option<SvelteNode>, selected: Option<u64>) -> Self {
         let state = Self {
             is_night: Signal::new(true),
             doc_name: Signal::new(String::from("Vision Design - Untitled")),
@@ -150,6 +153,7 @@ impl EditorState {
 
             root: Signal::new(root),
             selected_layer: Signal::new(selected),
+            selected_layers: Signal::new(selected.map(|id| vec![id]).unwrap_or_default()),
             layers: Signal::new(Vec::new()),
             layer_query: Signal::new(String::new()),
             sec_page_open: Signal::new(true),
@@ -576,6 +580,23 @@ impl EditorState {
             state.bindings.borrow_mut().push(effect(move || {
                 let b = buffer.get();
                 dirty.set(b != source.get_untracked());
+            }));
+        }
+
+        // ── EFFECT 5: selected_layer → selected_layers ──
+        //
+        // Picking a single item (canvas click, layer list, history) collapses
+        // any marquee selection down to that item. Marquee selection itself
+        // writes `selected_layers` right after setting the primary id.
+        {
+            let selected = state.selected_layer.clone();
+            let selected_layers = state.selected_layers.clone();
+            state.bindings.borrow_mut().push(effect(move || {
+                let primary = selected.get();
+                let want = primary.map(|id| vec![id]).unwrap_or_default();
+                if selected_layers.with_untracked(|cur| cur != &want) {
+                    selected_layers.set(want);
+                }
             }));
         }
 

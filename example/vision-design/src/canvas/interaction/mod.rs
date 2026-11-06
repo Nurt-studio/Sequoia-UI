@@ -26,6 +26,7 @@ use pan::PanSession;
 pub(crate) struct CanvasSignals {
     pub(crate) layers: Signal<Vec<Layer>>,
     pub(crate) selected: Signal<Option<u64>>,
+    pub(crate) selected_layers: Signal<Vec<u64>>,
     pub(crate) tool: Signal<&'static str>,
     pub(crate) grid: Signal<bool>,
     pub(crate) zoom: Signal<f32>,
@@ -42,6 +43,7 @@ impl CanvasSignals {
         Self {
             layers: state.layers.clone(),
             selected: state.selected_layer.clone(),
+            selected_layers: state.selected_layers.clone(),
             tool: state.tool.clone(),
             grid: state.grid_on.clone(),
             zoom: state.zoom.clone(),
@@ -162,7 +164,11 @@ impl Interaction {
                         return;
                     }
                     let layers = signals.layers.get_untracked();
-                    signals.selected.set(hit_layer(&layers, wx, wy));
+                    let hit = hit_layer(&layers, wx, wy);
+                    signals.selected.set(hit);
+                    signals
+                        .selected_layers
+                        .set(hit.map(|id| vec![id]).unwrap_or_default());
                     state.ctx_menu_x.set(pos.x + 272.0);
                     state.ctx_menu_y.set(pos.y + 64.0);
                     state.ctx_menu_open.set(true);
@@ -212,6 +218,7 @@ impl Interaction {
                     let layers = signals.layers.get_untracked();
                     if let Some(id) = hit_layer(&layers, wx, wy) {
                         signals.selected.set(Some(id));
+                        signals.selected_layers.set(vec![id]);
                         let layer = layers.iter().find(|l| l.id == id).unwrap();
                         let now = Instant::now();
                         let last = state.last_canvas_click.clone();
@@ -227,11 +234,16 @@ impl Interaction {
                         }
                         *last.borrow_mut() = (Some(id), now);
                         if !layer.locked {
-                            *self.drag.borrow_mut() =
-                                Some(DragSession::moving(layer, wx, wy, signals.state.root.get_untracked().clone()));
+                            *self.drag.borrow_mut() = Some(DragSession::moving(
+                                layer,
+                                wx,
+                                wy,
+                                signals.state.root.get_untracked().clone(),
+                            ));
                         }
                     } else {
                         signals.selected.set(None);
+                        signals.selected_layers.set(Vec::new());
                         *self.marquee.borrow_mut() = Some(MarqueeSession::begin(wx, wy));
                     }
                     ctx.handled();
@@ -293,7 +305,11 @@ impl Interaction {
                     ctx.handled();
                 }
                 if let Some(session) = self.marquee.borrow_mut().take() {
-                    signals.selected.set(session.commit(signals));
+                    let ids = session.commit(signals);
+                    // Primary first, so the syncing effect leaves `selected_layers`
+                    // alone once the full marquee selection is written.
+                    signals.selected.set(ids.first().copied());
+                    signals.selected_layers.set(ids);
                     ctx.handled();
                 }
             }

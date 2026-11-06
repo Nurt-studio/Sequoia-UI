@@ -14,7 +14,7 @@ pub(crate) struct LayerRow {
 
 impl View for LayerRow {
     fn body(&self) -> impl View + 'static {
-        let sel = self.state.selected_layer.get() == Some(self.layer.id);
+        let sel = self.state.selected_layers.get().contains(&self.layer.id);
         let is_editing = self.state.editing_layer.get() == Some(self.layer.id);
         let id = self.layer.id;
         let layer = self.layer.clone();
@@ -150,6 +150,7 @@ impl View for LayerRow {
                 } else {
                     *lcc.borrow_mut() = (Some(id), now);
                     st_click.selected_layer.set(Some(id));
+                    st_click.selected_layers.set(vec![id]);
                 }
             })
             .child(content);

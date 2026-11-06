@@ -23,17 +23,31 @@ impl MarqueeSession {
         self.cur_wy = wy;
     }
 
-    /// Returns the first hit element (`None` if the rectangle is empty).
-    pub(crate) fn commit(&self, signals: &CanvasSignals) -> Option<u64> {
+    /// Ids of every visible, unlocked layer fully inside the rectangle.
+    ///
+    /// The enclosing frame is skipped because it contains the marquee rather
+    /// than lying inside it, so dragging over a frame's children does not add
+    /// the frame itself to the selection.
+    pub(crate) fn commit(&self, signals: &CanvasSignals) -> Vec<u64> {
         let x1 = self.start_wx.min(self.cur_wx);
         let y1 = self.start_wy.min(self.cur_wy);
         let x2 = self.start_wx.max(self.cur_wx);
         let y2 = self.start_wy.max(self.cur_wy);
-        let layers = signals.layers.get_untracked();
-        layers
-            .iter()
-            .filter(|l| l.visible && l.x < x2 && l.x + l.w > x1 && l.y < y2 && l.y + l.h > y1)
-            .map(|l| l.id)
-            .next()
+        // Borrow instead of cloning the layer list: with thousands of layers
+        // `get_untracked()` alone would copy every name and text string.
+        signals.layers.with_untracked(|layers| {
+            layers
+                .iter()
+                .filter(|l| {
+                    l.visible
+                        && !l.locked
+                        && l.x >= x1
+                        && l.y >= y1
+                        && l.x + l.w <= x2
+                        && l.y + l.h <= y2
+                })
+                .map(|l| l.id)
+                .collect()
+        })
     }
 }

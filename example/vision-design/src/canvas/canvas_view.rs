@@ -1,5 +1,7 @@
 //! Canvas view composition; gesture logic lives in `interaction`, drawing in `paint`.
 
+use std::collections::HashSet;
+
 use sequoia_ui::prelude::*;
 
 use crate::canvas::interaction::CanvasSignals;
@@ -26,7 +28,7 @@ pub(crate) fn canvas(state: &EditorState) -> impl View + 'static {
         .background(colors::active().bg_darker)
         .track(move || {
             track_sig.layers.get();
-            track_sig.selected.get();
+            track_sig.selected_layers.get();
             track_sig.tool.get();
             track_sig.repaint.get();
             track_sig.grid.get();
@@ -80,10 +82,18 @@ pub(crate) fn canvas(state: &EditorState) -> impl View + 'static {
                         draw_marquee(p, x, y, w, h);
                     }
 
-                    if let Some(id) = draw_sig.selected.get_untracked()
-                        && let Some(l) = layers.iter().find(|l| l.id == id)
-                    {
-                        draw_selection(p, l, zoom);
+                    // One item keeps its resize handles; a marquee selection
+                    // outlines every item so large selections stay readable.
+                    let selected_ids = draw_sig.selected_layers.get_untracked();
+                    if let [id] = selected_ids.as_slice() {
+                        if let Some(l) = layers.iter().find(|l| l.id == *id) {
+                            draw_selection(p, l, zoom, true);
+                        }
+                    } else if !selected_ids.is_empty() {
+                        let selected: HashSet<u64> = selected_ids.iter().copied().collect();
+                        for l in layers.iter().filter(|l| selected.contains(&l.id)) {
+                            draw_selection(p, l, zoom, false);
+                        }
                     }
 
                     let guides = draw_inter.guides.borrow();
