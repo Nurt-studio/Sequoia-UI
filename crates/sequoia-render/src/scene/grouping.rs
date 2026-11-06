@@ -443,10 +443,7 @@ pub(crate) fn group_runs_with_opacity(
             }
 
             RenderItem::Blit {
-                rect,
-                uv,
-                target,
-                ..
+                rect, uv, target, ..
             } => {
                 if cull_rect_t(*rect, index) {
                     culled += 1;
@@ -545,10 +542,7 @@ pub(crate) fn gui_run_draws(
                                 draws += 1;
                             }
                             while index < end
-                                && matches!(
-                                    image_draws.get(index),
-                                    Some(Some(ImageBinding::Atlas))
-                                )
+                                && matches!(image_draws.get(index), Some(Some(ImageBinding::Atlas)))
                             {
                                 index += 1;
                             }

@@ -168,10 +168,7 @@ fn parse_params(sig: &Signature) -> syn::Result<Vec<Param>> {
     let mut params = Vec::new();
     for input in &sig.inputs {
         let syn::FnArg::Typed(typed) = input else {
-            return Err(syn::Error::new(
-                input.span(),
-                "shader cannot take `self`",
-            ));
+            return Err(syn::Error::new(input.span(), "shader cannot take `self`"));
         };
         let Pat::Ident(pat) = typed.pat.as_ref() else {
             return Err(syn::Error::new(
@@ -344,10 +341,7 @@ fn build_wgsl(model: &ShaderModel) -> (String, usize) {
             InputKind::FragUv => "frag.uv",
             InputKind::FragWorld => "frag.world",
             InputKind::VertexIndex => {
-                debug_assert!(
-                    false,
-                    "VertexIndex is not implemented; shaders receive 0"
-                );
+                debug_assert!(false, "VertexIndex is not implemented; shaders receive 0");
                 "0u"
             }
         };
@@ -475,7 +469,8 @@ fn validate_wgsl(
             None => error.to_string(),
         };
         let mut message = format!("WGSL validation error: {detail}");
-        if show {                message.push_str("\n\nGenerated WGSL:\n");
+        if show {
+            message.push_str("\n\nGenerated WGSL:\n");
             message.push_str(wgsl);
         }
         return Err(syn::Error::new(span, message));
@@ -558,9 +553,7 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "VertexIndex is not implemented")]
     fn vertex_index_fallback_is_not_silent() {
-        let _ = compile(
-            "fn broken(index: VertexIndex) -> Color { return vec4<f32>(1.0); }",
-        );
+        let _ = compile("fn broken(index: VertexIndex) -> Color { return vec4<f32>(1.0); }");
     }
 
     #[test]

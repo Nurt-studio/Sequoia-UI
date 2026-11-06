@@ -1,5 +1,7 @@
 use crate::core::layer::Layer;
-use crate::model::svelte_ast::{Align, Dimension, Display, Element, Position, Style, SvelteNode, Tag, TextNode, TextStyle};
+use crate::model::svelte_ast::{
+    Align, Dimension, Display, Element, Position, Style, SvelteNode, Tag, TextNode, TextStyle,
+};
 use sequoia_ui::prelude::Color;
 
 pub(crate) fn demo_layers() -> Vec<Layer> {

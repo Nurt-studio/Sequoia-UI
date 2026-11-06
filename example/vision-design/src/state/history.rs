@@ -48,7 +48,9 @@ impl EditorState {
 
     fn fix_selection_after_history(&self) {
         if let Some(id) = self.selected_layer.get_untracked() {
-            let found = self.root.get_untracked()
+            let found = self
+                .root
+                .get_untracked()
                 .as_ref()
                 .and_then(|r| crate::model::tree_ops::find(r, id))
                 .is_some();

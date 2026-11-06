@@ -241,7 +241,7 @@ pub struct TextNode {
     pub name: String,
     pub content: String,
     pub style: TextStyle,
-    pub width: Option<f32>,   // fixed width (optional); None = auto
+    pub width: Option<f32>, // fixed width (optional); None = auto
     pub height: Option<f32>,
     pub visible: bool,
     pub locked: bool,

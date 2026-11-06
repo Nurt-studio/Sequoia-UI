@@ -1441,7 +1441,8 @@ impl RenderList {
                     open.push((*id, *size, *blend, index + 1));
                 }
                 RenderItem::TargetEnd { id } => {
-                    let Some(position) = open.iter().rposition(|(open_id, ..)| open_id == id) else {
+                    let Some(position) = open.iter().rposition(|(open_id, ..)| open_id == id)
+                    else {
                         continue;
                     };
                     let (target, size, blend, start) = open.remove(position);

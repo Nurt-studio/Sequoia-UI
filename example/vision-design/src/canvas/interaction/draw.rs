@@ -1,7 +1,7 @@
 use super::CanvasSignals;
 use crate::core::geometry::snap;
 use crate::core::hit_test::find_parent_frame;
-use crate::model::svelte_ast::{new_ellipse, new_frame, new_rect, new_text, SvelteNode};
+use crate::model::svelte_ast::{SvelteNode, new_ellipse, new_frame, new_rect, new_text};
 
 /// Drawing a new shape (F/R/O) before committing.
 pub(crate) struct DrawSession {
@@ -65,10 +65,9 @@ impl DrawSession {
                 find_parent_frame(&signals.layers.get_untracked(), x, y).unwrap_or(0)
             };
             signals.state.push_history();
-            signals
-                .state
-                .root
-                .update(|r| { let _ = crate::model::tree_ops::insert_child(r, target, node); });
+            signals.state.root.update(|r| {
+                let _ = crate::model::tree_ops::insert_child(r, target, node);
+            });
             signals.selected.set(Some(id));
             signals.tool.set("V");
         }
@@ -85,10 +84,9 @@ pub(crate) fn create_text(signals: &CanvasSignals, wx: f32, wy: f32, grid_snap: 
     let node = new_text(id, x, y, "Text");
     let target = find_parent_frame(&signals.layers.get_untracked(), x, y).unwrap_or(0);
     signals.state.push_history();
-    signals
-        .state
-        .root
-        .update(|r| { let _ = crate::model::tree_ops::insert_child(r, target, node); });
+    signals.state.root.update(|r| {
+        let _ = crate::model::tree_ops::insert_child(r, target, node);
+    });
     signals.selected.set(Some(id));
     signals.tool.set("V");
     signals.state.start_text_edit(false);

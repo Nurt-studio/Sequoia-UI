@@ -92,9 +92,7 @@ pub fn deepest_container_at(
 ) -> Option<u64> {
     let mut best: Option<(u8, u64)> = None;
     for f in flat {
-        let Style {
-            display, ..
-        } = match f.style() {
+        let Style { display, .. } = match f.style() {
             Some(s) => s,
             None => continue,
         };
@@ -103,8 +101,10 @@ pub fn deepest_container_at(
             continue;
         }
         let r = f.rect;
-        if wx >= r.left() && wx <= r.left() + r.size.width
-            && wy >= r.top() && wy <= r.top() + r.size.height
+        if wx >= r.left()
+            && wx <= r.left() + r.size.width
+            && wy >= r.top()
+            && wy <= r.top() + r.size.height
         {
             if best.map_or(true, |(d, _)| f.depth >= d) {
                 best = Some((f.depth, f.id));

@@ -41,7 +41,11 @@ fn unique_class(base: &str, ctx: &mut Ctx) -> String {
     if candidate.is_empty() {
         candidate = "node".into();
     }
-    if candidate.chars().next().map_or(true, |c| c.is_ascii_digit()) {
+    if candidate
+        .chars()
+        .next()
+        .map_or(true, |c| c.is_ascii_digit())
+    {
         candidate = format!("n-{}", candidate);
     }
     let mut i = 1;
@@ -74,7 +78,8 @@ fn node_markup(node: &SvelteNode, ctx: &mut Ctx, depth: usize) -> String {
         }
         SvelteNode::Text(t) => {
             let class = unique_class(&t.name, ctx);
-            ctx.styles.push(render_text_style(&class, &t.style, t.width, t.height));
+            ctx.styles
+                .push(render_text_style(&class, &t.style, t.width, t.height));
             format!(
                 "{indent}<span class=\"{class}\">{}</span>\n",
                 escape_text(&t.content)
@@ -84,7 +89,9 @@ fn node_markup(node: &SvelteNode, ctx: &mut Ctx, depth: usize) -> String {
 }
 
 fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn fmt_opt(v: Option<f32>) -> String {
@@ -109,7 +116,13 @@ fn fmt_color(c: Color) -> String {
     if rgba.3 == 255 {
         format!("#{:02X}{:02X}{:02X}", rgba.0, rgba.1, rgba.2)
     } else {
-        format!("rgba({},{},{},{:.3})", rgba.0, rgba.1, rgba.2, rgba.3 as f32 / 255.0)
+        format!(
+            "rgba({},{},{},{:.3})",
+            rgba.0,
+            rgba.1,
+            rgba.2,
+            rgba.3 as f32 / 255.0
+        )
     }
 }
 
@@ -121,7 +134,11 @@ fn render_style(class: &str, s: &Style) -> String {
             rules.push("display: flex".into());
             rules.push(format!(
                 "flex-direction: {}",
-                if s.flex_dir == FlexDir::Row { "row" } else { "column" }
+                if s.flex_dir == FlexDir::Row {
+                    "row"
+                } else {
+                    "column"
+                }
             ));
             if s.gap > 0.0 {
                 rules.push(format!("gap: {}px", s.gap));
@@ -130,7 +147,10 @@ fn render_style(class: &str, s: &Style) -> String {
                 rules.push(format!("align-items: {}", s.align_items.css_items()));
             }
             if s.justify_content != Align::Start {
-                rules.push(format!("justify-content: {}", s.justify_content.css_content()));
+                rules.push(format!(
+                    "justify-content: {}",
+                    s.justify_content.css_content()
+                ));
             }
         }
         Display::Grid => {
@@ -172,8 +192,10 @@ fn render_style(class: &str, s: &Style) -> String {
         rules.push("height: 100%".into());
     }
 
-    if s.padding.top != 0.0 || s.padding.right != 0.0
-        || s.padding.bottom != 0.0 || s.padding.left != 0.0
+    if s.padding.top != 0.0
+        || s.padding.right != 0.0
+        || s.padding.bottom != 0.0
+        || s.padding.left != 0.0
     {
         rules.push(format!(
             "padding: {}px {}px {}px {}px",
@@ -207,12 +229,7 @@ fn render_style(class: &str, s: &Style) -> String {
     format!(".{class} {{\n{body}}}\n\n")
 }
 
-fn render_text_style(
-    class: &str,
-    t: &TextStyle,
-    w: Option<f32>,
-    h: Option<f32>,
-) -> String {
+fn render_text_style(class: &str, t: &TextStyle, w: Option<f32>, h: Option<f32>) -> String {
     let mut rules: Vec<String> = Vec::new();
     if let Some(v) = w {
         rules.push(format!("width: {}px", v));
@@ -243,7 +260,9 @@ fn render_text_style(
 }
 
 #[allow(dead_code)]
-fn _unused(_: Option<f32>) -> String { fmt_opt(None) }
+fn _unused(_: Option<f32>) -> String {
+    fmt_opt(None)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

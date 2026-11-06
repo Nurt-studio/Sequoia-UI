@@ -280,9 +280,7 @@ fn layout_children(
             let (start_x, gap_extra) = match s.justify_content {
                 Align::Center => (ix + extra * 0.5, 0.0),
                 Align::End => (ix + extra, 0.0),
-                Align::SpaceBetween if flow.len() > 1 => {
-                    (ix, extra / (flow.len() - 1) as f32)
-                }
+                Align::SpaceBetween if flow.len() > 1 => (ix, extra / (flow.len() - 1) as f32),
                 _ => (ix, 0.0),
             };
             let mut cx = start_x;
@@ -313,9 +311,7 @@ fn layout_children(
             let (start_y, gap_extra) = match s.justify_content {
                 Align::Center => (iy + extra * 0.5, 0.0),
                 Align::End => (iy + extra, 0.0),
-                Align::SpaceBetween if flow.len() > 1 => {
-                    (iy, extra / (flow.len() - 1) as f32)
-                }
+                Align::SpaceBetween if flow.len() > 1 => (iy, extra / (flow.len() - 1) as f32),
                 _ => (iy, 0.0),
             };
             let mut cy = start_y;

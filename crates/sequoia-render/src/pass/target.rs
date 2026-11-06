@@ -268,8 +268,7 @@ impl GpuRenderer {
             let Some(&source_index) = image_sources.get(key) else {
                 continue;
             };
-            let Some(sequoia_core::RenderItem::Image(draw)) = list.items().get(source_index)
-            else {
+            let Some(sequoia_core::RenderItem::Image(draw)) = list.items().get(source_index) else {
                 continue;
             };
             let source = &draw.source;

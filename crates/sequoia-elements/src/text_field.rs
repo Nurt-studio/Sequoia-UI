@@ -1346,9 +1346,8 @@ impl View for TextField {
         let text = self.value.get_untracked();
         let shown = self.displayed(&text);
         let chars: Vec<char> = shown.chars().collect();
-        let (caret, anchor, preedit, preedit_cursor) = self.with_state(|s| {
-            (s.caret, s.anchor, s.preedit.clone(), s.preedit_cursor)
-        });
+        let (caret, anchor, preedit, preedit_cursor) =
+            self.with_state(|s| (s.caret, s.anchor, s.preedit.clone(), s.preedit_cursor));
         let caret = caret.min(chars.len());
         let selection = anchor.map(|a| (a.min(caret), a.max(caret)));
         let composing = !preedit.is_empty();

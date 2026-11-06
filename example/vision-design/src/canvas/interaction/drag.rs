@@ -103,7 +103,11 @@ pub(crate) fn apply(
             for (id, ox, oy, _, _) in orig {
                 let nx = ox + dx;
                 let ny = oy + dy;
-                signals.state.move_layer(*id, if grid_snap { snap(nx) } else { nx }, if grid_snap { snap(ny) } else { ny });
+                signals.state.move_layer(
+                    *id,
+                    if grid_snap { snap(nx) } else { nx },
+                    if grid_snap { snap(ny) } else { ny },
+                );
             }
         }
         DragMode::Resize(handle) => {

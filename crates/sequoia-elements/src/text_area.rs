@@ -743,11 +743,7 @@ impl TextArea {
 
     /// Grows the area with its content instead of filling the parent.
     pub fn auto_size(mut self, auto: bool) -> Self {
-        self.style.height = if auto {
-            Length::Fit
-        } else {
-            Length::Fill(1.0)
-        };
+        self.style.height = if auto { Length::Fit } else { Length::Fill(1.0) };
         self
     }
 
@@ -1846,12 +1842,8 @@ impl TextArea {
         let size = self.resolved_font_size(&theme);
         let weight = self.font_weight();
         let total = layout.rows.last().map(|r| r.end).unwrap_or(0);
-        let mains: Vec<usize> = self.with_state(|s| {
-            s.carets
-                .iter()
-                .map(|c| c.offset.min(total))
-                .collect()
-        });
+        let mains: Vec<usize> =
+            self.with_state(|s| s.carets.iter().map(|c| c.offset.min(total)).collect());
         let main_goal = self.with_state(|s| s.goal_x);
         let mut main_goal_next = main_goal;
         let mut nexts: Vec<Option<usize>> = Vec::with_capacity(mains.len());
@@ -3219,9 +3211,7 @@ impl TextArea {
         let Some(row) = layout.rows.get(ri) else {
             return;
         };
-        let col = caret
-            .saturating_sub(row.start)
-            .min(row.end - row.start);
+        let col = caret.saturating_sub(row.start).min(row.end - row.start);
         let x = row_prefix_x(ctx, &layout, row, col, size, weight);
         self.ensure_visible(x, ri, line_h);
     }
@@ -3669,11 +3659,7 @@ impl View for TextArea {
 
         let width = (rect.size.width - self.pad_x * 2.0).max(0.0);
         let layout = self.layout_for(ctx, width, size, weight);
-        let total_chars = layout
-            .line_starts
-            .last()
-            .copied()
-            .unwrap_or(0)
+        let total_chars = layout.line_starts.last().copied().unwrap_or(0)
             + layout.lines.last().map(|l| l.chars().count()).unwrap_or(0);
         let rows = layout.rows.len();
         let content_w = if self.soft_wrap {
@@ -3702,15 +3688,11 @@ impl View for TextArea {
         let comp_start = selection.map(|(a, _)| a).unwrap_or(caret);
         let comp_end = selection.map(|(_, b)| b).unwrap_or(caret);
         let caret_row = layout.row_of(comp_start);
-        let caret_span = layout
-            .rows
-            .get(caret_row)
-            .copied()
-            .unwrap_or(RowSpan {
-                line: 0,
-                start: 0,
-                end: 0,
-            });
+        let caret_span = layout.rows.get(caret_row).copied().unwrap_or(RowSpan {
+            line: 0,
+            start: 0,
+            end: 0,
+        });
         let caret_col = comp_start
             .saturating_sub(caret_span.start)
             .min(caret_span.end - caret_span.start);
@@ -3883,13 +3865,7 @@ impl View for TextArea {
                         0.0,
                     );
                 } else {
-                    ctx.draw_text_weighted(
-                        &line,
-                        (ox, baseline_at(ri)),
-                        size,
-                        weight,
-                        text_color,
-                    );
+                    ctx.draw_text_weighted(&line, (ox, baseline_at(ri)), size, weight, text_color);
                 }
             }
         }

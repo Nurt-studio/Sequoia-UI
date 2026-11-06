@@ -177,29 +177,31 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_json_in = st.clone();
                 let s_png = st.clone();
                 vec![
-                    mrow("New document", Some("Ctrl+N"), false, o.clone(), move || {
-                        s_new.new_document()
-                    }),
-                    msep(),
-                    mrow_env(
-                        "Export JSON to clipboard",
-                        None,
+                    mrow(
+                        "New document",
+                        Some("Ctrl+N"),
+                        false,
                         o.clone(),
-                        move |env| s_json_in.export_json_clipboard(env),
+                        move || s_new.new_document(),
                     ),
+                    msep(),
+                    mrow_env("Export JSON to clipboard", None, o.clone(), move |env| {
+                        s_json_in.export_json_clipboard(env)
+                    }),
                     mrow("Save JSON to file", None, false, o.clone(), move || {
                         s_json_file.save_json_file()
                     }),
-                    mrow_env(
-                        "Import JSON from clipboard",
-                        None,
-                        o.clone(),
-                        move |env| s_exp.import_json_clipboard(env),
-                    ),
-                    msep(),
-                    mrow("Save Svelte code (.svelte)", None, false, o.clone(), move || {
-                        s_svelte.save_svelte_file()
+                    mrow_env("Import JSON from clipboard", None, o.clone(), move |env| {
+                        s_exp.import_json_clipboard(env)
                     }),
+                    msep(),
+                    mrow(
+                        "Save Svelte code (.svelte)",
+                        None,
+                        false,
+                        o.clone(),
+                        move || s_svelte.save_svelte_file(),
+                    ),
                     mrow("Export selection as SVG", None, false, o.clone(), {
                         let s = s_jpg.clone();
                         move || s.export_svg()
@@ -317,9 +319,13 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                     mrow("Toggle grid", None, false, o.clone(), move || {
                         s_gr.toggle_grid()
                     }),
-                    mrow("Rulers — coming soon", None, false, o.clone(), move || {
-                        s_gr2.toast_warn("Rulers — coming soon")
-                    }),
+                    mrow(
+                        "Rulers — coming soon",
+                        None,
+                        false,
+                        o.clone(),
+                        move || s_gr2.toast_warn("Rulers — coming soon"),
+                    ),
                 ]
             }
             // ---------------- OBJECT ----------------

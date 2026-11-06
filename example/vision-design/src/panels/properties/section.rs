@@ -1,5 +1,5 @@
-use sequoia_ui::prelude::*;
 use crate::theme::colors;
+use sequoia_ui::prelude::*;
 
 #[derive(Clone)]
 struct Section {
@@ -54,5 +54,9 @@ pub(super) fn section(
     open: Signal<bool>,
     body: impl View + 'static,
 ) -> AnyView {
-    AnyView::new(Section { title, open, body: AnyView::new(body) })
+    AnyView::new(Section {
+        title,
+        open,
+        body: AnyView::new(body),
+    })
 }

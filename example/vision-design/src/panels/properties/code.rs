@@ -58,7 +58,12 @@ impl CodePanel {
                     .fill_width()
                     .gap(6.0)
                     .align_items(Align::Center)
-                    .child(Text::new("Svelte code").size(13.0).semibold().color(colors::active().text))
+                    .child(
+                        Text::new("Svelte code")
+                            .size(13.0)
+                            .semibold()
+                            .color(colors::active().text),
+                    )
                     .child(Spacer::flex(1.0))
                     .child(status_dot(&st2))
                     .child(status_label(&st2))
@@ -79,19 +84,11 @@ impl CodePanel {
             .child(
                 Row::new()
                     .gap(2.0)
-                    .child(segment(
-                        "Preview",
-                        !editing,
-                        {
-                            let st = st.clone();
-                            move || st.code_editing.set(false)
-                        },
-                    ))
-                    .child(segment(
-                        "Edit",
-                        editing,
-                        move || st.code_editing.set(true),
-                    )),
+                    .child(segment("Preview", !editing, {
+                        let st = st.clone();
+                        move || st.code_editing.set(false)
+                    }))
+                    .child(segment("Edit", editing, move || st.code_editing.set(true))),
             )
     }
 
@@ -124,10 +121,7 @@ impl CodePanel {
             .fill_width()
             .padding(Edges::xy(8.0, 4.0))
             .gap(4.0)
-            .child_flex(
-                tiny_btn("Save .svelte", move || st.save_svelte_file()),
-                1.0,
-            )
+            .child_flex(tiny_btn("Save .svelte", move || st.save_svelte_file()), 1.0)
             .child_flex(
                 tiny_btn("Save .json", move || st_json.save_json_file()),
                 1.0,
@@ -203,14 +197,14 @@ impl CodePanel {
                     .fill_width()
                     .padding(Edges::xy(8.0, 6.0))
                     .child(
-                        Text::new(if editing {
-                            "Edit the code and press \"Apply\" to update the canvas."
-                        } else {
-                            "Code buffer preview. Switch to \"Edit\" to change the document as text."
-                        })
-                        .size(10.0)
-                        .color(colors::active().icon_inactive),
-                    ),
+                    Text::new(if editing {
+                        "Edit the code and press \"Apply\" to update the canvas."
+                    } else {
+                        "Code buffer preview. Switch to \"Edit\" to change the document as text."
+                    })
+                    .size(10.0)
+                    .color(colors::active().icon_inactive),
+                ),
             )
     }
 }
@@ -302,7 +296,9 @@ fn short_line(s: &str) -> String {
 
 /// Right panel content: the Code tab bypasses ScrollView (it handles scrolling itself).
 pub(crate) fn code_body(state: &EditorState) -> impl View + 'static {
-    CodePanel { state: state.clone() }
+    CodePanel {
+        state: state.clone(),
+    }
 }
 
 /// Helper used by properties/mod.rs to detect the active tab.

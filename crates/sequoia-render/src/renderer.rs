@@ -2295,8 +2295,7 @@ impl GpuRenderer {
                 let Some(&source_index) = image_sources.get(key) else {
                     continue;
                 };
-                let Some(sequoia_core::RenderItem::Image(draw)) =
-                    scene_items.get(source_index)
+                let Some(sequoia_core::RenderItem::Image(draw)) = scene_items.get(source_index)
                 else {
                     continue;
                 };
@@ -2633,7 +2632,11 @@ impl GpuRenderer {
                                 };
                                 need_clear = false;
                                 passes += 1;
-                                draws += gui_run_draws(&seg.runs, image_draws, self.image_atlas.is_some());
+                                draws += gui_run_draws(
+                                    &seg.runs,
+                                    image_draws,
+                                    self.image_atlas.is_some(),
+                                );
                                 let mut pass =
                                     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                         label: Some("sequoia-backdrop-segment"),
@@ -2768,7 +2771,11 @@ impl GpuRenderer {
                                     filter_blur,
                                 );
                                 passes += if filter_blur >= 0.5 { 3 } else { 2 };
-                                draws += gui_run_draws(&fplan.runs, image_draws, self.image_atlas.is_some()) + 1;
+                                draws += gui_run_draws(
+                                    &fplan.runs,
+                                    image_draws,
+                                    self.image_atlas.is_some(),
+                                ) + 1;
                                 if filter_blur >= 0.5 {
                                     draws += 1;
                                 }
@@ -2783,7 +2790,11 @@ impl GpuRenderer {
                                 };
                                 need_clear = false;
                                 passes += 1;
-                                draws += gui_run_draws(&fplan.runs, image_draws, self.image_atlas.is_some());
+                                draws += gui_run_draws(
+                                    &fplan.runs,
+                                    image_draws,
+                                    self.image_atlas.is_some(),
+                                );
                                 let mut pass =
                                     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                         label: Some("sequoia-filter-fallback"),

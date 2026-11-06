@@ -87,11 +87,19 @@ pub(crate) fn highlight_svelte(src: &str) -> Vec<HlLine> {
             // HTML comment until -->
             match find_seq(&chars, i + 4, "-->") {
                 Some(end) => {
-                    push_text(&mut lines, &chars[i..end + 3].iter().collect::<String>(), c(C_COMMENT));
+                    push_text(
+                        &mut lines,
+                        &chars[i..end + 3].iter().collect::<String>(),
+                        c(C_COMMENT),
+                    );
                     i = end + 3;
                 }
                 None => {
-                    push_text(&mut lines, &chars[i..].iter().collect::<String>(), c(C_COMMENT));
+                    push_text(
+                        &mut lines,
+                        &chars[i..].iter().collect::<String>(),
+                        c(C_COMMENT),
+                    );
                     i = n;
                 }
             }
@@ -169,11 +177,7 @@ fn highlight_tag(chars: &[char], start: usize, lines: &mut Vec<HlLine>) -> usize
             let word: String = chars[i..i + take].iter().collect();
             // first word in a tag = tag name; later ones followed by '=' = attributes
             let is_attr = !first_word && eq_ahead(chars, i + take);
-            push_text(
-                lines,
-                &word,
-                c(if is_attr { C_ATTR } else { C_TAG }),
-            );
+            push_text(lines, &word, c(if is_attr { C_ATTR } else { C_TAG }));
             first_word = false;
             i += take;
         } else {
@@ -208,13 +212,24 @@ fn highlight_script_block(block: &str, lines: &mut Vec<HlLine>) {
     while i < n {
         let rest: String = chars[i..(i + 12).min(n)].iter().collect();
         if rest.starts_with("//") {
-            let take = chars[i..].iter().position(|&c2| c2 == '\n').unwrap_or(n - i);
-            push_text(lines, &chars[i..i + take].iter().collect::<String>(), c(C_COMMENT));
+            let take = chars[i..]
+                .iter()
+                .position(|&c2| c2 == '\n')
+                .unwrap_or(n - i);
+            push_text(
+                lines,
+                &chars[i..i + take].iter().collect::<String>(),
+                c(C_COMMENT),
+            );
             i += take;
         } else if rest.starts_with("/*") {
             match find_seq(&chars, i + 2, "*/") {
                 Some(e) => {
-                    push_text(lines, &chars[i..e + 2].iter().collect::<String>(), c(C_COMMENT));
+                    push_text(
+                        lines,
+                        &chars[i..e + 2].iter().collect::<String>(),
+                        c(C_COMMENT),
+                    );
                     i = e + 2;
                 }
                 None => {
@@ -253,7 +268,11 @@ fn highlight_script_block(block: &str, lines: &mut Vec<HlLine>) {
                 .iter()
                 .take_while(|c2| c2.is_ascii_digit() || **c2 == '.')
                 .count();
-            push_text(lines, &chars[i..i + take].iter().collect::<String>(), c(C_NUMBER));
+            push_text(
+                lines,
+                &chars[i..i + take].iter().collect::<String>(),
+                c(C_NUMBER),
+            );
             i += take;
         } else if chars[i] == '<' {
             // opening/closing tag <script lang="ts"> and </script>
@@ -278,7 +297,11 @@ fn highlight_css_block(block: &str, lines: &mut Vec<HlLine>) {
         if rest.starts_with("/*") {
             match find_seq(&chars, i + 2, "*/") {
                 Some(e) => {
-                    push_text(lines, &chars[i..e + 2].iter().collect::<String>(), c(C_COMMENT));
+                    push_text(
+                        lines,
+                        &chars[i..e + 2].iter().collect::<String>(),
+                        c(C_COMMENT),
+                    );
                     i = e + 2;
                 }
                 None => {
@@ -287,8 +310,16 @@ fn highlight_css_block(block: &str, lines: &mut Vec<HlLine>) {
                 }
             }
         } else if rest.starts_with("<style") || rest.starts_with("</style") {
-            let take = chars[i..].iter().position(|&c2| c2 == '>').map(|p| p + 1).unwrap_or(n - i);
-            push_text(lines, &chars[i..i + take].iter().collect::<String>(), c(C_TAG));
+            let take = chars[i..]
+                .iter()
+                .position(|&c2| c2 == '>')
+                .map(|p| p + 1)
+                .unwrap_or(n - i);
+            push_text(
+                lines,
+                &chars[i..i + take].iter().collect::<String>(),
+                c(C_TAG),
+            );
             i += take;
         } else {
             let ch = chars[i];
@@ -420,7 +451,12 @@ pub(crate) fn code_view(code: Signal<String>) -> impl View + 'static {
 
             let mut content_w = 40.0f32;
             for l in &lines {
-                let w = l.runs.iter().map(|r| r.text.chars().count() as f32).sum::<f32>() * char_w;
+                let w = l
+                    .runs
+                    .iter()
+                    .map(|r| r.text.chars().count() as f32)
+                    .sum::<f32>()
+                    * char_w;
                 content_w = content_w.max(w);
             }
             let content_h = lines.len() as f32 * line_h + PAD * 2.0;
@@ -481,7 +517,9 @@ pub(crate) fn code_view(code: Signal<String>) -> impl View + 'static {
             }
         })
         .on_pointer(move |pos, ev, ctx| match ev {
-            PointerEvent::Wheel { delta, modifiers, .. } => {
+            PointerEvent::Wheel {
+                delta, modifiers, ..
+            } => {
                 if modifiers.contains(Modifiers::SHIFT) {
                     scroll_x.update(|v| *v += delta.y);
                 } else {
@@ -540,21 +578,31 @@ mod tests {
         let joined: Vec<String> = lines.iter().map(|l| l.text()).collect();
         assert_eq!(joined[0], "<div class=\"box\">Hi</div>");
         // tag name uses the tag color, attribute uses the attribute color
-        let has_tag = lines[0].runs.iter().any(|r| r.text == "div" && r.color == c(C_TAG));
-        let has_attr = lines[0].runs.iter().any(|r| r.text == "class" && r.color == c(C_ATTR));
-        let has_str = lines[0].runs.iter().any(|r| r.text == "\"box\"" && r.color == c(C_STRING));
+        let has_tag = lines[0]
+            .runs
+            .iter()
+            .any(|r| r.text == "div" && r.color == c(C_TAG));
+        let has_attr = lines[0]
+            .runs
+            .iter()
+            .any(|r| r.text == "class" && r.color == c(C_ATTR));
+        let has_str = lines[0]
+            .runs
+            .iter()
+            .any(|r| r.text == "\"box\"" && r.color == c(C_STRING));
         assert!(has_tag, "tag name is not colored: {:?}", lines[0].runs);
         assert!(has_attr, "attribute is not colored: {:?}", lines[0].runs);
-        assert!(has_str, "string attribute is not colored: {:?}", lines[0].runs);
+        assert!(
+            has_str,
+            "string attribute is not colored: {:?}",
+            lines[0].runs
+        );
     }
 
     #[test]
     fn html_comment_is_commented() {
         let lines = highlight_svelte("<!-- hi -->");
-        assert!(lines[0]
-            .runs
-            .iter()
-            .all(|r| r.color == c(C_COMMENT)));
+        assert!(lines[0].runs.iter().all(|r| r.color == c(C_COMMENT)));
     }
 
     #[test]
@@ -562,9 +610,21 @@ mod tests {
         let src = "<style>\n.box {\n  color: #FF0000;\n}\n</style>";
         let lines = highlight_svelte(src);
         let all_runs: Vec<&Run> = lines.iter().flat_map(|l| l.runs.iter()).collect();
-        assert!(all_runs.iter().any(|r| r.text == ".box" && r.color == c(C_SELECTOR)));
-        assert!(all_runs.iter().any(|r| r.text == "color" && r.color == c(C_ATTR)));
-        assert!(all_runs.iter().any(|r| r.text == "#FF0000" && r.color == c(C_STRING)));
+        assert!(
+            all_runs
+                .iter()
+                .any(|r| r.text == ".box" && r.color == c(C_SELECTOR))
+        );
+        assert!(
+            all_runs
+                .iter()
+                .any(|r| r.text == "color" && r.color == c(C_ATTR))
+        );
+        assert!(
+            all_runs
+                .iter()
+                .any(|r| r.text == "#FF0000" && r.color == c(C_STRING))
+        );
     }
 
     #[test]
@@ -572,7 +632,15 @@ mod tests {
         let src = "<script lang=\"ts\">\n  // generated\n  const x = 1;\n</script>";
         let lines = highlight_svelte(src);
         let all_runs: Vec<&Run> = lines.iter().flat_map(|l| l.runs.iter()).collect();
-        assert!(all_runs.iter().any(|r| r.text.contains("generated") && r.color == c(C_COMMENT)));
-        assert!(all_runs.iter().any(|r| r.text == "const" && r.color == c(C_KEYWORD)));
+        assert!(
+            all_runs
+                .iter()
+                .any(|r| r.text.contains("generated") && r.color == c(C_COMMENT))
+        );
+        assert!(
+            all_runs
+                .iter()
+                .any(|r| r.text == "const" && r.color == c(C_KEYWORD))
+        );
     }
 }

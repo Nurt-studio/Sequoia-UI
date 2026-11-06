@@ -145,7 +145,13 @@ fn style_from_css(rule: Option<&CssRule>) -> Style {
                 "grid" => s.display = Display::Grid,
                 _ => s.display = Display::None,
             },
-            "flex-direction" => s.flex_dir = if v == "column" { FlexDir::Col } else { FlexDir::Row },
+            "flex-direction" => {
+                s.flex_dir = if v == "column" {
+                    FlexDir::Col
+                } else {
+                    FlexDir::Row
+                }
+            }
             "gap" => s.gap = px(),
             "padding" => {
                 let parts: Vec<f32> = v.split_whitespace().filter_map(parse_px).collect();
@@ -164,14 +170,22 @@ fn style_from_css(rule: Option<&CssRule>) -> Style {
             "bottom" => s.bottom = parse_px(v),
             "left" => s.left = parse_px(v),
             "width" => {
-                s.width = if v == "100%" { Dimension::Fill }
-                    else if v == "auto" { Dimension::Auto }
-                    else { Dimension::Fixed(parse_px(v).unwrap_or(0.0)) }
+                s.width = if v == "100%" {
+                    Dimension::Fill
+                } else if v == "auto" {
+                    Dimension::Auto
+                } else {
+                    Dimension::Fixed(parse_px(v).unwrap_or(0.0))
+                }
             }
             "height" => {
-                s.height = if v == "100%" { Dimension::Fill }
-                    else if v == "auto" { Dimension::Auto }
-                    else { Dimension::Fixed(parse_px(v).unwrap_or(0.0)) }
+                s.height = if v == "100%" {
+                    Dimension::Fill
+                } else if v == "auto" {
+                    Dimension::Auto
+                } else {
+                    Dimension::Fixed(parse_px(v).unwrap_or(0.0))
+                }
             }
             "background" | "background-color" => {
                 if let Some(c) = parse_color(v) {
@@ -193,7 +207,11 @@ fn style_from_css(rule: Option<&CssRule>) -> Style {
     s
 }
 
-fn text_style_from_css(rule: Option<&CssRule>, w: &mut Option<f32>, h: &mut Option<f32>) -> TextStyle {
+fn text_style_from_css(
+    rule: Option<&CssRule>,
+    w: &mut Option<f32>,
+    h: &mut Option<f32>,
+) -> TextStyle {
     let mut t = TextStyle::default();
     let Some(rule) = rule else { return t };
     for (k, v) in &rule.props {
@@ -234,7 +252,10 @@ fn parse_color(v: &str) -> Option<Color> {
         return Some(Color::hex(n));
     }
     if v.starts_with("rgba(") || v.starts_with("rgb(") {
-        let inner = v.trim_start_matches("rgba(").trim_start_matches("rgb(").trim_end_matches(')');
+        let inner = v
+            .trim_start_matches("rgba(")
+            .trim_start_matches("rgb(")
+            .trim_end_matches(')');
         let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
         if parts.len() >= 3 {
             let r = parts[0].parse::<u8>().unwrap_or(0) as u32;
@@ -254,19 +275,31 @@ struct BodyParser<'a> {
 }
 
 impl<'a> BodyParser<'a> {
-    fn peek(&self) -> Option<char> { self.chars.get(self.pos).copied() }
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).copied()
+    }
     fn bump(&mut self) -> Option<char> {
         let c = self.peek();
-        if c.is_some() { self.pos += 1; }
+        if c.is_some() {
+            self.pos += 1;
+        }
         c
     }
     fn skip_ws(&mut self) {
         while let Some(c) = self.peek() {
-            if c.is_whitespace() { self.pos += 1; } else { break; }
+            if c.is_whitespace() {
+                self.pos += 1;
+            } else {
+                break;
+            }
         }
     }
     fn consume(&mut self, s: &str) -> bool {
-        if self.chars[self.pos..].iter().collect::<String>().starts_with(s) {
+        if self.chars[self.pos..]
+            .iter()
+            .collect::<String>()
+            .starts_with(s)
+        {
             self.pos += s.chars().count();
             true
         } else {
@@ -280,7 +313,9 @@ impl<'a> BodyParser<'a> {
         }
         if self.consume("<!--") {
             while self.pos < self.chars.len() {
-                if self.consume("-->") { break; }
+                if self.consume("-->") {
+                    break;
+                }
                 self.pos += 1;
             }
             return self.parse_node();
@@ -288,14 +323,22 @@ impl<'a> BodyParser<'a> {
         if !self.consume("<") {
             // text content (unlikely at top level, skip)
             while let Some(c) = self.bump() {
-                if c == '<' { self.pos -= 1; break; }
+                if c == '<' {
+                    self.pos -= 1;
+                    break;
+                }
             }
             return self.parse_node();
         }
         // tag name
         let mut tag_str = String::new();
         while let Some(c) = self.peek() {
-            if c.is_alphanumeric() { tag_str.push(c); self.pos += 1; } else { break; }
+            if c.is_alphanumeric() {
+                tag_str.push(c);
+                self.pos += 1;
+            } else {
+                break;
+            }
         }
         let Some(tag) = Tag::from_str(&tag_str) else {
             return Err(format!("Unknown tag: {tag_str}"));
@@ -306,25 +349,40 @@ impl<'a> BodyParser<'a> {
             self.skip_ws();
             if self.consume("/>") {
                 // self-closing
-                let id = self.next_id; self.next_id += 1;
+                let id = self.next_id;
+                self.next_id += 1;
                 let style = style_from_css(class.as_ref().and_then(|c| self.css.get(c)));
                 return Ok(Some(SvelteNode::Element(Element {
-                    id, name: tag_str.clone(), tag, style, children: vec![],
-                    visible: true, locked: false, component: false, instance: false,
+                    id,
+                    name: tag_str.clone(),
+                    tag,
+                    style,
+                    children: vec![],
+                    visible: true,
+                    locked: false,
+                    component: false,
+                    instance: false,
                 })));
             }
-            if self.consume(">") { break; }
+            if self.consume(">") {
+                break;
+            }
             // attr
             let mut key = String::new();
             while let Some(c) = self.peek() {
-                if c.is_whitespace() || c == '=' || c == '>' { break; }
-                key.push(c); self.pos += 1;
+                if c.is_whitespace() || c == '=' || c == '>' {
+                    break;
+                }
+                key.push(c);
+                self.pos += 1;
             }
             if self.consume("=") {
                 let quote = self.bump().ok_or("missing quote")?;
                 let mut val = String::new();
                 while let Some(c) = self.bump() {
-                    if c == quote { break; }
+                    if c == quote {
+                        break;
+                    }
                     val.push(c);
                 }
                 if key == "class" {
@@ -340,37 +398,62 @@ impl<'a> BodyParser<'a> {
                 // close tag
                 let mut close = String::new();
                 while let Some(c) = self.peek() {
-                    if c == '>' { self.pos += 1; break; }
-                    close.push(c); self.pos += 1;
+                    if c == '>' {
+                        self.pos += 1;
+                        break;
+                    }
+                    close.push(c);
+                    self.pos += 1;
                 }
                 break;
             }
-            if self.pos >= self.chars.len() { break; }
+            if self.pos >= self.chars.len() {
+                break;
+            }
             if self.consume("<span") {
                 // span with class
                 let mut cls = String::new();
                 while let Some(c) = self.peek() {
-                    if c == '>' { self.pos += 1; break; }
-                    cls.push(c); self.pos += 1;
+                    if c == '>' {
+                        self.pos += 1;
+                        break;
+                    }
+                    cls.push(c);
+                    self.pos += 1;
                 }
-                let cls = cls.trim()
-                    .trim_start_matches("class=").trim_matches('"').trim_matches('\'')
+                let cls = cls
+                    .trim()
+                    .trim_start_matches("class=")
+                    .trim_matches('"')
+                    .trim_matches('\'')
                     .to_string();
                 let mut content = String::new();
                 while self.pos < self.chars.len() {
-                    if self.chars[self.pos..].iter().collect::<String>().starts_with("</span>") {
+                    if self.chars[self.pos..]
+                        .iter()
+                        .collect::<String>()
+                        .starts_with("</span>")
+                    {
                         self.pos += "</span>".len();
                         break;
                     }
                     content.push(self.chars[self.pos]);
                     self.pos += 1;
                 }
-                let id = self.next_id; self.next_id += 1;
-                let mut w = None; let mut h = None;
+                let id = self.next_id;
+                self.next_id += 1;
+                let mut w = None;
+                let mut h = None;
                 let ts = text_style_from_css(self.css.get(&cls), &mut w, &mut h);
                 children.push(SvelteNode::Text(TextNode {
-                    id, name: cls.clone(), content, style: ts, width: w, height: h,
-                    visible: true, locked: false,
+                    id,
+                    name: cls.clone(),
+                    content,
+                    style: ts,
+                    width: w,
+                    height: h,
+                    visible: true,
+                    locked: false,
                 }));
                 continue;
             }
@@ -384,11 +467,15 @@ impl<'a> BodyParser<'a> {
             }
             // plain text between elements — skipped (our codegen always uses span)
             while let Some(c) = self.bump() {
-                if c == '<' { self.pos -= 1; break; }
+                if c == '<' {
+                    self.pos -= 1;
+                    break;
+                }
             }
         }
 
-        let id = self.next_id; self.next_id += 1;
+        let id = self.next_id;
+        self.next_id += 1;
         let style = style_from_css(class.as_ref().and_then(|c| self.css.get(c)));
         Ok(Some(SvelteNode::Element(Element {
             id,
@@ -404,7 +491,9 @@ impl<'a> BodyParser<'a> {
     }
 }
 
-trait HexRgb { fn hex_rgb(self) -> u32; }
+trait HexRgb {
+    fn hex_rgb(self) -> u32;
+}
 impl HexRgb for Color {
     fn hex_rgb(self) -> u32 {
         let (r, g, b, _) = self.to_rgba8();

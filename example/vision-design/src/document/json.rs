@@ -111,10 +111,7 @@ fn write_edges(key: &str, e: &Edges, first: bool, pad: usize, out: &mut String) 
     }
     out.push('\n');
     indent(pad, out);
-    out.push_str(&format!(
-        "\"{}\": {{",
-        key
-    ));
+    out.push_str(&format!("\"{}\": {{", key));
     write_kv_num("top", e.top, true, pad + 1, out);
     write_kv_num("right", e.right, false, pad + 1, out);
     write_kv_num("bottom", e.bottom, false, pad + 1, out);
@@ -154,7 +151,11 @@ fn write_node(node: &SvelteNode, pad: usize, out: &mut String) {
             );
             write_kv_str(
                 "flex_dir",
-                if s.flex_dir == FlexDir::Row { "row" } else { "column" },
+                if s.flex_dir == FlexDir::Row {
+                    "row"
+                } else {
+                    "column"
+                },
                 false,
                 pad + 2,
                 out,
@@ -248,7 +249,13 @@ fn write_node(node: &SvelteNode, pad: usize, out: &mut String) {
             indent(pad + 1, out);
             out.push_str("\"style\": {");
             write_kv_num("font_size", t.style.font_size, true, pad + 2, out);
-            write_kv_num("font_weight", t.style.font_weight as f32, false, pad + 2, out);
+            write_kv_num(
+                "font_weight",
+                t.style.font_weight as f32,
+                false,
+                pad + 2,
+                out,
+            );
             write_kv_str("color", &t.style.color_hex, false, pad + 2, out);
             write_kv_str("align", align_name(t.style.align), false, pad + 2, out);
             out.push_str("\n");
@@ -378,7 +385,10 @@ impl JsonParser {
             Some('f') => self.parse_lit("false", Json::Bool(false)),
             Some('n') => self.parse_lit("null", Json::Null),
             Some(c) if c == '-' || c.is_ascii_digit() => self.parse_num(),
-            Some(c) => Err(format!("Unexpected character '{}' (position {})", c, self.pos)),
+            Some(c) => Err(format!(
+                "Unexpected character '{}' (position {})",
+                c, self.pos
+            )),
             None => Err("Unexpected end of input".into()),
         }
     }
@@ -521,7 +531,9 @@ fn parse_node(v: &Json) -> Result<SvelteNode, String> {
         .to_string();
     match v.get("type").and_then(|x| x.as_str()) {
         Some("text") => {
-            let style_v = v.get("style").ok_or("Text node is missing the \"style\" field")?;
+            let style_v = v
+                .get("style")
+                .ok_or("Text node is missing the \"style\" field")?;
             let color_hex = style_v
                 .get("color")
                 .and_then(|x| x.as_str())
@@ -537,7 +549,10 @@ fn parse_node(v: &Json) -> Result<SvelteNode, String> {
                     .unwrap_or("")
                     .to_string(),
                 style: TextStyle {
-                    font_size: style_v.get("font_size").and_then(|x| x.as_num()).unwrap_or(14.0),
+                    font_size: style_v
+                        .get("font_size")
+                        .and_then(|x| x.as_num())
+                        .unwrap_or(14.0),
                     font_weight: style_v
                         .get("font_weight")
                         .and_then(|x| x.as_num())
@@ -580,7 +595,10 @@ fn parse_node(v: &Json) -> Result<SvelteNode, String> {
                 children,
                 visible: v.get("visible").and_then(|x| x.as_bool()).unwrap_or(true),
                 locked: v.get("locked").and_then(|x| x.as_bool()).unwrap_or(false),
-                component: v.get("component").and_then(|x| x.as_bool()).unwrap_or(false),
+                component: v
+                    .get("component")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false),
                 instance: v.get("instance").and_then(|x| x.as_bool()).unwrap_or(false),
             }))
         }
@@ -683,7 +701,10 @@ fn parse_style(v: &Json) -> Result<Style, String> {
         fill_hex,
         stroke: parse_color_opt(v.get("stroke")),
         stroke_hex,
-        stroke_width: v.get("stroke_width").and_then(|x| x.as_num()).unwrap_or(0.0),
+        stroke_width: v
+            .get("stroke_width")
+            .and_then(|x| x.as_num())
+            .unwrap_or(0.0),
         radius: v.get("radius").and_then(|x| x.as_num()).unwrap_or(0.0),
         opacity: v.get("opacity").and_then(|x| x.as_num()).unwrap_or(100.0),
     })
