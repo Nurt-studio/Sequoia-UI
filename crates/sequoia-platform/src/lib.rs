@@ -202,10 +202,11 @@ impl Bench {
         let total_quads: u64 = samples.iter().map(|s| s.stats.quad_instances).sum();
         let total_glyphs: u64 = samples.iter().map(|s| s.stats.glyph_instances).sum();
         let total_images: u64 = samples.iter().map(|s| s.stats.image_instances).sum();
+        let total_shaders: u64 = samples.iter().map(|s| s.stats.shader_instances).sum();
         println!(
             "[stress] frames={} avg(gap={:.2} tick={:.2} layout={:.2} paint={:.2} render={:.2}ms) \
              p50_render={:.2}ms p95_render={:.2}ms draws={:.1} passes={:.1} \
-             quads={:.1} glyphs={:.1} images={:.1}",
+             quads={:.1} glyphs={:.1} images={:.1} shaders={:.1}",
             samples.len(),
             mean(|s| s.gap_ms),
             mean(|s| s.tick_ms),
@@ -219,6 +220,7 @@ impl Bench {
             total_quads as f64 / n,
             total_glyphs as f64 / n,
             total_images as f64 / n,
+            total_shaders as f64 / n,
         );
     }
 }

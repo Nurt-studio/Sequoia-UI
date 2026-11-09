@@ -390,6 +390,7 @@ pub struct RenderStats {
     pub glyph_instances: u64,
     pub image_instances: u64,
     pub gradient_instances: u64,
+    pub shader_instances: u64,
     pub dropped_gradients: u64,
     pub draw_calls: u64,
     pub passes: u64,
@@ -605,7 +606,11 @@ impl RenderStats {
 
     /// Returns the total number of instances submitted in the last frame.
     pub fn instances(self) -> u64 {
-        self.quad_instances + self.glyph_instances + self.image_instances + self.gradient_instances
+        self.quad_instances
+            + self.glyph_instances
+            + self.image_instances
+            + self.gradient_instances
+            + self.shader_instances
     }
 }
 

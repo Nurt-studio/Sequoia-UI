@@ -1899,6 +1899,11 @@ impl GpuRenderer {
         let mut group_composites: Vec<GpuBackdrop> = Vec::new();
         if !has_backdrops && !has_filters {
             if use_opacity_layers {
+                quads.clear();
+                glyphs.clear();
+                images.clear();
+                image_keys.clear();
+                gradients.clear();
                 let draws = build_opacity_draws(
                     opacity_plan.as_ref().expect("opacity plan"),
                     list.items(),
@@ -3047,6 +3052,7 @@ impl GpuRenderer {
                 shader_textures: &self.scratch_shader_textures,
                 user_shaders: &self.user_shaders,
                 backdrop_buf: &self.backdrop_buf,
+                fb,
             };
             draw_opacity_draws(
                 nodes,
@@ -3242,6 +3248,7 @@ impl GpuRenderer {
         self.stats.glyph_instances = glyphs.len() as u64;
         self.stats.image_instances = images.len() as u64;
         self.stats.gradient_instances = gradients.len() as u64;
+        self.stats.shader_instances = self.shader_data.instances.len() as u64;
         self.stats.draw_calls = draws;
         self.stats.passes = passes;
         let peaks = (quads.len(), glyphs.len(), images.len(), gradients.len());

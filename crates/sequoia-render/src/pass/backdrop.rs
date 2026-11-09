@@ -75,6 +75,23 @@ impl crate::renderer::GpuRenderer {
             copy_extent,
         );
         let blurred = blur_px >= 0.5;
+        if !blurred {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &bufs.a_tex,
+                    mip_level: 0,
+                    origin: copy_origin,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &bufs.b_tex,
+                    mip_level: 0,
+                    origin: copy_origin,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                copy_extent,
+            );
+        }
         if blurred {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sequoia-backdrop-blur-h"),
@@ -94,7 +111,7 @@ impl crate::renderer::GpuRenderer {
             });
             pass.set_pipeline(blur_pipeline);
             pass.set_bind_group(0, bind_group, &[]);
-            pass.set_bind_group(1, &bufs.b_bg, &[]);
+            pass.set_bind_group(1, &bufs.a_bg, &[]);
             pass.set_vertex_buffer(0, backdrop_buf.slice(..));
             pass.draw(0..4, instance_idx..instance_idx + 1);
         }
