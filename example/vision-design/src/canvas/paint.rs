@@ -5,6 +5,7 @@ use sequoia_ui::view::{BrushStroke, Fill, Painter};
 
 use crate::core::layer::Layer;
 use crate::core::snap::Guides;
+use crate::state::present::Fx;
 
 use super::{GRID_COLOR, GUIDE_COLOR, SEL_COLOR, SEL_FILL};
 use crate::core::geometry::{GRID_SIZE, HANDLE_PX};
@@ -41,16 +42,18 @@ pub(crate) fn draw_grid_screen(p: &mut Painter, pan_x: f32, pan_y: f32, zoom: f3
 }
 
 pub(crate) fn draw_layer(p: &mut Painter, l: &Layer) {
-    if !l.visible || l.opacity <= 0.0 {
+    let alpha = (l.opacity / 100.0).clamp(0.0, 1.0);
+    if !l.visible || alpha <= 0.0 {
         return;
     }
     let rect = Rect::from_xywh(l.x, l.y, l.w, l.h);
-    let fill = Fill::solid(l.fill);
+    let fill = with_alpha(l.fill, alpha);
+    let stroke = with_alpha(l.stroke, alpha);
     match l.kind {
         "FRAME" | "RECTANGLE" => {
-            p.rounded(rect, l.radius, fill);
+            p.rounded(rect, l.radius, Fill::solid(fill));
             if l.stroke_width > 0.0 {
-                p.rect_outline(rect, l.radius, BrushStroke::new(l.stroke_width), l.stroke);
+                p.rect_outline(rect, l.radius, BrushStroke::new(l.stroke_width), stroke);
             }
         }
         "ELLIPSE" => {
@@ -58,22 +61,172 @@ pub(crate) fn draw_layer(p: &mut Painter, l: &Layer) {
             let cy = l.y + l.h * 0.5;
             let rx = l.w * 0.5;
             let ry = l.h * 0.5;
-            p.ellipse(Point::new(cx, cy), rx, ry, l.fill);
+            p.ellipse(Point::new(cx, cy), rx, ry, fill);
             if l.stroke_width > 0.0 {
                 p.ellipse_outline(
                     Point::new(cx, cy),
                     rx,
                     ry,
                     BrushStroke::new(l.stroke_width),
-                    l.stroke,
+                    stroke,
                 );
             }
         }
         "TEXT" => {
-            p.text_tl(&l.text, Point::new(l.x, l.y), l.font_size, l.fill);
+            p.text_tl(&l.text, Point::new(l.x, l.y), l.font_size, fill);
         }
         _ => {}
     }
+}
+
+/// `Color::hexa` from an existing color with a new alpha (0..1).
+fn with_alpha(c: Color, alpha: f32) -> Color {
+    let (r, g, b, a) = c.to_rgba8();
+    let a = ((a as f32 * alpha).round().clamp(0.0, 255.0)) as u32;
+    Color::hexa(((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | a)
+}
+
+/// Present-mode drawing: the layer rect is scaled around its own center and
+/// translated by the transition offsets; alpha multiplies every color.
+pub(crate) fn draw_layer_fx(p: &mut Painter, l: &Layer, fx: &Fx) {
+    if !l.visible || l.opacity <= 0.0 || fx.alpha <= 0.0 {
+        return;
+    }
+    let alpha = fx.alpha * (l.opacity / 100.0);
+    let s = fx.scale.max(0.001);
+    let cx = l.x + l.w * 0.5;
+    let cy = l.y + l.h * 0.5;
+    let x = cx + (l.x - cx) * s + fx.dx;
+    let y = cy + (l.y - cy) * s + fx.dy;
+    let w = (l.w * s).max(0.5);
+    let h = (l.h * s).max(0.5);
+    let fill = with_alpha(l.fill, alpha);
+    let stroke = with_alpha(l.stroke, alpha);
+    match l.kind {
+        "FRAME" | "RECTANGLE" => {
+            p.rounded(Rect::from_xywh(x, y, w, h), l.radius * s, Fill::solid(fill));
+            if l.stroke_width > 0.0 {
+                p.rect_outline(
+                    Rect::from_xywh(x, y, w, h),
+                    l.radius * s,
+                    BrushStroke::new(l.stroke_width),
+                    stroke,
+                );
+            }
+        }
+        "ELLIPSE" => {
+            let ccx = x + w * 0.5;
+            let ccy = y + h * 0.5;
+            p.ellipse(Point::new(ccx, ccy), w * 0.5, h * 0.5, fill);
+            if l.stroke_width > 0.0 {
+                p.ellipse_outline(
+                    Point::new(ccx, ccy),
+                    w * 0.5,
+                    h * 0.5,
+                    BrushStroke::new(l.stroke_width),
+                    stroke,
+                );
+            }
+        }
+        "TEXT" => {
+            p.text_tl(&l.text, Point::new(x, y), l.font_size * s, fill);
+        }
+        _ => {}
+    }
+}
+
+/// The slot "hole" of a master (design doc §4.5, Phase 4): a dashed violet
+/// outline with the slot name, shown while the container is empty.
+pub(crate) fn draw_slot_hole(p: &mut Painter, l: &Layer) {
+    let color = Color::hexa(0xCFA6F599);
+    let rect = Rect::from_xywh(
+        l.x + 2.0,
+        l.y + 2.0,
+        (l.w - 4.0).max(8.0),
+        (l.h - 4.0).max(8.0),
+    );
+    let dash = 4.0;
+    let gap = 3.0;
+    let mut step = |x0: f32, y0: f32, x1: f32, y1: f32| {
+        let dx = x1 - x0;
+        let dy = y1 - y0;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= 0.0 {
+            return;
+        }
+        let ux = dx / len;
+        let uy = dy / len;
+        let mut t = 0.0;
+        while t < len {
+            let end = (t + dash).min(len);
+            p.line(
+                Point::new(x0 + ux * t, y0 + uy * t),
+                Point::new(x0 + ux * end, y0 + uy * end),
+                BrushStroke::new(1.0),
+                color,
+            );
+            t += dash + gap;
+        }
+    };
+    step(
+        rect.left(),
+        rect.top(),
+        rect.left() + rect.size.width,
+        rect.top(),
+    );
+    step(
+        rect.left(),
+        rect.top() + rect.size.height,
+        rect.left() + rect.size.width,
+        rect.top() + rect.size.height,
+    );
+    step(
+        rect.left(),
+        rect.top(),
+        rect.left(),
+        rect.top() + rect.size.height,
+    );
+    step(
+        rect.left() + rect.size.width,
+        rect.top(),
+        rect.left() + rect.size.width,
+        rect.top() + rect.size.height,
+    );
+    let label = format!("slot: {}", l.slot.clone().unwrap_or_default());
+    let tw = p.text_width(&label, 9.0);
+    p.text_tl(
+        &label,
+        Point::new(rect.left() + (rect.size.width - tw) * 0.5, rect.top() + 4.0),
+        9.0,
+        color,
+    );
+}
+
+/// Green PRESENT badge in the canvas corner (design doc §7).
+pub(crate) fn draw_present_badge(p: &mut Painter, size: Size) {
+    let label = "● PRESENT — click elements · Esc exits";
+    let tw = p.text_width(label, 10.0);
+    let w = tw + 20.0;
+    let h = 24.0;
+    let x = (size.width - w) * 0.5;
+    let y = 10.0;
+    p.rounded(
+        Rect::from_xywh(x, y, w, h),
+        12.0,
+        Fill::solid(Color::hexa(0x4ADE8026)),
+    );
+    p.rect_outline(
+        Rect::from_xywh(x, y, w, h),
+        12.0,
+        BrushStroke::new(1.0),
+        Color::hex(0x4ADE80),
+    );
+    p.text_tl(
+        label,
+        Point::new(x + 10.0, y + 7.0),
+        10.0,
+        Color::hex(0x4ADE80),
+    );
 }
 
 /// Hairline rectangle drawn as four filled quads.
@@ -134,6 +287,18 @@ pub(crate) fn draw_selection(p: &mut Painter, l: &Layer, zoom: f32, handles: boo
         p.fill(r, Fill::solid(Color::WHITE));
         p.rect_outline(r, 0.0, BrushStroke::screen(1.2), SEL_COLOR);
     }
+}
+
+/// Draws the text caret for the layer being edited inline.
+pub(crate) fn draw_text_caret(p: &mut Painter, l: &Layer, text: &str, caret: usize, zoom: f32) {
+    let mut caret = caret.min(text.len());
+    while caret > 0 && !text.is_char_boundary(caret) {
+        caret -= 1;
+    }
+    let x = l.x + p.text_width(&text[..caret], l.font_size);
+    let height = l.font_size * 1.3;
+    let width = 1.5 / zoom.max(0.01);
+    p.fill(Rect::from_xywh(x, l.y, width, height), Fill::solid(l.fill));
 }
 
 pub(crate) fn draw_marquee(p: &mut Painter, x: f32, y: f32, w: f32, h: f32) {

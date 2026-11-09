@@ -6,4 +6,6 @@ pub(crate) mod code_view;
 pub(crate) mod icon_button;
 pub(crate) mod menu;
 pub(crate) mod number_field;
+pub(crate) mod picker_btn;
+pub(crate) mod search_field;
 pub(crate) mod segmented;

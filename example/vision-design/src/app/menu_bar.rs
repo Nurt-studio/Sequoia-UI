@@ -1,11 +1,17 @@
 use sequoia_ui::layout::LayoutCtx;
 use sequoia_ui::prelude::*;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
 use crate::components::menu::{menu_row as mrow, menu_row_env as mrow_env, menu_sep as msep};
 use sequoia_ui::view::{Fill, GradientStops};
 
-use crate::state::{EditorState, Menu};
+use crate::state::{EditorState, Menu, ProjectTab};
 use crate::theme::colors;
+
+const TITLE_H: f32 = 34.0;
 
 // ---------------------------------------------------------------- logo
 
@@ -25,6 +31,289 @@ fn logo() -> impl View + 'static {
             );
             g.text_center(g.rect(), "VD", 8.0, Color::WHITE);
         })
+}
+
+/// Invisible background of the title bar: dragging any empty spot moves the
+/// window, a double click maximizes or restores it. It sits below the
+/// interactive row, so tabs/menu buttons win.
+#[derive(Clone)]
+struct CaptionDrag {
+    /// Carried by the editor state so every window (and every test) keeps its
+    /// own click history instead of sharing a thread-local.
+    last_click: Rc<RefCell<Option<(Instant, Point)>>>,
+}
+
+impl Leaf for CaptionDrag {
+    fn layout_style(&self) -> LayoutStyle {
+        LayoutStyle::default()
+            .width(Length::Fill(1.0))
+            .height(Length::Fill(1.0))
+    }
+
+    fn paint(&self, _ctx: &mut PaintCtx) {}
+
+    fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
+        if let Event::Pointer(PointerEvent::Down {
+            button: PointerButton::Left,
+            pos,
+            ..
+        }) = event
+            && let Some(windows) = ctx.environment.get::<Windows>()
+        {
+            let now = Instant::now();
+            let mut last = self.last_click.borrow_mut();
+            let double = (*last).is_some_and(|(then, at)| {
+                now.duration_since(then) < Duration::from_millis(400)
+                    && (at.x - pos.x).hypot(at.y - pos.y) < 6.0
+            });
+            *last = if double { None } else { Some((now, *pos)) };
+            if double {
+                windows.toggle_maximize(ctx.window);
+            } else {
+                windows.begin_drag(ctx.window);
+            }
+            ctx.handled();
+        }
+    }
+}
+impl_view_for_leaf!(CaptionDrag);
+
+// ---------------------------------------------------------------- menu icon
+
+#[derive(Clone)]
+struct MbIconLeaf {
+    menu: Menu,
+    others: Vec<Signal<bool>>,
+}
+
+impl Leaf for MbIconLeaf {
+    fn layout_style(&self) -> LayoutStyle {
+        LayoutStyle::default()
+            .width(Length::Px(24.0))
+            .height(Length::Px(22.0))
+    }
+
+    fn intrinsic_size(&self, _ctx: &mut LayoutCtx) -> Option<Size> {
+        Some(Size::new(24.0, 22.0))
+    }
+
+    fn track(&self) {
+        let _ = self.menu.open.get();
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        let on = self.menu.open.get_untracked();
+        let hot = on || ctx.state.hovered;
+        let bg = if hot {
+            colors::active().bg_lighter
+        } else {
+            Color::TRANSPARENT
+        };
+        ctx.quad(ctx.rect, bg, 5.0);
+        let fg = if hot {
+            Color::WHITE
+        } else {
+            Color::hex(0xB9B9BD)
+        };
+        let x = ctx.rect.left() + 7.0;
+        let y = ctx.rect.top() + 7.5;
+        for i in 0..3 {
+            ctx.quad(Rect::from_xywh(x, y + i as f32 * 4.0, 10.0, 1.5), fg, 0.75);
+        }
+    }
+
+    fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
+        if let Event::Pointer(PointerEvent::Down {
+            button: PointerButton::Left,
+            ..
+        }) = event
+        {
+            self.menu.anchor.set(Some(ctx.element()));
+            for o in &self.others {
+                o.set(false);
+            }
+            self.menu.open.update(|b| *b = !*b);
+            ctx.handled();
+        }
+    }
+
+    fn has_visual_state(&self) -> bool {
+        true
+    }
+
+    fn cursor(&self, _state: VisualState) -> CursorIcon {
+        CursorIcon::Pointer
+    }
+}
+impl_view_for_leaf!(MbIconLeaf);
+
+fn menu_icon(state: &EditorState) -> MbIconLeaf {
+    MbIconLeaf {
+        menu: state.menus.file.clone(),
+        others: state.menus.others(1),
+    }
+}
+
+// ---------------------------------------------------------------- projects
+
+#[derive(Clone)]
+struct ProjectTabs {
+    state: EditorState,
+}
+
+impl View for ProjectTabs {
+    fn body(&self) -> impl View + 'static {
+        let tabs = self.state.projects.get();
+        let active = self.state.active_project.get();
+        let children: Vec<AnyView> = tabs
+            .iter()
+            .map(|tab| project_tab(&self.state, tab, tab.id == active))
+            .collect();
+        Row::new()
+            .gap(3.0)
+            .align_items(Align::Center)
+            .children(children)
+    }
+}
+
+fn project_tab(state: &EditorState, tab: &ProjectTab, active: bool) -> AnyView {
+    let switch = state.clone();
+    let id = tab.id;
+    let close_state = state.clone();
+    // The close target is deliberately larger than the glyph (18 vs 10) so the
+    // "×" stays clickable and readable at title-bar size, the same way native
+    // window tabs do it.
+    let close = Container::new()
+        .width(18.0)
+        .height(18.0)
+        .center()
+        .radius(4.0)
+        .hover(colors::active().bg_darker)
+        .on_press(move || close_state.close_project(id))
+        .child(
+            Icon::new("close")
+                // The bundled glyph only fills ~52% of its 24-unit viewBox, so
+                // 15 renders an "×" of roughly 8 px next to 11 px text.
+                .size(15.0)
+                .color(colors::active().icon_active),
+        );
+
+    let mut tab_box = Container::new()
+        .height(26.0)
+        // Without a minimum width the tab is sized by the label's advance, so
+        // two names of slightly different length produce visibly different
+        // cards. A shared floor makes the label/close pair sit at the same
+        // place in every tab; longer names still grow past it.
+        .min_width(120.0)
+        .padding(Edges::xy(10.0, 0.0))
+        // Container aligns children to the start by default, so the 18px
+        // label/close row would hug the top edge of the 26px tab.
+        .center()
+        .radius(6.0)
+        // Inactive tabs keep the same 1px frame as the active one (transparent
+        // instead of omitted) so the label and close glyph do not shift by a
+        // pixel when the selection moves between tabs.
+        .border(1.0, Color::TRANSPARENT)
+        .hover(colors::active().bg_lighter)
+        .on_click(move || switch.switch_project(id))
+        .child(
+            Row::new()
+                .gap(6.0)
+                .align_items(Align::Center)
+                .child(
+                    Text::new(tab.name.clone())
+                        .size(11.0)
+                        .semibold()
+                        .max_lines(1)
+                        .color(if active {
+                            Color::hex(0xEDEDED)
+                        } else {
+                            colors::active().icon_active
+                        }),
+                )
+                .child(close),
+        );
+    tab_box = if active {
+        tab_box
+            .background(colors::active().bg_lighter)
+            .border(1.0, colors::active().stroke_soft)
+    } else {
+        // A resting background gives the inactive tab the same visible card
+        // bounds as the active one; without it the label/icon read as shifted
+        // inside an invisible box.
+        tab_box.background(colors::active().stroke_soft)
+    };
+    AnyView::new(tab_box)
+}
+
+fn add_project(state: &EditorState) -> impl View + 'static {
+    let st = state.clone();
+    Container::new()
+        .width(24.0)
+        .height(24.0)
+        .center()
+        .radius(6.0)
+        .hover(colors::active().bg_lighter)
+        .on_press(move || st.new_project())
+        .child(
+            Text::new("+")
+                .size(15.0)
+                .color(colors::active().icon_inactive),
+        )
+}
+
+// ---------------------------------------------------------------- window
+
+fn window_button(
+    icon: &'static str,
+    hover: Color,
+    action: impl Fn(&Windows) + 'static,
+) -> impl View + 'static {
+    Container::new()
+        .width(46.0)
+        .height(TITLE_H)
+        .center()
+        .hover(hover)
+        .on_click_env(move |env| {
+            if let Some(windows) = env.get::<Windows>() {
+                action(&windows);
+            }
+        })
+        .child(
+            Icon::new(icon)
+                .size(10.0)
+                .color(colors::active().icon_active),
+        )
+}
+
+fn window_controls() -> impl View + 'static {
+    Row::new()
+        .height(TITLE_H)
+        .align_items(Align::Center)
+        .child(window_button(
+            "minimize",
+            colors::active().bg_lighter,
+            |w| {
+                w.minimize(WindowId::PRIMARY);
+            },
+        ))
+        .child(window_button(
+            "maximize",
+            colors::active().bg_lighter,
+            |w| {
+                w.toggle_maximize(WindowId::PRIMARY);
+            },
+        ))
+        .child(window_button("close", Color::hex(0xE81123), |w| {
+            w.close(WindowId::PRIMARY);
+        }))
+}
+
+fn title_divider() -> impl View + 'static {
+    Container::new()
+        .width(1.0)
+        .height(16.0)
+        .background(colors::active().stroke_soft)
 }
 
 fn mdrop_content(open: Signal<bool>, rows: Vec<AnyView>) -> impl View + 'static {
@@ -110,32 +399,51 @@ fn mbtn(id: u8, label: &'static str, state: &EditorState) -> MbBtnLeaf {
     }
 }
 
-pub(crate) fn menu_bar(state: &EditorState) -> impl View + 'static {
-    Row::new()
-        .height(28.0)
+/// Custom window title bar, merged with the menu bar: app-menu icon, menus,
+/// project tabs and the native-style window controls on the far right.
+pub(crate) fn title_bar(state: &EditorState) -> impl View + 'static {
+    let layers = state.layers.clone();
+    Stack::new()
+        .height(TITLE_H)
         .fill_width()
-        .gap(1.0)
-        .padding(Edges::xy(8.0, 0.0))
-        .align_items(Align::Center)
         .background(colors::active().surface)
         .border_bottom(1.0, colors::active().stroke_soft)
-        .child(logo())
-        .child(Spacer::fixed(5.0))
-        .child(mbtn(1, "File", state))
-        .child(mbtn(2, "Edit", state))
-        .child(mbtn(3, "View", state))
-        .child(mbtn(4, "Object", state))
-        .child(mbtn(5, "Window", state))
-        .child(mbtn(6, "Help", state))
-        .child(Spacer::flex(1.0))
+        .child(CaptionDrag {
+            last_click: state.last_caption_click.clone(),
+        })
         .child(
-            Text::with({
-                let layers = state.layers.clone();
-                move || format!("{} layers", layers.get().len())
-            })
-            .size(10.0)
-            .font("IBM Plex Mono")
-            .color(colors::active().icon_inactive),
+            Row::new()
+                .fill_size()
+                .gap(1.0)
+                .padding(Edges::only(8.0, 0.0, 0.0, 0.0))
+                .align_items(Align::Center)
+                .hit_testable(false)
+                .child(menu_icon(state))
+                .child(Spacer::fixed(4.0))
+                .child(logo())
+                .child(Spacer::fixed(8.0))
+                .child(mbtn(1, "File", state))
+                .child(mbtn(2, "Edit", state))
+                .child(mbtn(3, "View", state))
+                .child(mbtn(4, "Object", state))
+                .child(mbtn(5, "Window", state))
+                .child(mbtn(6, "Help", state))
+                .child(Spacer::fixed(8.0))
+                .child(title_divider())
+                .child(Spacer::fixed(8.0))
+                .child(ProjectTabs {
+                    state: state.clone(),
+                })
+                .child(add_project(state))
+                .child(Spacer::flex(1.0))
+                .child(
+                    Text::with(move || format!("{} layers", layers.get().len()))
+                        .size(10.0)
+                        .font("IBM Plex Mono")
+                        .color(colors::active().icon_inactive),
+                )
+                .child(Spacer::fixed(12.0))
+                .child(window_controls()),
         )
 }
 
@@ -173,17 +481,14 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_exp = st.clone();
                 let s_jpg = st.clone();
                 let s_svelte = st.clone();
+                let s_project = st.clone();
                 let s_json_file = st.clone();
                 let s_json_in = st.clone();
                 let s_png = st.clone();
                 vec![
-                    mrow(
-                        "New document",
-                        Some("Ctrl+N"),
-                        false,
-                        o.clone(),
-                        move || s_new.new_document(),
-                    ),
+                    mrow("New project", Some("Ctrl+N"), false, o.clone(), move || {
+                        s_new.new_project()
+                    }),
                     msep(),
                     mrow_env("Export JSON to clipboard", None, o.clone(), move |env| {
                         s_json_in.export_json_clipboard(env)
@@ -201,6 +506,13 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                         false,
                         o.clone(),
                         move || s_svelte.save_svelte_file(),
+                    ),
+                    mrow(
+                        "Export Svelte project…",
+                        None,
+                        false,
+                        o.clone(),
+                        move || s_project.save_svelte_project(),
                     ),
                     mrow("Export selection as SVG", None, false, o.clone(), {
                         let s = s_jpg.clone();
@@ -349,10 +661,16 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                         s_bb.send_to_back()
                     }),
                     msep(),
-                    mrow("Auto layout (H → V → G)", None, false, o.clone(), {
-                        let s = s_lay.clone();
-                        move || s.auto_layout_selection()
-                    }),
+                    mrow(
+                        "Auto layout (H → V → G)",
+                        Some("Ctrl+L"),
+                        false,
+                        o.clone(),
+                        {
+                            let s = s_lay.clone();
+                            move || s.auto_layout_selection()
+                        },
+                    ),
                 ]
             }
             // ---------------- WINDOW ----------------

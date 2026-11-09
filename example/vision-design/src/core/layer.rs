@@ -28,6 +28,8 @@ pub(crate) struct Layer {
     pub(crate) locked: bool,
     pub(crate) component: bool,
     pub(crate) instance: bool,
+    /// Slot container of a master — the dashed "hole" overlay on the canvas.
+    pub(crate) slot: Option<String>,
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) w: f32,

@@ -4,7 +4,6 @@ use crate::theme::colors;
 use sequoia_ui::core::Length;
 use sequoia_ui::prelude::*;
 use sequoia_ui::view::{BrushStroke, Fill, Painter};
-
 // ── view ─────────────────────────────────────────────────
 #[derive(Clone)]
 pub(crate) struct GraphCanvas {
@@ -20,14 +19,19 @@ impl View for GraphCanvas {
         Canvas::new()
             .background(colors::active().bg_darker)
             .track(move || {
+                // The document drives the graph: any edit (history push)
+                // lands here and `sync` rebuilds when the stamp changed.
+                st.editor.root.get();
+                st.scope_id.get();
                 st.nodes.get();
                 st.connections.get();
                 st.selected_node.get();
-                st.selected_conn.get();
+                st.issues.get();
                 st.zoom.get();
                 st.pan_x.get();
                 st.pan_y.get();
                 st.repaint.get();
+                st.sync();
             })
             .on_draw(move |p| {
                 draw_graph(p, &st2);
@@ -52,53 +56,70 @@ fn draw_graph(p: &mut Painter, st: &NodeGraphState) {
     let pan_x = st.pan_x.get_untracked();
     let pan_y = st.pan_y.get_untracked();
     let size = p.size();
+    let nodes = st.nodes.get_untracked();
 
     // dot grid
     draw_dot_grid(p, pan_x, pan_y, zoom, size);
+
+    if nodes.is_empty() {
+        draw_empty_state(p, size);
+        return;
+    }
 
     // world transform
     let transform = Transform::translate(-pan_x, -pan_y).then(Transform::uniform(zoom));
 
     p.with_transform(transform, |p| {
-        let nodes = st.nodes.get_untracked();
         let conns = st.connections.get_untracked();
         let sel_node = st.selected_node.get_untracked();
-        let sel_conn = st.selected_conn.get_untracked();
 
-        // connections
-        for (ci, conn) in conns.iter().enumerate() {
+        // connections: execution edges take the source accent, data edges
+        // (state ⇄ action) the blue of the State kind.
+        for conn in conns.iter() {
             let from = nodes.iter().find(|n| n.id == conn.from_node);
             let to = nodes.iter().find(|n| n.id == conn.to_node);
             if let (Some(fn_), Some(tn)) = (from, to) {
                 let p1 = fn_.port_pos(PortSide::Output, conn.from_port);
                 let p2 = tn.port_pos(PortSide::Input, conn.to_port);
-                let selected = sel_conn == Some(ci);
-                let color = if selected {
-                    colors::active().sel
+                let color = if conn.is_data(&nodes) {
+                    NodeKind::State.accent()
                 } else {
                     fn_.kind.accent()
                 };
-                draw_bezier(p, p1, p2, color, selected);
+                let in_cycle = fn_.in_cycle && tn.in_cycle;
+                draw_bezier(
+                    p,
+                    p1,
+                    p2,
+                    if in_cycle {
+                        colors::active().danger
+                    } else {
+                        color
+                    },
+                    in_cycle,
+                );
             }
         }
 
-        // preview of the connection being created
-        if let Some(GraphDrag::Connect {
-            from_node,
-            from_side,
-            from_port,
-            cur_wx,
-            cur_wy,
-        }) = st.drag.borrow().as_ref()
-            && let Some(fn_) = nodes.iter().find(|n| n.id == *from_node)
-        {
-            let anchor = fn_.port_pos(*from_side, *from_port);
-            let cursor = Point::new(*cur_wx, *cur_wy);
-            let (p1, p2) = match from_side {
-                PortSide::Output => (anchor, cursor),
-                PortSide::Input => (cursor, anchor),
-            };
-            draw_bezier(p, p1, p2, colors::active().sel, true);
+        // wire being dragged: from the grabbed socket to the cursor.
+        if let Some(GraphDrag::Wire { node, side, port }) = st.drag.borrow().as_ref() {
+            if let Some(p1) = st.port_world_pos(*node, *side, *port) {
+                let p2 = *st.wire_mouse.borrow();
+                draw_bezier(p, p1, p2, colors::active().sel, false);
+                // Aim assist: ring the socket under the cursor.
+                if let Some((hn, hside, hport)) = *st.wire_hover.borrow() {
+                    if let Some(hn_node) = nodes.iter().find(|n| n.id == hn) {
+                        let hp = hn_node.port_pos(hside, hport);
+                        p.ellipse_outline(
+                            hp,
+                            PORT_R + 3.0,
+                            PORT_R + 3.0,
+                            BrushStroke::screen(2.0),
+                            colors::active().sel,
+                        );
+                    }
+                }
+            }
         }
 
         // nodes (the selected one is drawn last)
@@ -112,14 +133,7 @@ fn draw_graph(p: &mut Painter, st: &NodeGraphState) {
         }
     });
 
-    // zoom indicator
-    let label = format!("{:.0}%", zoom * 100.0);
-    p.text_tl(
-        &label,
-        Point::new(size.width - 60.0, size.height - 24.0),
-        11.0,
-        colors::active().icon_inactive,
-    );
+    draw_legend(p, size);
 }
 
 fn draw_dot_grid(p: &mut Painter, pan_x: f32, pan_y: f32, zoom: f32, size: Size) {
@@ -143,6 +157,41 @@ fn draw_dot_grid(p: &mut Painter, pan_x: f32, pan_y: f32, zoom: f32, size: Size)
     }
 }
 
+fn draw_empty_state(p: &mut Painter, size: Size) {
+    let pal = colors::active();
+    let line1 = "No rules or variables in this scope yet.";
+    let line2 = "Select an element and add rules in the Interact tab.";
+    let w1 = line1.len() as f32 * 7.2;
+    let w2 = line2.len() as f32 * 6.1;
+    p.text_tl(
+        line1,
+        Point::new((size.width - w1) / 2.0, size.height / 2.0 - 24.0),
+        13.0,
+        pal.text,
+    );
+    p.text_tl(
+        line2,
+        Point::new((size.width - w2) / 2.0, size.height / 2.0 - 2.0),
+        11.0,
+        pal.icon_inactive,
+    );
+}
+
+fn draw_legend(p: &mut Painter, size: Size) {
+    let pal = colors::active();
+    let y = size.height - 20.0;
+    let mut x = 14.0;
+    for (kind, label) in [
+        (NodeKind::Trigger, "Trigger"),
+        (NodeKind::State, "State"),
+        (NodeKind::Action, "Action"),
+    ] {
+        p.circle(Point::new(x, y), 4.0, Fill::solid(kind.accent()));
+        p.text_tl(label, Point::new(x + 9.0, y - 6.0), 10.0, pal.icon_inactive);
+        x += 9.0 + label.len() as f32 * 6.0 + 18.0;
+    }
+}
+
 fn draw_node(p: &mut Painter, node: &GraphNode, selected: bool) {
     let h = node.height();
     let rect = Rect::from_xywh(node.x, node.y, NODE_W, h);
@@ -162,17 +211,37 @@ fn draw_node(p: &mut Painter, node: &GraphNode, selected: bool) {
     let mask = Rect::from_xywh(node.x, node.y + HEADER_H - 8.0, NODE_W, 8.0);
     p.fill(mask, Fill::solid(node.kind.header_color()));
 
-    // title
-    p.text_tl(
-        &node.title,
-        Point::new(node.x + 10.0, node.y + 8.0),
-        12.0,
-        Color::WHITE,
-    );
+    // title + optional second line (element name / type + initial)
+    match &node.subtitle {
+        Some(sub) => {
+            p.text_tl(
+                &node.title,
+                Point::new(node.x + 10.0, node.y + 5.0),
+                11.5,
+                Color::WHITE,
+            );
+            p.text_tl(
+                sub,
+                Point::new(node.x + 10.0, node.y + 18.0),
+                8.5,
+                Color::hexa(0xFFFFFFB0),
+            );
+        }
+        None => {
+            p.text_tl(
+                &node.title,
+                Point::new(node.x + 10.0, node.y + 8.0),
+                12.0,
+                Color::WHITE,
+            );
+        }
+    }
 
-    // selection outline (under the ports)
-    if selected {
-        p.rect_outline(rect, 8.0, BrushStroke::screen(2.0), colors::active().sel);
+    // selection outline (under the ports); cycles pulse red
+    if node.in_cycle {
+        p.rect_outline(rect, 8.0, BrushStroke::screen(2.5), pal.danger);
+    } else if selected {
+        p.rect_outline(rect, 8.0, BrushStroke::screen(2.0), pal.sel);
     } else {
         p.rect_outline(rect, 8.0, BrushStroke::screen(1.0), pal.stroke);
     }
@@ -182,18 +251,31 @@ fn draw_node(p: &mut Painter, node: &GraphNode, selected: bool) {
         let pos = node.port_pos(PortSide::Input, i);
         p.circle(pos, PORT_R, Fill::solid(pal.bg_darker));
         p.circle(pos, PORT_R - 1.5, Fill::solid(node.kind.accent()));
-        p.text_tl(label, Point::new(pos.x + 10.0, pos.y - 6.0), 10.0, pal.text);
+        if !label.is_empty() {
+            p.text_tl(label, Point::new(pos.x + 10.0, pos.y - 6.0), 10.0, pal.text);
+        }
     }
     for (i, label) in node.outputs.iter().enumerate() {
         let pos = node.port_pos(PortSide::Output, i);
         p.circle(pos, PORT_R, Fill::solid(pal.bg_darker));
         p.circle(pos, PORT_R - 1.5, Fill::solid(node.kind.accent()));
-        let tw = label.len() as f32 * 5.5;
-        p.text_tl(
-            label,
-            Point::new(pos.x - 10.0 - tw, pos.y - 6.0),
-            10.0,
-            pal.text,
+        if !label.is_empty() {
+            let tw = label.len() as f32 * 5.5;
+            p.text_tl(
+                label,
+                Point::new(pos.x - 10.0 - tw, pos.y - 6.0),
+                10.0,
+                pal.text,
+            );
+        }
+    }
+
+    // issue dot for a node that breaks validation (cycles, dangling refs)
+    if node.in_cycle {
+        p.circle(
+            Point::new(node.x + NODE_W - 10.0, node.y + HEADER_H / 2.0),
+            4.5,
+            Fill::solid(pal.danger),
         );
     }
 }
@@ -279,26 +361,24 @@ fn handle_pointer(st: &NodeGraphState, pos: Point, ev: &PointerEvent, ctx: &mut 
                 return;
             }
 
-            // 1) port → start a connection (from input or output)
-            if let Some((nid, side, pi)) = find_port(&st.nodes.get_untracked(), wx, wy) {
-                *st.drag.borrow_mut() = Some(GraphDrag::Connect {
-                    from_node: nid,
-                    from_side: side,
-                    from_port: pi,
-                    cur_wx: wx,
-                    cur_wy: wy,
+            // 1) socket → start a wire drag (checked before the node, ports
+            //    sit on the node's edge). Dragging FROM a socket connects it.
+            if let Some((nid, side, port)) = st.hit_port(wx, wy) {
+                *st.drag.borrow_mut() = Some(GraphDrag::Wire {
+                    node: nid,
+                    side,
+                    port,
                 });
-                st.selected_node.set(Some(nid));
-                st.selected_conn.set(None);
+                *st.wire_mouse.borrow_mut() = Point::new(wx, wy);
+                *st.wire_hover.borrow_mut() = None;
                 st.bump();
                 ctx.handled();
                 return;
             }
 
-            // 2) node → select + drag
+            // 2) node → select + drag (the editor selection follows)
             if let Some(nid) = st.hit_node(wx, wy) {
-                st.selected_node.set(Some(nid));
-                st.selected_conn.set(None);
+                st.select_node(nid);
                 let nodes = st.nodes.get_untracked();
                 if let Some(n) = nodes.iter().find(|n| n.id == nid) {
                     *st.drag.borrow_mut() = Some(GraphDrag::MoveNode {
@@ -309,23 +389,12 @@ fn handle_pointer(st: &NodeGraphState, pos: Point, ev: &PointerEvent, ctx: &mut 
                         orig_y: n.y,
                     });
                 }
-                st.bump();
                 ctx.handled();
                 return;
             }
 
-            // 3) connection → select
-            if let Some(ci) = hit_connection(st, wx, wy) {
-                st.selected_conn.set(Some(ci));
-                st.selected_node.set(None);
-                st.bump();
-                ctx.handled();
-                return;
-            }
-
-            // 4) empty → deselect + pan with the left button
+            // 3) empty → deselect + pan with the left button
             st.selected_node.set(None);
-            st.selected_conn.set(None);
             *st.drag.borrow_mut() = Some(GraphDrag::Pan {
                 start_sx: pos.x,
                 start_sy: pos.y,
@@ -340,6 +409,14 @@ fn handle_pointer(st: &NodeGraphState, pos: Point, ev: &PointerEvent, ctx: &mut 
         PointerEvent::Move { .. } => {
             let mut drag = st.drag.borrow_mut();
             match drag.as_mut() {
+                Some(GraphDrag::Wire { .. }) => {
+                    let hover = st.hit_port(wx, wy);
+                    *st.wire_mouse.borrow_mut() = Point::new(wx, wy);
+                    *st.wire_hover.borrow_mut() = hover;
+                    drop(drag);
+                    st.bump();
+                    ctx.handled();
+                }
                 Some(GraphDrag::MoveNode {
                     id,
                     start_wx,
@@ -353,20 +430,7 @@ fn handle_pointer(st: &NodeGraphState, pos: Point, ev: &PointerEvent, ctx: &mut 
                     let ny = *orig_y + dy;
                     let nid = *id;
                     drop(drag);
-                    st.nodes.update(|ns| {
-                        if let Some(n) = ns.iter_mut().find(|n| n.id == nid) {
-                            n.x = nx;
-                            n.y = ny;
-                        }
-                    });
-                    st.bump();
-                    ctx.handled();
-                }
-                Some(GraphDrag::Connect { cur_wx, cur_wy, .. }) => {
-                    *cur_wx = wx;
-                    *cur_wy = wy;
-                    drop(drag);
-                    st.bump();
+                    st.move_node(nid, nx, ny);
                     ctx.handled();
                 }
                 Some(GraphDrag::Pan {
@@ -387,45 +451,22 @@ fn handle_pointer(st: &NodeGraphState, pos: Point, ev: &PointerEvent, ctx: &mut 
 
         // ── release ──────────────────────────────────────
         PointerEvent::Up { .. } => {
-            let drag = st.drag.borrow_mut().take();
-            match drag {
-                Some(GraphDrag::Connect {
-                    from_node,
-                    from_side,
-                    from_port,
-                    cur_wx,
-                    cur_wy,
-                }) => {
-                    // drop on a port on the opposite side
-                    if let Some((tid, to_side, ti)) =
-                        find_port(&st.nodes.get_untracked(), cur_wx, cur_wy)
-                        && tid != from_node
-                        && to_side != from_side
+            match st.drag.borrow_mut().take() {
+                Some(GraphDrag::Wire { node, side, port }) => {
+                    // Drop on a compatible socket rewires the rules; dropping
+                    // on empty space or back on the source socket cancels
+                    // silently.
+                    let target = *st.wire_hover.borrow();
+                    if let Some(t) = target
+                        && t != (node, side, port)
                     {
-                        let conn = match from_side {
-                            PortSide::Output => GraphConnection {
-                                from_node,
-                                from_port,
-                                to_node: tid,
-                                to_port: ti,
-                            },
-                            PortSide::Input => GraphConnection {
-                                from_node: tid,
-                                from_port: ti,
-                                to_node: from_node,
-                                to_port: from_port,
-                            },
-                        };
-                        // do not add duplicates
-                        let exists = st.connections.get_untracked().contains(&conn);
-                        if !exists {
-                            st.connections.update(|cs| cs.push(conn));
-                        }
+                        st.finish_wire((node, side, port), t);
                     }
+                    *st.wire_hover.borrow_mut() = None;
                     st.bump();
                     ctx.handled();
                 }
-                Some(GraphDrag::MoveNode { .. }) | Some(GraphDrag::Pan { .. }) => {
+                Some(_) => {
                     ctx.handled();
                 }
                 None => {}
@@ -434,32 +475,4 @@ fn handle_pointer(st: &NodeGraphState, pos: Point, ev: &PointerEvent, ctx: &mut 
 
         _ => {}
     }
-}
-
-/// Simple connection hit test (checks distance from the curve)
-fn hit_connection(st: &NodeGraphState, wx: f32, wy: f32) -> Option<usize> {
-    let nodes = st.nodes.get_untracked();
-    let conns = st.connections.get_untracked();
-    let tol = 8.0 / st.zoom.get_untracked();
-
-    for (ci, conn) in conns.iter().enumerate() {
-        let from = nodes.iter().find(|n| n.id == conn.from_node)?;
-        let to = nodes.iter().find(|n| n.id == conn.to_node)?;
-        let p1 = from.port_pos(PortSide::Output, conn.from_port);
-        let p2 = to.port_pos(PortSide::Input, conn.to_port);
-
-        let dx = ((p2.x - p1.x).abs() * 0.5).max(50.0);
-        let cp1 = Point::new(p1.x + dx, p1.y);
-        let cp2 = Point::new(p2.x - dx, p2.y);
-
-        // sample the curve and check the distance
-        for i in 0..=20 {
-            let t = i as f32 / 20.0;
-            let pt = bezier_eval(t, p1, cp1, cp2, p2);
-            if (wx - pt.x).abs() < tol && (wy - pt.y).abs() < tol {
-                return Some(ci);
-            }
-        }
-    }
-    None
 }

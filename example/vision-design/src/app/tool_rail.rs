@@ -62,7 +62,8 @@ const GROUPS: &[&[ToolDef]] = &[
 ];
 
 /// .tool-btn — 30x30, radius 7; hover = --bg-lighter; active = --bg-lighter
-/// + inset ring 1px --stroke + badge data-key (mono 7px, opacity .55) in the bottom-right corner
+/// + inset ring 1px --stroke. No keyboard-hint letters: the shortcuts live
+/// in the Help overlay, not on the buttons.
 #[derive(Clone)]
 struct ToolBtn {
     def: ToolDef,
@@ -74,31 +75,6 @@ impl View for ToolBtn {
         let on = self.current.get() == self.def.key; // tracked: rebuild on tool change
         let key = self.def.key;
         let current = self.current.clone();
-
-        let icon = Icon::new(self.def.icon).size(16.0).color(if on {
-            Color::WHITE
-        } else {
-            colors::active().icon_inactive
-        });
-
-        let mut stack = Stack::new().child(icon);
-        if on {
-            // .tool-btn.active::after — right:2px; bottom:1px; mono 7px; opacity .55
-            stack = stack.child(
-                Container::new()
-                    .fill_size()
-                    .justify_content(Justify::End)
-                    .align_items(Align::End)
-                    .padding(Edges::xy(2.0, 1.0))
-                    .child(
-                        Text::new(key)
-                            .size(7.0)
-                            .font("IBM Plex Mono")
-                            .color(Color::WHITE)
-                            .opacity(0.55),
-                    ),
-            );
-        }
 
         Container::new()
             .width(30.0)
@@ -115,7 +91,11 @@ impl View for ToolBtn {
                 BoxStyle::new()
             })
             .on_click(move || current.set(key))
-            .child(stack)
+            .child(Icon::new(self.def.icon).size(16.0).color(if on {
+                Color::WHITE
+            } else {
+                colors::active().icon_inactive
+            }))
     }
 }
 

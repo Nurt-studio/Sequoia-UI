@@ -108,6 +108,38 @@ impl Interaction {
         let wy = pos.y / zoom + pan_y;
         let state = &signals.state;
 
+        // ── Present mode (Phase 4): the canvas is live. Clicks and hovers run
+        // the behavior interpreter; navigation (wheel, pinch, middle-drag pan)
+        // still goes through the normal path below.
+        if state.present.on.get_untracked() {
+            match ev {
+                PointerEvent::Wheel { .. } | PointerEvent::Pinch { .. } => {}
+                PointerEvent::Down {
+                    button: PointerButton::Middle,
+                    ..
+                } => {}
+                PointerEvent::Down {
+                    button: PointerButton::Left,
+                    ..
+                } => {
+                    state.present_click(wx, wy);
+                    ctx.handled();
+                    return;
+                }
+                PointerEvent::Down { .. } => {
+                    // No context menu while presenting.
+                    ctx.handled();
+                    return;
+                }
+                PointerEvent::Move { .. } => {
+                    state.present_hover(wx, wy);
+                    ctx.handled();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match ev {
             PointerEvent::Wheel {
                 delta, modifiers, ..
@@ -180,6 +212,30 @@ impl Interaction {
                     return;
                 }
 
+                // Clicking away from the text being edited commits the edit;
+                // clicking it again keeps the caret where it is.
+                if state.editing_text.get_untracked() {
+                    let inside = state
+                        .selected_layer
+                        .get_untracked()
+                        .and_then(|id| {
+                            signals
+                                .layers
+                                .get_untracked()
+                                .iter()
+                                .find(|l| l.id == id)
+                                .map(|l| (l.x, l.y, l.w, l.h))
+                        })
+                        .is_some_and(|(x, y, w, h)| {
+                            wx >= x && wx <= x + w && wy >= y && wy <= y + h
+                        });
+                    if inside {
+                        ctx.handled();
+                        return;
+                    }
+                    state.end_text_edit(true);
+                }
+
                 let snapping = !modifiers.contains(Modifiers::ALT);
                 let grid_snap = snapping && signals.grid.get_untracked();
                 *self.guides.borrow_mut() = Guides::default();
@@ -209,6 +265,23 @@ impl Interaction {
                 }
 
                 if tool == "T" {
+                    // Clicking an existing text with the T tool edits it in
+                    // place; clicking anywhere else creates a new text node.
+                    let layers = signals.layers.get_untracked();
+                    if let Some(id) = hit_layer(&layers, wx, wy) {
+                        let is_text = layers
+                            .iter()
+                            .find(|l| l.id == id)
+                            .map(|l| l.kind == "TEXT")
+                            .unwrap_or(false);
+                        if is_text {
+                            signals.selected.set(Some(id));
+                            signals.selected_layers.set(vec![id]);
+                            state.start_text_edit(true);
+                            ctx.handled();
+                            return;
+                        }
+                    }
                     draw::create_text(signals, wx, wy, grid_snap);
                     ctx.handled();
                     return;
@@ -295,6 +368,14 @@ impl Interaction {
                 }
                 if let Some(mut session) = self.drag.borrow_mut().take() {
                     *self.guides.borrow_mut() = Guides::default();
+                    // Drag & drop onto a container: dropping a layer over a
+                    // different frame reparents it (position is preserved).
+                    if matches!(session.mode, drag::DragMode::Move) && session.orig.len() == 1 {
+                        let (id, _, _, _, _) = session.orig[0];
+                        // The grab point (start_wx/wy), not the layer origin,
+                        // decides whether the pointer really moved.
+                        state.reparent_on_drop(id, session.start_wx, session.start_wy, wx, wy);
+                    }
                     state.push_snapshot(session.before.take());
                     state.propagate_layout();
                     ctx.handled();

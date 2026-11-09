@@ -26,8 +26,9 @@ impl View for HelpOverlay {
             ("Undo / redo", "Ctrl+Z / Ctrl+Shift+Z"),
             ("Zoom / fit", "Ctrl+Wheel / Shift+1"),
             ("Pan canvas", "Middle mouse button"),
-            ("Edit text", "Double click"),
-            ("Auto layout", "Object → Auto layout"),
+            ("Edit text", "Double click / T tool"),
+            ("Auto layout (H → V → G)", "Ctrl+L"),
+            ("Toggle grid", "Topbar button"),
             ("Import / export JSON", "File → JSON"),
         ];
 

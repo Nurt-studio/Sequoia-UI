@@ -66,6 +66,17 @@ pub(crate) fn apply(
     match &session.mode {
         DragMode::Move if orig.len() == 1 => {
             let (id, ox, oy, ow, oh) = orig[0];
+            // Auto-layout parents own their children's positions: dragging
+            // reorders the child instead of moving it freely.
+            if signals.state.reorder_in_auto_layout(
+                id,
+                session.start_wx + dx,
+                session.start_wy + dy,
+            ) {
+                *guides.borrow_mut() = Guides::default();
+                signals.bump();
+                return;
+            }
             let nx_raw = ox + dx;
             let ny_raw = oy + dy;
             let (snap_dx, snap_dy, found) = if snapping {

@@ -37,9 +37,21 @@ pub(crate) fn install(app: App, state: &EditorState) -> App {
                 st.cmdk_query.set(String::new());
             }
         })
+        .accelerator(Key::from_char('n'), Modifiers::CONTROL, {
+            let st = state.clone();
+            move || st.new_project()
+        })
+        .accelerator(Key::from_char('w'), Modifiers::CONTROL, {
+            let st = state.clone();
+            move || st.close_project(st.active_project.get_untracked())
+        })
         .accelerator(Key::from_char('e'), Modifiers::CONTROL, {
             let st = state.clone();
             move || st.open_code_tab()
+        })
+        .accelerator(Key::from_char('l'), Modifiers::CONTROL, {
+            let st = state.clone();
+            move || st.auto_layout_selection()
         })
         .accelerator(Key::from_char('/'), Modifiers::SHIFT, {
             let st = state.clone();
@@ -48,8 +60,10 @@ pub(crate) fn install(app: App, state: &EditorState) -> App {
         .accelerator(Key::ESCAPE, Modifiers::NONE, {
             let st = state.clone();
             move || {
-                if st.editing_text.get_untracked() {
-                    st.end_text_edit(false); // cancel
+                if st.present.on.get_untracked() {
+                    st.stop_present(); // leave Present first
+                } else if st.editing_text.get_untracked() {
+                    st.end_text_edit(true); // keep what was typed
                 } else if st.editing_layer.get_untracked().is_some() {
                     st.end_layer_rename(false); // cancel
                 } else if st.cmd_k_open.get_untracked() {

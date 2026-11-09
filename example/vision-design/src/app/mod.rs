@@ -7,6 +7,7 @@ pub(crate) mod menu_bar;
 pub(crate) mod shortcuts;
 pub(crate) mod tool_rail;
 pub(crate) mod topbar;
+pub(crate) mod window_frame;
 
 use sequoia_ui::prelude::*;
 
@@ -48,7 +49,7 @@ fn root_body(state: EditorState) -> impl View + 'static {
         .child(
             Column::new()
                 .fill_size()
-                .child(menu_bar::menu_bar(&state))
+                .child(menu_bar::title_bar(&state))
                 .child(
                     Row::new()
                         .fill_size()
@@ -61,7 +62,24 @@ fn root_body(state: EditorState) -> impl View + 'static {
                                     Row::new()
                                         .fill_size()
                                         .child(panels::panel_left(&state))
+                                        .child(
+                                            ResizeHandle::new(state.left_panel_w.clone())
+                                                .min(180.0)
+                                                .max(440.0)
+                                                .hit_width(6.0)
+                                                .idle_color(colors::active().stroke_soft)
+                                                .active_color(colors::active().sel),
+                                        )
                                         .child(canvas::canvas(&state))
+                                        .child(
+                                            ResizeHandle::new(state.right_panel_w.clone())
+                                                .min(200.0)
+                                                .max(480.0)
+                                                .hit_width(6.0)
+                                                .invert(true)
+                                                .idle_color(colors::active().stroke_soft)
+                                                .active_color(colors::active().sel),
+                                        )
                                         .child(panels::panel_right(&state)),
                                 ),
                         ),
@@ -69,9 +87,101 @@ fn root_body(state: EditorState) -> impl View + 'static {
         )
         .child(menu_bar::menu_drops(&state))
         .child(overlays::context_menu(&state))
-        .child(overlays::text_edit_overlay(&state))
         .child(overlays::command_palette(&state))
         .child(overlays::help_overlay(&state))
         .child(overlays::color_picker(&state))
+        .child(overlays::picker_menu(&state))
         .child(overlays::toasts(&state))
+        .child(window_frame::resize_borders())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sequoia_test::Harness;
+    use sequoia_ui::view::ElementId;
+
+    fn resize_handles(h: &Harness) -> Vec<ElementId> {
+        fn walk(h: &Harness, id: ElementId, out: &mut Vec<ElementId>) {
+            if h.view::<ResizeHandle>(id).is_some() {
+                out.push(id);
+            }
+            for child in h.children(id) {
+                walk(h, child, out);
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(root) = h.root() {
+            walk(h, root, &mut out);
+        }
+        out
+    }
+
+    fn center(h: &Harness, id: ElementId) -> (f32, f32) {
+        let r = h.rect(id).expect("handle rect");
+        (r.left() + r.size.width * 0.5, r.top() + r.size.height * 0.5)
+    }
+
+    #[test]
+    fn window_edges_are_resizable() {
+        let mut env = Environment::new();
+        env.provide(Windows::new());
+        let h = Harness::new(root(EditorState::demo()));
+        h.set_environment(env);
+        h.layout(1000.0, 700.0);
+
+        h.pointer_move(998.0, 350.0);
+        assert_eq!(h.cursor_icon(), CursorIcon::ColResize);
+        h.pointer_move(2.0, 350.0);
+        assert_eq!(h.cursor_icon(), CursorIcon::ColResize);
+        h.pointer_move(500.0, 2.0);
+        assert_eq!(h.cursor_icon(), CursorIcon::RowResize);
+        h.pointer_move(500.0, 698.0);
+        assert_eq!(h.cursor_icon(), CursorIcon::RowResize);
+        h.pointer_move(2.0, 2.0);
+        assert_eq!(h.cursor_icon(), CursorIcon::NwseResize);
+        h.pointer_move(998.0, 698.0);
+        assert_eq!(h.cursor_icon(), CursorIcon::NwseResize);
+
+        h.pointer_move(500.0, 350.0);
+        assert_eq!(h.cursor_icon(), CursorIcon::Default);
+    }
+
+    #[test]
+    fn side_panels_resize_with_the_handles() {
+        let state = EditorState::demo();
+        let h = Harness::new(root(state.clone()));
+        h.layout(1000.0, 700.0);
+
+        let handles = resize_handles(&h);
+        assert_eq!(handles.len(), 2, "a handle on each side of the canvas");
+        let left_before = h.rect(handles[0]).expect("left handle").left();
+        let (x, y) = center(&h, handles[0]);
+
+        h.drag((x, y), (x + 40.0, y));
+        h.tick();
+        h.layout(1000.0, 700.0);
+
+        assert_eq!(state.left_panel_w.get_untracked(), 268.0);
+        let handles = resize_handles(&h);
+        let left_after = h.rect(handles[0]).expect("left handle").left();
+        assert!(
+            (left_after - (left_before + 40.0)).abs() < 0.5,
+            "handle follows the wider panel: {left_before} -> {left_after}"
+        );
+
+        let right_before = h.rect(handles[1]).expect("right handle").left();
+        let (x, y) = center(&h, handles[1]);
+        h.drag((x, y), (x - 40.0, y));
+        h.tick();
+        h.layout(1000.0, 700.0);
+
+        assert_eq!(state.right_panel_w.get_untracked(), 278.0);
+        let handles = resize_handles(&h);
+        let right_after = h.rect(handles[1]).expect("right handle").left();
+        assert!(
+            (right_after - (right_before - 40.0)).abs() < 0.5,
+            "right panel grows leftwards: {right_before} -> {right_after}"
+        );
+    }
 }

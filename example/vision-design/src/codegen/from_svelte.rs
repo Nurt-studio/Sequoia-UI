@@ -1,7 +1,12 @@
 //! Parser for a subset of Svelte → AST. Handles only what `to_svelte` generates.
+//!
+//! Behaviors round-trip through the `<!-- vd-behavior: {…} -->` comments
+//! (design doc §6.3): the editor stays the source of truth, so rules and
+//! bindings are read from the payload, never re-parsed from the code.
 
 use sequoia_ui::prelude::{Color, Edges};
 
+use crate::document::json::{self, VdPayload};
 use crate::model::svelte_ast::*;
 
 pub fn from_svelte(src: &str) -> Result<Option<SvelteNode>, String> {
@@ -12,6 +17,8 @@ pub fn from_svelte(src: &str) -> Result<Option<SvelteNode>, String> {
         pos: 0,
         next_id: 1,
         css: &css,
+        pending_fill: std::collections::HashMap::new(),
+        pending: None,
     };
     let mut children = Vec::new();
     while let Some(n) = parser.parse_node()? {
@@ -33,6 +40,12 @@ pub fn from_svelte(src: &str) -> Result<Option<SvelteNode>, String> {
         locked: false,
         component: false,
         instance: false,
+        interface: None,
+        overrides: Vec::new(),
+        slot_content: Vec::new(),
+        behavior: None,
+        binding: None,
+        hover: None,
     })))
 }
 
@@ -134,8 +147,10 @@ fn parse_css(src: &str) -> std::collections::HashMap<String, CssRule> {
     map
 }
 
-fn style_from_css(rule: Option<&CssRule>) -> Style {
+fn style_from_css(rule: Option<&CssRule>, fill: &mut FillFlags) -> Style {
     let mut s = Style::default();
+    let mut gap_single: Option<f32> = None;
+    let mut gap_pair: Option<(f32, f32)> = None;
     let Some(rule) = rule else { return s };
     for (k, v) in &rule.props {
         let px = || parse_px(v).unwrap_or(0.0);
@@ -152,7 +167,38 @@ fn style_from_css(rule: Option<&CssRule>) -> Style {
                     FlexDir::Row
                 }
             }
-            "gap" => s.gap = px(),
+            "flex-wrap" => {
+                s.flex_wrap = if v.trim() == "wrap" {
+                    Wrap::Wrap
+                } else {
+                    Wrap::NoWrap
+                }
+            }
+            "align-content" => s.align_content = Align::from_content(v),
+            "flex" => {
+                // `flex: 1 0 0` — the grow factor marks a fill on the main axis.
+                let grow = v
+                    .split_whitespace()
+                    .next()
+                    .and_then(|g| g.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                if grow > 0.0 {
+                    fill.main = true;
+                }
+            }
+            "align-self" => {
+                if v.trim() == "stretch" {
+                    fill.cross = true;
+                }
+            }
+            "gap" => {
+                let parts: Vec<f32> = v.split_whitespace().filter_map(parse_px).collect();
+                match parts.as_slice() {
+                    [g] => gap_single = Some(*g),
+                    [r, c, ..] => gap_pair = Some((*r, *c)),
+                    _ => {}
+                }
+            }
             "padding" => {
                 let parts: Vec<f32> = v.split_whitespace().filter_map(parse_px).collect();
                 s.padding = match parts.len() {
@@ -204,13 +250,73 @@ fn style_from_css(rule: Option<&CssRule>) -> Style {
             _ => {}
         }
     }
+    if s.display == Display::Flex {
+        let (row, col) = gap_pair
+            .or(gap_single.map(|g| (g, g)))
+            .unwrap_or((s.gap, s.gap));
+        if s.flex_dir == FlexDir::Row {
+            s.gap = col;
+            s.row_gap = row;
+        } else {
+            s.gap = row;
+            s.row_gap = col;
+        }
+    }
     s
+}
+
+#[derive(Default, Clone, Copy)]
+struct FillFlags {
+    main: bool,
+    cross: bool,
+}
+
+/// `flex: 1` and `align-self: stretch` only mean "fill" relative to a flex
+/// parent, so the axes are resolved once the parent's direction is known.
+fn resolve_child_fills(
+    parent: &Style,
+    children: &mut [SvelteNode],
+    pending: &mut std::collections::HashMap<u64, FillFlags>,
+) {
+    let row = parent.display == Display::Flex && parent.flex_dir == FlexDir::Row;
+    let col = parent.display == Display::Flex && parent.flex_dir == FlexDir::Col;
+    if !row && !col {
+        return;
+    }
+    for c in children.iter_mut() {
+        if let SvelteNode::Element(e) = c
+            && let Some(flags) = pending.remove(&e.id)
+        {
+            if row {
+                if flags.main {
+                    e.style.width = Dimension::Fill;
+                }
+                if flags.cross {
+                    e.style.height = Dimension::Fill;
+                }
+            } else {
+                if flags.main {
+                    e.style.height = Dimension::Fill;
+                }
+                if flags.cross {
+                    e.style.width = Dimension::Fill;
+                }
+            }
+        }
+    }
+}
+
+struct TextPlacement {
+    x: f32,
+    y: f32,
+    absolute: bool,
 }
 
 fn text_style_from_css(
     rule: Option<&CssRule>,
     w: &mut Option<f32>,
     h: &mut Option<f32>,
+    place: &mut TextPlacement,
 ) -> TextStyle {
     let mut t = TextStyle::default();
     let Some(rule) = rule else { return t };
@@ -218,8 +324,12 @@ fn text_style_from_css(
         match k.as_str() {
             "width" => *w = parse_px(v),
             "height" => *h = parse_px(v),
+            "position" => place.absolute = v.trim() == "absolute",
+            "left" => place.x = parse_px(v).unwrap_or(0.0),
+            "top" => place.y = parse_px(v).unwrap_or(0.0),
             "font-size" => t.font_size = parse_px(v).unwrap_or(14.0),
             "font-weight" => t.font_weight = v.parse::<u16>().unwrap_or(400),
+            "opacity" => t.opacity = parse_opacity(v),
             "color" => {
                 if let Some(c) = parse_color(v) {
                     t.color = c;
@@ -242,6 +352,18 @@ fn text_style_from_css(
 fn parse_px(v: &str) -> Option<f32> {
     let v = v.trim().trim_end_matches("px");
     v.parse::<f32>().ok()
+}
+
+/// CSS opacity is 0..1; the editor stores percent.
+fn parse_opacity(v: &str) -> f32 {
+    let v = v.trim();
+    if let Some(n) = v.strip_suffix('%') {
+        n.trim().parse::<f32>().unwrap_or(100.0).clamp(0.0, 100.0)
+    } else {
+        v.parse::<f32>()
+            .map(|n| (n * 100.0).clamp(0.0, 100.0))
+            .unwrap_or(100.0)
+    }
 }
 
 fn parse_color(v: &str) -> Option<Color> {
@@ -272,6 +394,10 @@ struct BodyParser<'a> {
     pos: usize,
     next_id: u64,
     css: &'a std::collections::HashMap<String, CssRule>,
+    /// Fill flags per element id, resolved once the parent's direction is known.
+    pending_fill: std::collections::HashMap<u64, FillFlags>,
+    /// Payload of a `vd-behavior` comment waiting for the next element.
+    pending: Option<VdPayload>,
 }
 
 impl<'a> BodyParser<'a> {
@@ -312,6 +438,28 @@ impl<'a> BodyParser<'a> {
             return Ok(None);
         }
         if self.consume("<!--") {
+            // `<!-- vd-behavior: {…} -->` — editor state for the NEXT element.
+            let rest: String = self.chars[self.pos..self.pos + 16.min(self.chars.len() - self.pos)]
+                .iter()
+                .collect();
+            if rest.starts_with(" vd-behavior:") {
+                self.pos += " vd-behavior:".chars().count();
+                self.skip_ws();
+                if let Some(src) = self.scan_balanced_json() {
+                    match json::parse_json(&src) {
+                        Ok(v) => {
+                            let payload = json::vd_payload_from_json(&v);
+                            if !payload.is_empty() {
+                                self.pending = Some(payload);
+                            }
+                        }
+                        Err(_) => {
+                            // Unparsable payload — keep going, the code is
+                            // still a valid visual document.
+                        }
+                    }
+                }
+            }
             while self.pos < self.chars.len() {
                 if self.consume("-->") {
                     break;
@@ -343,6 +491,9 @@ impl<'a> BodyParser<'a> {
         let Some(tag) = Tag::from_str(&tag_str) else {
             return Err(format!("Unknown tag: {tag_str}"));
         };
+        // A `vd-behavior` comment right before this element belongs to it —
+        // claim the payload before any child can claim it.
+        let my_vd = self.pending.take();
         // attributes
         let mut class: Option<String> = None;
         loop {
@@ -351,7 +502,12 @@ impl<'a> BodyParser<'a> {
                 // self-closing
                 let id = self.next_id;
                 self.next_id += 1;
-                let style = style_from_css(class.as_ref().and_then(|c| self.css.get(c)));
+                let mut fill = FillFlags::default();
+                let style = style_from_css(class.as_ref().and_then(|c| self.css.get(c)), &mut fill);
+                if fill.main || fill.cross {
+                    self.pending_fill.insert(id, fill);
+                }
+                let (vb, vbd, vh) = split_vd(my_vd);
                 return Ok(Some(SvelteNode::Element(Element {
                     id,
                     name: tag_str.clone(),
@@ -362,6 +518,12 @@ impl<'a> BodyParser<'a> {
                     locked: false,
                     component: false,
                     instance: false,
+                    interface: None,
+                    overrides: Vec::new(),
+                    slot_content: Vec::new(),
+                    behavior: vb,
+                    binding: vbd,
+                    hover: vh,
                 })));
             }
             if self.consume(">") {
@@ -377,6 +539,12 @@ impl<'a> BodyParser<'a> {
                 self.pos += 1;
             }
             if self.consume("=") {
+                // Svelte expression attribute (`onclick={() => open = !open}`)
+                // — skipped; the model arrives via the vd-behavior payload.
+                if self.peek() == Some('{') {
+                    let _ = self.scan_braces();
+                    continue;
+                }
                 let quote = self.bump().ok_or("missing quote")?;
                 let mut val = String::new();
                 while let Some(c) = self.bump() {
@@ -387,6 +555,13 @@ impl<'a> BodyParser<'a> {
                 }
                 if key == "class" {
                     class = Some(val);
+                }
+            } else if key.is_empty() {
+                // Malformed input: no key, no `=` — skip one character so
+                // the loop always makes progress.
+                self.pos += 1;
+                if self.pos >= self.chars.len() {
+                    break;
                 }
             }
         }
@@ -444,7 +619,12 @@ impl<'a> BodyParser<'a> {
                 self.next_id += 1;
                 let mut w = None;
                 let mut h = None;
-                let ts = text_style_from_css(self.css.get(&cls), &mut w, &mut h);
+                let mut place = TextPlacement {
+                    x: 0.0,
+                    y: 0.0,
+                    absolute: false,
+                };
+                let ts = text_style_from_css(self.css.get(&cls), &mut w, &mut h, &mut place);
                 children.push(SvelteNode::Text(TextNode {
                     id,
                     name: cls.clone(),
@@ -452,6 +632,9 @@ impl<'a> BodyParser<'a> {
                     style: ts,
                     width: w,
                     height: h,
+                    x: place.x,
+                    y: place.y,
+                    absolute: place.absolute,
                     visible: true,
                     locked: false,
                 }));
@@ -476,7 +659,13 @@ impl<'a> BodyParser<'a> {
 
         let id = self.next_id;
         self.next_id += 1;
-        let style = style_from_css(class.as_ref().and_then(|c| self.css.get(c)));
+        let mut fill = FillFlags::default();
+        let style = style_from_css(class.as_ref().and_then(|c| self.css.get(c)), &mut fill);
+        if fill.main || fill.cross {
+            self.pending_fill.insert(id, fill);
+        }
+        resolve_child_fills(&style, &mut children, &mut self.pending_fill);
+        let (vb, vbd, vh) = split_vd(my_vd);
         Ok(Some(SvelteNode::Element(Element {
             id,
             name: class.unwrap_or_else(|| format!("{}-{}", tag_str, id)),
@@ -487,7 +676,64 @@ impl<'a> BodyParser<'a> {
             locked: false,
             component: false,
             instance: false,
+            interface: None,
+            overrides: Vec::new(),
+            slot_content: Vec::new(),
+            behavior: vb,
+            binding: vbd,
+            hover: vh,
         })))
+    }
+
+    /// Skips a balanced `{…}` expression starting at the current position
+    /// (Svelte attribute value). Understands nested braces and string
+    /// literals, so `onclick={() => e.key === '}'}` survives.
+    fn scan_braces(&mut self) -> usize {
+        let mut depth = 0usize;
+        while let Some(c) = self.peek() {
+            match c {
+                '{' => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                '}' => {
+                    depth -= 1;
+                    self.pos += 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                '\'' | '"' => {
+                    let quote = c;
+                    self.pos += 1;
+                    while let Some(s) = self.peek() {
+                        self.pos += 1;
+                        if s == quote {
+                            break;
+                        }
+                        if s == '\\' {
+                            self.pos += 1;
+                        }
+                    }
+                }
+                _ => self.pos += 1,
+            }
+        }
+        depth
+    }
+
+    /// Reads the balanced JSON object after `vd-behavior:` (robust against
+    /// `-->` inside strings — the closing brace is found by depth, not by
+    /// searching for the comment end).
+    fn scan_balanced_json(&mut self) -> Option<String> {
+        if self.peek() != Some('{') {
+            return None;
+        }
+        let start = self.pos;
+        self.scan_braces();
+        // Depth returned 0 (or the input ran out) — take what was scanned.
+        let end = self.pos;
+        Some(self.chars[start..end].iter().collect())
     }
 }
 
@@ -499,4 +745,17 @@ impl HexRgb for Color {
         let (r, g, b, _) = self.to_rgba8();
         ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
     }
+}
+
+fn split_vd(
+    payload: Option<VdPayload>,
+) -> (
+    Option<crate::model::behavior::Behavior>,
+    Option<crate::model::behavior::Binding>,
+    Option<crate::model::behavior::HoverStyle>,
+) {
+    let Some(p) = payload else {
+        return (None, None, None);
+    };
+    (p.behavior, p.binding, p.hover)
 }

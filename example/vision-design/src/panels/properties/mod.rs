@@ -7,11 +7,14 @@ use crate::theme::colors;
 use self::alignment::body_alignment;
 use self::appearance::body_appearance;
 use self::auto_layout::body_auto_layout;
+use self::binding::{binding_section, hover_section};
 use self::code::{code_body, is_code_tab};
 use self::constraints::body_constraints;
 use self::export::body_export;
 use self::fill::body_fill;
-use self::inspect::{empty_box, inspect_body};
+use self::inspect::empty_box;
+use self::interact::body_interact;
+use self::overrides::{body_interface, body_overrides};
 use self::position::body_position;
 use self::section::section;
 use self::size::body_size;
@@ -21,19 +24,20 @@ use self::text::body_text;
 mod alignment;
 mod appearance;
 mod auto_layout;
+mod binding;
 mod code;
 mod constraints;
 mod controls;
 mod export;
 mod fill;
 mod inspect;
+mod interact;
+mod overrides;
 mod position;
 mod section;
 mod size;
 mod stroke;
 mod text;
-
-const PANEL_W: f32 = 238.0;
 
 fn tab_button(
     label: &'static str,
@@ -79,8 +83,8 @@ impl View for TabStrip {
         let tab = self.state.active_tab.get();
         let kind = self.state.sel_kind.get();
         let td = self.state.active_tab.clone();
-        let ti = self.state.active_tab.clone();
         let tc = self.state.active_tab.clone();
+        let tt = self.state.active_tab.clone();
         Row::new()
             .fill_width()
             .padding(Edges::xy(10.0, 0.0))
@@ -90,8 +94,8 @@ impl View for TabStrip {
             .child(tab_button("Design", tab == Tab::Design, move || {
                 td.set(Tab::Design)
             }))
-            .child(tab_button("Inspect", tab == Tab::Inspect, move || {
-                ti.set(Tab::Inspect)
+            .child(tab_button("Interact", tab == Tab::Interact, move || {
+                tt.set(Tab::Interact)
             }))
             .child(tab_button("Code", tab == Tab::Code, move || {
                 tc.set(Tab::Code)
@@ -163,41 +167,81 @@ impl View for RightBody {
         let tab = self.state.active_tab.get();
         if !has_sel {
             AnyView::new(empty_box())
-        } else if tab == Tab::Inspect {
+        } else if tab == Tab::Interact {
             AnyView::new(
                 Column::new()
                     .child(sel_head(&self.state))
-                    .child(inspect_body(&self.state)),
+                    .child(body_interact(&self.state))
+                    .child(Spacer::fixed(16.0)),
             )
         } else {
             let kind = self.state.sel_kind.get();
             let is_text = kind == "TEXT";
-            let is_frame = kind == "FRAME";
+            // Any element can become an auto-layout container (H / V / Z /
+            // Grid / None), so the section is available for every non-text
+            // layer. `sel_kind` holds the tag (DIV, SECTION, …), not "FRAME".
+            let is_frame = !is_text && !kind.is_empty();
             // NEW: is the parent an auto-layout frame?
             let parent_has_al = self.state.sel_parent_layout.get() != "NONE";
+            let is_component = self.state.sel_is_component.get();
+            let is_instance = self.state.sel_is_instance.get();
 
-            let mut sections: Vec<AnyView> = vec![
-                section(
-                    "Alignment",
-                    self.state.sections.alignment.clone(),
-                    body_alignment(&self.state),
-                ),
-                section(
-                    "Position",
-                    self.state.sections.position.clone(),
-                    body_position(&self.state),
-                ),
-                section(
-                    "Size",
-                    self.state.sections.size.clone(),
-                    body_size(&self.state),
-                ),
-                section(
-                    "Appearance",
-                    self.state.sections.appearance.clone(),
-                    body_appearance(&self.state),
-                ),
-            ];
+            // Instance (◈): the interior belongs to the master, so the panel
+            // shows the contract knobs plus the placement of the instance
+            // itself (design doc §5.2).
+            if is_instance {
+                return AnyView::new(
+                    Column::new()
+                        .child(sel_head(&self.state))
+                        .child(section(
+                            "Overrides",
+                            self.state.sections.overrides.clone(),
+                            body_overrides(&self.state),
+                        ))
+                        .child(section(
+                            "Position",
+                            self.state.sections.position.clone(),
+                            body_position(&self.state),
+                        ))
+                        .child(section(
+                            "Size",
+                            self.state.sections.size.clone(),
+                            body_size(&self.state),
+                        ))
+                        .child(Spacer::fixed(16.0)),
+                );
+            }
+
+            let mut sections: Vec<AnyView> = Vec::new();
+            if is_component {
+                // Master contract first, like Figma puts the component badge
+                // on top of the inspector.
+                sections.push(section(
+                    "Component",
+                    self.state.sections.interface.clone(),
+                    body_interface(&self.state),
+                ));
+            }
+            sections.push(section(
+                "Alignment",
+                self.state.sections.alignment.clone(),
+                body_alignment(&self.state),
+            ));
+            sections.push(section(
+                "Position",
+                self.state.sections.position.clone(),
+                body_position(&self.state),
+            ));
+            sections.push(section(
+                "Size",
+                self.state.sections.size.clone(),
+                body_size(&self.state),
+            ));
+            sections.push(section(
+                "Appearance",
+                self.state.sections.appearance.clone(),
+                body_appearance(&self.state),
+            ));
             if is_text {
                 sections.push(section(
                     "Text",
@@ -219,6 +263,10 @@ impl View for RightBody {
                     body_constraints(&self.state),
                 ));
             }
+            // Phase 2: `{#if var}` visibility — between Appearance and Fill
+            // (design doc §5.2). Elements without an in-scope variable show
+            // a hint inside the section.
+            sections.push(binding_section(&self.state));
             sections.push(section(
                 "Fill",
                 self.state.sections.fill.clone(),
@@ -229,6 +277,7 @@ impl View for RightBody {
                 self.state.sections.stroke.clone(),
                 body_stroke(&self.state),
             ));
+            sections.push(hover_section(&self.state));
             sections.push(section(
                 "Export",
                 self.state.sections.export.clone(),
@@ -245,14 +294,30 @@ impl View for RightBody {
     }
 }
 
-pub(crate) fn panel_right(state: &EditorState) -> impl View + 'static {
+fn panel_right_body(state: &EditorState, width: f32) -> impl View + 'static {
     Column::new()
-        .width(PANEL_W)
+        .width(width)
         .fill_height()
         .background(colors::active().surface)
-        .border_left(1.0, colors::active().stroke_soft)
         .child(tab_strip(state))
         .child(code_or_scroll(state))
+}
+
+#[derive(Clone)]
+struct RightPanel {
+    state: EditorState,
+}
+
+impl View for RightPanel {
+    fn body(&self) -> impl View + 'static {
+        panel_right_body(&self.state, self.state.right_panel_w.get())
+    }
+}
+
+pub(crate) fn panel_right(state: &EditorState) -> impl View + 'static {
+    RightPanel {
+        state: state.clone(),
+    }
 }
 
 /// The "Code" tab manages scrolling on its own (without an external ScrollView).
@@ -264,7 +329,10 @@ fn code_or_scroll(state: &EditorState) -> AnyView {
             ScrollView::new(RightBody {
                 state: state.clone(),
             })
-            .vertical(),
+            .vertical()
+            // Overlay: no permanent scrollbar over the inspector; it only
+            // appears while the pointer is on its edge or the thumb is dragged.
+            .scrollbar_visibility(ScrollbarVisibility::Overlay),
         )
     }
 }

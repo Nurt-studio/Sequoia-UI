@@ -42,8 +42,16 @@ impl DrawSession {
     pub(crate) fn commit(mut self, signals: &CanvasSignals) {
         let x = self.start_wx.min(self.cur_wx);
         let y = self.start_wy.min(self.cur_wy);
-        let w = (self.cur_wx - self.start_wx).abs();
-        let h = (self.cur_wy - self.start_wy).abs();
+        let mut w = (self.cur_wx - self.start_wx).abs();
+        let mut h = (self.cur_wy - self.start_wy).abs();
+
+        // A plain click (no real drag) still has to produce something —
+        // otherwise "I cannot create shapes". Like Figma: 100×100 at the
+        // click point.
+        if w < 4.0 && h < 4.0 {
+            w = 100.0;
+            h = 100.0;
+        }
 
         if w >= 4.0 && h >= 4.0 {
             let (kind, hex) = match self.tool {
@@ -76,12 +84,16 @@ impl DrawSession {
     }
 }
 
-/// Text tool click: inserts a TEXT node and enters editing.
+/// Text tool click: inserts an empty TEXT node and edits it in place, so the
+/// first keystroke becomes the content.
 pub(crate) fn create_text(signals: &CanvasSignals, wx: f32, wy: f32, grid_snap: bool) {
     let x = if grid_snap { snap(wx) } else { wx };
     let y = if grid_snap { snap(wy) } else { wy };
     let id = signals.state.next_node_id();
-    let node = new_text(id, x, y, "Text");
+    let mut node = new_text(id, x, y, "");
+    if let SvelteNode::Text(t) = &mut node {
+        t.absolute = true;
+    }
     let target = find_parent_frame(&signals.layers.get_untracked(), x, y).unwrap_or(0);
     signals.state.push_history();
     signals.state.root.update(|r| {

@@ -435,13 +435,15 @@ impl Leaf for ColorWell {
             if same {
                 self.picker.open.set(false);
             } else {
-                if !self.picker.has_positioned.get() {
-                    self.picker.pos.set(Vec2::new(
-                        (pos.x - 280.0).max(20.0),
-                        (pos.y - 20.0).max(40.0),
-                    ));
-                    self.picker.has_positioned.set(true);
-                }
+                // Re-anchor at the well on every open. The position used to
+                // be computed once, so after scrolling the panel (or opening
+                // the stroke well) the popup reappeared wherever it was first
+                // opened — often completely off-screen.
+                self.picker.pos.set(Vec2::new(
+                    (pos.x - 280.0).max(20.0),
+                    (pos.y - 20.0).max(40.0),
+                ));
+                self.picker.has_positioned.set(true);
                 self.picker.target.set(self.target);
                 self.picker.open.set(true);
             }
@@ -531,5 +533,42 @@ impl View for ColorPickerRoot {
 pub(crate) fn color_picker(state: &EditorState) -> impl View + 'static {
     ColorPickerRoot {
         state: state.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sequoia_ui::text::TextSystem;
+    use sequoia_ui::view::Runtime;
+
+    #[test]
+    fn color_well_opens_and_closes_the_picker() {
+        let state = EditorState::demo();
+        let rt = Runtime::new();
+        rt.mount(Container::new().padding(20.0).child(color_well(
+            &state,
+            state.sel_fill.clone(),
+            PickerTarget::Fill,
+        )));
+        rt.tick();
+        let mut text = TextSystem::new();
+        rt.layout(Rect::from_xywh(0.0, 0.0, 100.0, 100.0), &mut text);
+        rt.tick();
+
+        let p = Point::new(34.0, 34.0);
+        rt.pointer_down(p, PointerButton::Left, Modifiers::NONE, &mut text);
+        rt.pointer_up(p, PointerButton::Left, Modifiers::NONE, &mut text);
+        assert!(
+            state.picker.open.get_untracked(),
+            "clicking the color well must open the picker"
+        );
+
+        rt.pointer_down(p, PointerButton::Left, Modifiers::NONE, &mut text);
+        rt.pointer_up(p, PointerButton::Left, Modifiers::NONE, &mut text);
+        assert!(
+            !state.picker.open.get_untracked(),
+            "clicking the well again must close the picker"
+        );
     }
 }

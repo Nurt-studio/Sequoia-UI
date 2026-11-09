@@ -32,15 +32,25 @@ fn theme_toggle(state: &EditorState) -> impl View + 'static {
         )
 }
 
-/// Green "present" (play) button
-fn present_btn() -> impl View + 'static {
+/// Green "present" (play) button — toggles the on-canvas behavior
+/// interpreter (Phase 4, design doc §7).
+fn present_btn(state: &EditorState) -> impl View + 'static {
+    let on = state.present.on.get();
+    let st = state.clone();
     Container::new()
         .width(26.0)
         .height(26.0)
         .center()
         .radius(6.0)
         .hover(colors::active().bg_lighter)
-        .on_click(|| {})
+        .style(if on {
+            BoxStyle::new()
+                .background(Color::hexa(0x4ADE8029))
+                .border(1.0, Color::hex(0x4ADE80))
+        } else {
+            BoxStyle::new()
+        })
+        .on_click(move || st.toggle_present())
         .child(
             Icon::new("tb/present")
                 .size(15.0)
@@ -61,6 +71,14 @@ fn grid_btn(active: bool, on_click: impl Fn() + 'static) -> impl View + 'static 
         .center()
         .radius(6.0)
         .hover(colors::active().bg_lighter)
+        .style(if active {
+            // A lit button must read as "on": tinted background + ring.
+            BoxStyle::new()
+                .background(colors::active().sel_soft)
+                .border(1.0, Color::hexa(0x0D99FF73))
+        } else {
+            BoxStyle::new()
+        })
         .on_click(on_click)
         .child(
             Canvas::new()
@@ -232,11 +250,12 @@ impl View for TopbarBar {
             .height(36.0)
             .fill_width()
             .gap(6.0)
-            .padding(Edges::xy(8.0, 0.0))
+            // The undo/redo + document-name group hugs the left edge — the
+            // old 8px bar padding plus a 2px spacer read as a huge gap.
+            .padding(Edges::xy(4.0, 0.0))
             .align_items(Align::Center)
             .background(colors::active().surface)
             .border_bottom(1.0, colors::active().stroke_soft)
-            .child(Spacer::fixed(2.0))
             .child(
                 Row::new()
                     .gap(4.0)
@@ -264,7 +283,7 @@ impl View for TopbarBar {
                             st.open_node_graph(env);
                         })
                     })
-                    .child(present_btn())
+                    .child(present_btn(&self.state))
                     .child(theme_toggle(&self.state))
                     .child(share_btn())
                     .child(Spacer::fixed(1.0))
