@@ -22,6 +22,21 @@ pub fn parse_seq_file(file: &str, src: &str) -> Result<SeqFile, SeqError> {
 
 const MAX_NESTING_DEPTH: usize = 256;
 
+fn is_single_value_expr(kind: &SeqExprKind) -> bool {
+    matches!(
+        kind,
+        SeqExprKind::Int(_)
+            | SeqExprKind::Float(_)
+            | SeqExprKind::Str(_)
+            | SeqExprKind::Bool(_)
+            | SeqExprKind::Var(_)
+            | SeqExprKind::Field { .. }
+            | SeqExprKind::Unary { .. }
+            | SeqExprKind::Call { .. }
+            | SeqExprKind::Array(_)
+    )
+}
+
 struct Parser<'a> {
     file: &'a str,
     chars: Vec<char>,
@@ -1174,6 +1189,29 @@ impl<'a> Parser<'a> {
                     Ok(first)
                 }
             }
+            Some('[') => {
+                self.bump();
+                let mut items = Vec::new();
+                self.skip_trivia();
+                if !self.eat(']') {
+                    loop {
+                        items.push(self.fn_expr()?);
+                        self.skip_trivia();
+                        if self.eat(']') {
+                            break;
+                        }
+                        self.expect(',', "',' albo ']' na liście `[a, b]`")?;
+                        self.skip_trivia();
+                        if self.eat(']') {
+                            break;
+                        }
+                    }
+                }
+                Ok(SeqExpr {
+                    line,
+                    kind: SeqExprKind::Array(items),
+                })
+            }
             Some('_') => Err(self.err(line, col, "`_` tylko jako wzorzec `match`")),
             _ => {
                 let (id, _, _) = self.ident()?;
@@ -1203,7 +1241,26 @@ impl<'a> Parser<'a> {
     }
 
     fn fn_expr(&mut self) -> Result<SeqExpr, SeqError> {
-        self.fn_or()
+        self.fn_ternary()
+    }
+
+    fn fn_ternary(&mut self) -> Result<SeqExpr, SeqError> {
+        let cond = self.fn_or()?;
+        if !self.eat_op("?") {
+            return Ok(cond);
+        }
+        let line = self.line;
+        let then = self.fn_expr()?;
+        self.expect(':', "':' w wyrażeniu warunkowym `warunek ? a : b`")?;
+        let els = self.fn_ternary()?;
+        Ok(SeqExpr {
+            line,
+            kind: SeqExprKind::Ternary {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                els: Box::new(els),
+            },
+        })
     }
 
     fn theme_name(&mut self) -> Result<ThemeName, SeqError> {
@@ -1396,10 +1453,47 @@ impl<'a> Parser<'a> {
         }
         let result = self.value_inner();
         self.depth -= 1;
-        result
+        result.map(SeqValue::fold_exprs)
     }
 
     fn value_inner(&mut self) -> Result<SeqValue, SeqError> {
+        self.skip_trivia();
+        match self.peek() {
+            Some('#') => {
+                let (hex, _, _) = self.color()?;
+                return Ok(SeqValue::Color(hex));
+            }
+            Some('{') => return self.callback(),
+            _ => {}
+        }
+        let save = (self.pos, self.line, self.col);
+        let starts_paren = self.peek() == Some('(');
+        if let Ok(expr) = self.fn_expr()
+            && self.value_end()
+        {
+            let expr = if starts_paren && is_single_value_expr(&expr.kind) {
+                SeqExpr {
+                    line: expr.line,
+                    kind: SeqExprKind::Tuple(vec![expr]),
+                }
+            } else {
+                expr
+            };
+            return Ok(SeqValue::Expr(expr));
+        }
+        (self.pos, self.line, self.col) = save;
+        self.value_literal()
+    }
+
+    fn value_end(&mut self) -> bool {
+        self.skip_trivia();
+        matches!(
+            self.peek(),
+            None | Some(',') | Some(')') | Some(']') | Some('}')
+        )
+    }
+
+    fn value_literal(&mut self) -> Result<SeqValue, SeqError> {
         self.skip_trivia();
         Ok(match self.peek() {
             Some('"') => {

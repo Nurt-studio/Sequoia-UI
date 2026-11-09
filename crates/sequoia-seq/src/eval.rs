@@ -411,6 +411,16 @@ impl<'a> Eval<'a> {
                 }
                 Ok(Value::Tuple(Rc::new(out)))
             }
+            SeqExprKind::Array(_) => {
+                Err(self.err(e.line, "tablice są dozwolone tylko jako wartości atrybutów"))
+            }
+            SeqExprKind::Ternary { cond, then, els } => {
+                if self.expr_bool(cond)? {
+                    self.expr(then)
+                } else {
+                    self.expr(els)
+                }
+            }
             SeqExprKind::Unary { op, expr } => {
                 let v = self.expr(expr)?;
                 match (op, &v) {

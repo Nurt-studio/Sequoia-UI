@@ -706,7 +706,22 @@ fn check_comp_value(
     param: &crate::ir::CompParam,
     arg: &crate::ir::SeqArg,
 ) -> Result<(), SeqError> {
-    let ok = match &arg.value {
+    if !comp_value_ok(&arg.value, param) {
+        return Err(SeqError::new(
+            file,
+            arg.line,
+            1,
+            format!(
+                "bad type of parameter '{}' in {comp} (expected {})",
+                param.name, param.ty
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn comp_value_ok(value: &SeqValue, param: &crate::ir::CompParam) -> bool {
+    match value {
         SeqValue::Str(_) => param.ty == "String",
         SeqValue::Bool(_) => param.ty == "Bool",
         SeqValue::Num(n) => match param.ty.as_str() {
@@ -720,21 +735,12 @@ fn check_comp_value(
         }
         SeqValue::Length(_) | SeqValue::Tuple(_) | SeqValue::Array(_) => false,
         SeqValue::Callback { .. } => false,
-
         SeqValue::CallSeq { .. } => true,
-    };
-    if !ok {
-        return Err(SeqError::new(
-            file,
-            arg.line,
-            1,
-            format!(
-                "bad type of parameter '{}' in {comp} (expected {})",
-                param.name, param.ty
-            ),
-        ));
+        SeqValue::Expr(expr) => match crate::ir::evaluate_seq_expr(expr) {
+            Ok(value) => comp_value_ok(&value, param),
+            Err(_) => true,
+        },
     }
-    Ok(())
 }
 
 fn check_arg(
@@ -1474,7 +1480,18 @@ fn check_arg(
     }
 
     if name == "style" {
-        let style_name = match &arg.value {
+        let evaluated;
+        let value = match &arg.value {
+            SeqValue::Expr(expr) => match crate::ir::evaluate_seq_expr(expr) {
+                Ok(value) => {
+                    evaluated = value;
+                    &evaluated
+                }
+                Err(_) => &arg.value,
+            },
+            other => other,
+        };
+        let style_name = match value {
             crate::ir::SeqValue::Ident(n) => n.as_str(),
             _ => {
                 return Err(SeqError::new(
@@ -2226,6 +2243,47 @@ fn expr_ty(
                 out.push(ty);
             }
             Ok(Ty::Tuple(out))
+        }
+        SeqExprKind::Array(_) => Err(SeqError::new(
+            ctx.file,
+            e.line,
+            1,
+            "tablice są dozwolone tylko jako wartości atrybutów",
+        )),
+        SeqExprKind::Ternary { cond, then, els } => {
+            let cond_ty = expr_ty(ctx, locals, cond)?;
+            if !matches!(cond_ty, Ty::Bool | Ty::Any) {
+                return Err(SeqError::new(
+                    ctx.file,
+                    cond.line,
+                    1,
+                    format!("`?:` wymaga warunku Bool (jest {})", cond_ty.name()),
+                ));
+            }
+            let then_ty = expr_ty(ctx, locals, then)?;
+            let else_ty = expr_ty(ctx, locals, els)?;
+            if then_ty == else_ty {
+                Ok(then_ty)
+            } else if then_ty.is_number() && else_ty.is_number() {
+                if matches!(then_ty, Ty::Any) || matches!(else_ty, Ty::Any) {
+                    Ok(Ty::Any)
+                } else if then_ty == Ty::Int && else_ty == Ty::Int {
+                    Ok(Ty::Int)
+                } else {
+                    Ok(Ty::Float)
+                }
+            } else {
+                Err(SeqError::new(
+                    ctx.file,
+                    e.line,
+                    1,
+                    format!(
+                        "gałęzie `?:` mają różne typy ({} i {})",
+                        then_ty.name(),
+                        else_ty.name()
+                    ),
+                ))
+            }
         }
         SeqExprKind::Unary { op, expr } => {
             let ty = expr_ty(ctx, locals, expr)?;

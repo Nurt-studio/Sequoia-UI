@@ -20,8 +20,8 @@ use sequoia_view::{
 use crate::bindings::{ActionSig, FieldSignal, HostBindings, PropType, SeqRowData};
 use crate::error::SeqError;
 use crate::ir::{
-    ComponentDef, DeferredKind, LengthVal, SeqApp, SeqArg, SeqNode, SeqValue, SeqWindow, StyleDecl,
-    ThemeName,
+    ComponentDef, DeferredKind, LengthVal, SeqApp, SeqArg, SeqExpr, SeqExprKind, SeqNode, SeqValue,
+    SeqWindow, StyleDecl, ThemeName,
 };
 use crate::value::Value;
 
@@ -319,7 +319,287 @@ fn substitute_value(
             name: name.clone(),
             args: args.iter().map(|v| substitute_value(v, pmap)).collect(),
         },
+        SeqValue::Expr(expr) => {
+            let expr = substitute_expr(expr, pmap);
+            match crate::ir::evaluate_seq_expr(&expr) {
+                Ok(value) => value,
+                Err(_) => SeqValue::Expr(expr),
+            }
+        }
         _ => value.clone(),
+    }
+}
+
+fn substitute_expr(expr: &SeqExpr, pmap: &std::collections::HashMap<&str, &SeqValue>) -> SeqExpr {
+    let line = expr.line;
+    let kind = match &expr.kind {
+        SeqExprKind::Var(name) => {
+            if let Some(value) = pmap.get(name.as_str())
+                && let Some(replacement) = value_to_expr(value, line)
+            {
+                return replacement;
+            }
+            expr.kind.clone()
+        }
+        SeqExprKind::Unary { op, expr } => SeqExprKind::Unary {
+            op: *op,
+            expr: Box::new(substitute_expr(expr, pmap)),
+        },
+        SeqExprKind::Binary { op, lhs, rhs } => SeqExprKind::Binary {
+            op: *op,
+            lhs: Box::new(substitute_expr(lhs, pmap)),
+            rhs: Box::new(substitute_expr(rhs, pmap)),
+        },
+        SeqExprKind::Ternary { cond, then, els } => SeqExprKind::Ternary {
+            cond: Box::new(substitute_expr(cond, pmap)),
+            then: Box::new(substitute_expr(then, pmap)),
+            els: Box::new(substitute_expr(els, pmap)),
+        },
+        SeqExprKind::Tuple(items) => {
+            SeqExprKind::Tuple(items.iter().map(|e| substitute_expr(e, pmap)).collect())
+        }
+        SeqExprKind::Array(items) => {
+            SeqExprKind::Array(items.iter().map(|e| substitute_expr(e, pmap)).collect())
+        }
+        SeqExprKind::Call { name, args } => SeqExprKind::Call {
+            name: name.clone(),
+            args: args.iter().map(|e| substitute_expr(e, pmap)).collect(),
+        },
+        _ => expr.kind.clone(),
+    };
+    SeqExpr { line, kind }
+}
+
+fn value_to_expr(value: &SeqValue, line: usize) -> Option<SeqExpr> {
+    let kind = match value {
+        SeqValue::Num(n) => SeqExprKind::Float(f64::from(*n)),
+        SeqValue::Bool(b) => SeqExprKind::Bool(*b),
+        SeqValue::Str(s) => SeqExprKind::Str(s.clone()),
+        SeqValue::Ident(name) => SeqExprKind::Var(name.clone()),
+        SeqValue::Tuple(items) => SeqExprKind::Tuple(
+            items
+                .iter()
+                .map(|v| value_to_expr(v, line))
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        SeqValue::Array(items) => SeqExprKind::Array(
+            items
+                .iter()
+                .map(|v| value_to_expr(v, line))
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        SeqValue::Expr(expr) => return Some(expr.clone()),
+        _ => return None,
+    };
+    Some(SeqExpr { line, kind })
+}
+
+fn value_contains_expr(value: &SeqValue) -> bool {
+    match value {
+        SeqValue::Expr(_) => true,
+        SeqValue::Tuple(items) | SeqValue::Array(items) => items.iter().any(value_contains_expr),
+        SeqValue::Callback { args, .. } | SeqValue::CallSeq { args, .. } => {
+            args.iter().any(value_contains_expr)
+        }
+        _ => false,
+    }
+}
+
+fn prepare_node(
+    file: &str,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<SeqNode, SeqError> {
+    let mut out = node.clone();
+    for arg in &mut out.args {
+        if value_contains_expr(&arg.value) {
+            arg.value = normalize_value(file, arg.line, &arg.value, res, row)?;
+        }
+    }
+    Ok(out)
+}
+
+fn normalize_value(
+    file: &str,
+    line: usize,
+    value: &SeqValue,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<SeqValue, SeqError> {
+    match value {
+        SeqValue::Expr(expr) => {
+            let resolved = resolve_expr(expr, res, row);
+            match crate::ir::evaluate_seq_expr(&resolved) {
+                Ok(value) => normalize_value(file, line, &value, res, row),
+                Err(message) => Err(SeqError::new(
+                    file,
+                    line,
+                    1,
+                    format!("expression: {message}"),
+                )),
+            }
+        }
+        SeqValue::Tuple(items) => Ok(SeqValue::Tuple(
+            items
+                .iter()
+                .map(|v| normalize_value(file, line, v, res, row))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        SeqValue::Array(items) => Ok(SeqValue::Array(
+            items
+                .iter()
+                .map(|v| normalize_value(file, line, v, res, row))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        SeqValue::Callback { action, args } => Ok(SeqValue::Callback {
+            action: action.clone(),
+            args: args
+                .iter()
+                .map(|v| normalize_value(file, line, v, res, row))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        SeqValue::CallSeq { name, args } => Ok(SeqValue::CallSeq {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|v| normalize_value(file, line, v, res, row))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        other => Ok(other.clone()),
+    }
+}
+
+fn resolve_expr(expr: &SeqExpr, res: &Resolver<'_>, row: Option<&SeqRowData>) -> SeqExpr {
+    let line = expr.line;
+    let kind = match &expr.kind {
+        SeqExprKind::Var(name) => {
+            if matches!(name.as_str(), "true" | "false" | "None" | "fit") {
+                expr.kind.clone()
+            } else {
+                match resolve_binding(name, res).and_then(|v| value_to_expr(&v, line)) {
+                    Some(resolved) => resolved.kind,
+                    None => expr.kind.clone(),
+                }
+            }
+        }
+        SeqExprKind::Field { base, field } => {
+            let resolved = match base.as_str() {
+                "env" => resolve_env(field, res),
+                "item" => resolve_item(field, row),
+                _ => None,
+            };
+            match resolved.and_then(|v| value_to_expr(&v, line)) {
+                Some(resolved) => resolved.kind,
+                None => expr.kind.clone(),
+            }
+        }
+        SeqExprKind::Unary { op, expr } => SeqExprKind::Unary {
+            op: *op,
+            expr: Box::new(resolve_expr(expr, res, row)),
+        },
+        SeqExprKind::Binary { op, lhs, rhs } => SeqExprKind::Binary {
+            op: *op,
+            lhs: Box::new(resolve_expr(lhs, res, row)),
+            rhs: Box::new(resolve_expr(rhs, res, row)),
+        },
+        SeqExprKind::Ternary { cond, then, els } => SeqExprKind::Ternary {
+            cond: Box::new(resolve_expr(cond, res, row)),
+            then: Box::new(resolve_expr(then, res, row)),
+            els: Box::new(resolve_expr(els, res, row)),
+        },
+        SeqExprKind::Tuple(items) => {
+            SeqExprKind::Tuple(items.iter().map(|e| resolve_expr(e, res, row)).collect())
+        }
+        SeqExprKind::Array(items) => {
+            SeqExprKind::Array(items.iter().map(|e| resolve_expr(e, res, row)).collect())
+        }
+        SeqExprKind::Call { name, args } => {
+            if name == "dynamic"
+                && args.len() == 1
+                && let Some(target) = match &args[0].kind {
+                    SeqExprKind::Var(n) => Some(n.as_str()),
+                    SeqExprKind::Str(s) => Some(s.as_str()),
+                    _ => None,
+                }
+                && let Some(value) = resolve_binding(target, res)
+                && let Some(resolved) = value_to_expr(&value, line)
+            {
+                return resolved;
+            }
+            SeqExprKind::Call {
+                name: name.clone(),
+                args: args.iter().map(|e| resolve_expr(e, res, row)).collect(),
+            }
+        }
+        _ => expr.kind.clone(),
+    };
+    SeqExpr { line, kind }
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn resolve_binding(name: &str, res: &Resolver<'_>) -> Option<SeqValue> {
+    let Resolver::Host(b) = res else {
+        return None;
+    };
+    if let Some(sig) = b.get_float(name) {
+        return Some(SeqValue::Num(sig.get_untracked() as f32));
+    }
+    if let Some(sig) = b.get_int(name) {
+        return Some(SeqValue::Num(sig.get_untracked() as f32));
+    }
+    if let Some(sig) = b.get_bool(name) {
+        return Some(SeqValue::Bool(sig.get_untracked()));
+    }
+    if let Some(sig) = b.get_str(name) {
+        return Some(SeqValue::Str(sig.get_untracked()));
+    }
+    if let Some(memo) = b.get_memo_float(name) {
+        return Some(SeqValue::Num(memo.get_untracked() as f32));
+    }
+    if let Some(memo) = b.get_memo_int(name) {
+        return Some(SeqValue::Num(memo.get_untracked() as f32));
+    }
+    if let Some(memo) = b.get_memo_bool(name) {
+        return Some(SeqValue::Bool(memo.get_untracked()));
+    }
+    if let Some(memo) = b.get_memo_str(name) {
+        return Some(SeqValue::Str(memo.get_untracked()));
+    }
+    None
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn resolve_env(field: &str, res: &Resolver<'_>) -> Option<SeqValue> {
+    let Resolver::Host(b) = res else {
+        return None;
+    };
+    if let Some(sig) = b.get_env_float(field) {
+        return Some(SeqValue::Num(sig.get_untracked() as f32));
+    }
+    if let Some(sig) = b.get_env_int(field) {
+        return Some(SeqValue::Num(sig.get_untracked() as f32));
+    }
+    if let Some(sig) = b.get_env_bool(field) {
+        return Some(SeqValue::Bool(sig.get_untracked()));
+    }
+    if let Some(sig) = b.get_env_str(field) {
+        return Some(SeqValue::Str(sig.get_untracked()));
+    }
+    None
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn resolve_item(field: &str, row: Option<&SeqRowData>) -> Option<SeqValue> {
+    let row = row?;
+    if field == "id" {
+        return Some(SeqValue::Num(row.id as f32));
+    }
+    match row.fields.get(field)? {
+        FieldSignal::Str(sig) => Some(SeqValue::Str(sig.get_untracked())),
+        FieldSignal::Bool(sig) => Some(SeqValue::Bool(sig.get_untracked())),
+        FieldSignal::Int(sig) => Some(SeqValue::Num(sig.get_untracked() as f32)),
+        FieldSignal::Float(sig) => Some(SeqValue::Num(sig.get_untracked() as f32)),
     }
 }
 
@@ -581,6 +861,17 @@ pub fn build_styles(
 ) -> Result<BuiltStyles, SeqError> {
     let mut out = BuiltStyles::empty();
     let res = Resolver::Static;
+    let mut normalized = Vec::with_capacity(styles.len());
+    for s in styles {
+        let mut s = s.clone();
+        for arg in &mut s.args {
+            if value_contains_expr(&arg.value) {
+                arg.value = normalize_value(file, arg.line, &arg.value, &res, None)?;
+            }
+        }
+        normalized.push(s);
+    }
+    let styles = normalized.as_slice();
     for s in styles {
         match s.target.as_str() {
             "Box" => {
@@ -987,6 +1278,13 @@ fn lower_node(
     res: &Resolver<'_>,
     row: Option<&SeqRowData>,
 ) -> Result<AnyView, SeqError> {
+    let prepared;
+    let node = if node.args.iter().any(|a| value_contains_expr(&a.value)) {
+        prepared = prepare_node(file, node, res, row)?;
+        &prepared
+    } else {
+        node
+    };
     for arg in &node.args {
         if let SeqValue::Callback { action, .. } = &arg.value {
             match res {
@@ -8144,14 +8442,28 @@ fn child_flex_weight(
 ) -> Result<Option<f32>, SeqError> {
     match find_arg(node, "flex") {
         None => Ok(None),
-        Some(arg) => match &arg.value {
-            SeqValue::Num(n) => Ok(Some(*n)),
-            SeqValue::Ident(_)
-            | SeqValue::Dynamic(_)
-            | SeqValue::ItemField(_)
-            | SeqValue::Env(_) => Ok(Some(num(file, arg, res, row)?)),
-            _ => Err(SeqError::new(file, arg.line, 1, "'flex' to liczba")),
-        },
+        Some(arg) => {
+            let value = if value_contains_expr(&arg.value) {
+                normalize_value(file, arg.line, &arg.value, res, row)?
+            } else {
+                arg.value.clone()
+            };
+            match &value {
+                SeqValue::Num(n) => Ok(Some(*n)),
+                SeqValue::Ident(_)
+                | SeqValue::Dynamic(_)
+                | SeqValue::ItemField(_)
+                | SeqValue::Env(_) => {
+                    let arg = SeqArg {
+                        name: arg.name.clone(),
+                        line: arg.line,
+                        value: value.clone(),
+                    };
+                    Ok(Some(num(file, &arg, res, row)?))
+                }
+                _ => Err(SeqError::new(file, arg.line, 1, "'flex' to liczba")),
+            }
+        }
     }
 }
 
@@ -8496,6 +8808,7 @@ fn len(
             LengthVal::Fit => Ok(Length::Fit),
             LengthVal::Percent(p) => Ok(Length::Percent(p)),
         },
+        SeqValue::Num(n) => Ok(Length::Px(*n)),
         SeqValue::Ident(prop) | SeqValue::Dynamic(prop) => match res {
             Resolver::Static => Err(len_err(file, arg)),
             Resolver::Host(b) => Ok(Length::Px(prop_num_env(file, arg.line, b, prop)?)),

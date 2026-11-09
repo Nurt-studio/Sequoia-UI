@@ -177,6 +177,207 @@ pub enum SeqValue {
     Tuple(Vec<SeqValue>),
 
     Array(Vec<SeqValue>),
+
+    Expr(SeqExpr),
+}
+
+impl SeqValue {
+    pub(crate) fn fold_exprs(self) -> Self {
+        match self {
+            Self::Expr(expr) => match evaluate_seq_expr(&expr) {
+                Ok(value) => value.fold_exprs(),
+                Err(_) => Self::Expr(expr),
+            },
+            Self::Tuple(items) => Self::Tuple(items.into_iter().map(Self::fold_exprs).collect()),
+            Self::Array(items) => Self::Array(items.into_iter().map(Self::fold_exprs).collect()),
+            Self::Callback { action, args } => Self::Callback {
+                action,
+                args: args.into_iter().map(Self::fold_exprs).collect(),
+            },
+            Self::CallSeq { name, args } => Self::CallSeq {
+                name,
+                args: args.into_iter().map(Self::fold_exprs).collect(),
+            },
+            other => other,
+        }
+    }
+}
+
+pub(crate) fn evaluate_seq_expr(expr: &SeqExpr) -> Result<SeqValue, String> {
+    match &expr.kind {
+        SeqExprKind::Int(i) => Ok(SeqValue::Num(*i as f32)),
+        SeqExprKind::Float(f) => {
+            #[allow(clippy::cast_possible_truncation)]
+            let value = *f as f32;
+            if value.is_finite() {
+                Ok(SeqValue::Num(value))
+            } else {
+                Err("non-finite float".to_string())
+            }
+        }
+        SeqExprKind::Str(s) => Ok(SeqValue::Str(s.clone())),
+        SeqExprKind::Bool(b) => Ok(SeqValue::Bool(*b)),
+        SeqExprKind::Tuple(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(evaluate_seq_expr(item)?);
+            }
+            Ok(SeqValue::Tuple(out))
+        }
+        SeqExprKind::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(evaluate_seq_expr(item)?);
+            }
+            Ok(SeqValue::Array(out))
+        }
+        SeqExprKind::Unary { op, expr } => {
+            let v = evaluate_seq_expr(expr)?;
+            match (op, &v) {
+                (UnOp::Neg, SeqValue::Num(n)) => Ok(SeqValue::Num(-n)),
+                (UnOp::Not, SeqValue::Bool(b)) => Ok(SeqValue::Bool(!b)),
+                _ => Err("invalid unary operation".to_string()),
+            }
+        }
+        SeqExprKind::Binary { op, lhs, rhs } => {
+            let l = evaluate_seq_expr(lhs)?;
+            let r = evaluate_seq_expr(rhs)?;
+            match (op, &l, &r) {
+                (BinOp::Add, SeqValue::Str(a), SeqValue::Str(b)) => {
+                    Ok(SeqValue::Str(format!("{a}{b}")))
+                }
+                (BinOp::Add, SeqValue::Num(a), SeqValue::Num(b)) => Ok(SeqValue::Num(a + b)),
+                (BinOp::Sub, SeqValue::Num(a), SeqValue::Num(b)) => Ok(SeqValue::Num(a - b)),
+                (BinOp::Mul, SeqValue::Num(a), SeqValue::Num(b)) => Ok(SeqValue::Num(a * b)),
+                (BinOp::Div, SeqValue::Num(a), SeqValue::Num(b)) => {
+                    if *b == 0.0 {
+                        Err("division by zero".to_string())
+                    } else {
+                        Ok(SeqValue::Num(a / b))
+                    }
+                }
+                (BinOp::Rem, SeqValue::Num(a), SeqValue::Num(b)) => {
+                    if *b == 0.0 {
+                        Err("remainder by zero".to_string())
+                    } else {
+                        Ok(SeqValue::Num(a % b))
+                    }
+                }
+                (BinOp::Eq, _, _) => Ok(SeqValue::Bool(values_eq(&l, &r))),
+                (BinOp::Ne, _, _) => Ok(SeqValue::Bool(!values_eq(&l, &r))),
+                (BinOp::Lt, SeqValue::Num(a), SeqValue::Num(b)) => Ok(SeqValue::Bool(a < b)),
+                (BinOp::Le, SeqValue::Num(a), SeqValue::Num(b)) => Ok(SeqValue::Bool(a <= b)),
+                (BinOp::Gt, SeqValue::Num(a), SeqValue::Num(b)) => Ok(SeqValue::Bool(a > b)),
+                (BinOp::Ge, SeqValue::Num(a), SeqValue::Num(b)) => Ok(SeqValue::Bool(a >= b)),
+                (BinOp::And, SeqValue::Bool(a), SeqValue::Bool(b)) => Ok(SeqValue::Bool(*a && *b)),
+                (BinOp::Or, SeqValue::Bool(a), SeqValue::Bool(b)) => Ok(SeqValue::Bool(*a || *b)),
+                _ => Err("invalid binary operation".to_string()),
+            }
+        }
+        SeqExprKind::Ternary { cond, then, els } => {
+            let c = evaluate_seq_expr(cond)?;
+            match c {
+                SeqValue::Bool(true) => evaluate_seq_expr(then),
+                SeqValue::Bool(false) => evaluate_seq_expr(els),
+                _ => Err("ternary condition must be Bool".to_string()),
+            }
+        }
+        SeqExprKind::Var(name) => match name.as_str() {
+            "true" => Ok(SeqValue::Bool(true)),
+            "false" => Ok(SeqValue::Bool(false)),
+            "fit" => Ok(SeqValue::Length(LengthVal::Fit)),
+            _ => Ok(SeqValue::Ident(name.clone())),
+        },
+        SeqExprKind::Field { base, field } => match base.as_str() {
+            "env" => Ok(SeqValue::Env(field.clone())),
+            "theme" => Ok(SeqValue::Theme(field.clone())),
+            "item" => Ok(SeqValue::ItemField(field.clone())),
+            _ => Ok(SeqValue::Ident(format!("{base}.{field}"))),
+        },
+        SeqExprKind::Call { name, args } => match name.as_str() {
+            "fill" if args.len() == 1 => {
+                if let SeqValue::Num(n) = evaluate_seq_expr(&args[0])? {
+                    Ok(SeqValue::Length(LengthVal::Fill(n)))
+                } else {
+                    Err("fill requires number".to_string())
+                }
+            }
+            "px" if args.len() == 1 => {
+                if let SeqValue::Num(n) = evaluate_seq_expr(&args[0])? {
+                    Ok(SeqValue::Length(LengthVal::Px(n)))
+                } else {
+                    Err("px requires number".to_string())
+                }
+            }
+            "percent" if args.len() == 1 => {
+                if let SeqValue::Num(n) = evaluate_seq_expr(&args[0])? {
+                    Ok(SeqValue::Length(LengthVal::Percent(n)))
+                } else {
+                    Err("percent requires number".to_string())
+                }
+            }
+            "dynamic" if args.len() == 1 => match evaluate_seq_expr(&args[0])? {
+                SeqValue::Ident(s) | SeqValue::Str(s) => Ok(SeqValue::Dynamic(s)),
+                _ => Err("dynamic requires string or ident".to_string()),
+            },
+            "min" | "max" if args.len() == 2 => {
+                let a = evaluate_seq_expr(&args[0])?;
+                let b = evaluate_seq_expr(&args[1])?;
+                match (&a, &b) {
+                    (SeqValue::Num(x), SeqValue::Num(y)) => {
+                        let val = if name == "max" { x.max(*y) } else { x.min(*y) };
+                        Ok(SeqValue::Num(val))
+                    }
+                    _ => Err(format!("{name} requires numbers")),
+                }
+            }
+            "clamp" if args.len() == 3 => {
+                let v = evaluate_seq_expr(&args[0])?;
+                let lo = evaluate_seq_expr(&args[1])?;
+                let hi = evaluate_seq_expr(&args[2])?;
+                match (&v, &lo, &hi) {
+                    (SeqValue::Num(v), SeqValue::Num(lo), SeqValue::Num(hi)) => {
+                        Ok(SeqValue::Num((*v).max(*lo).min(*hi)))
+                    }
+                    _ => Err("clamp requires numbers".to_string()),
+                }
+            }
+            "powf" if args.len() == 2 => {
+                let a = evaluate_seq_expr(&args[0])?;
+                let b = evaluate_seq_expr(&args[1])?;
+                match (&a, &b) {
+                    (SeqValue::Num(x), SeqValue::Num(y)) => Ok(SeqValue::Num(x.powf(*y))),
+                    _ => Err("powf requires numbers".to_string()),
+                }
+            }
+            "len" if args.len() == 1 => {
+                let a = evaluate_seq_expr(&args[0])?;
+                match a {
+                    SeqValue::Str(s) => Ok(SeqValue::Num(s.chars().count() as f32)),
+                    _ => Err("len requires string".to_string()),
+                }
+            }
+            _ => {
+                let mut evaluated_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    evaluated_args.push(evaluate_seq_expr(arg)?);
+                }
+                Ok(SeqValue::CallSeq {
+                    name: name.clone(),
+                    args: evaluated_args,
+                })
+            }
+        },
+    }
+}
+
+fn values_eq(a: &SeqValue, b: &SeqValue) -> bool {
+    match (a, b) {
+        (SeqValue::Num(x), SeqValue::Num(y)) => x == y,
+        (SeqValue::Str(x), SeqValue::Str(y)) => x == y,
+        (SeqValue::Bool(x), SeqValue::Bool(y)) => x == y,
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -331,6 +532,8 @@ pub enum SeqExprKind {
 
     Tuple(Vec<SeqExpr>),
 
+    Array(Vec<SeqExpr>),
+
     Unary {
         op: UnOp,
 
@@ -349,6 +552,14 @@ pub enum SeqExprKind {
         name: String,
 
         args: Vec<SeqExpr>,
+    },
+
+    Ternary {
+        cond: Box<SeqExpr>,
+
+        then: Box<SeqExpr>,
+
+        els: Box<SeqExpr>,
     },
 }
 
@@ -441,6 +652,7 @@ fn resolve_value(fns: &std::collections::HashSet<&str>, value: &mut SeqValue) {
                 resolve_value(fns, item);
             }
         }
+        SeqValue::Expr(_) => {}
         _ => {}
     }
 }
