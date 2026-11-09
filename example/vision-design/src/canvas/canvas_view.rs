@@ -80,6 +80,7 @@ pub(crate) fn canvas(state: &EditorState) -> impl View + 'static {
                         HashMap::new()
                     };
                     for l in layers {
+                        if l.x + l.w < wx0 || l.x > wx1 || l.y + l.h < wy0 || l.y > wy1 { continue; }
                         if present_on {
                             let fx = fx_map.get(&l.id).copied().unwrap_or_default();
                             draw_layer_fx(p, l, &fx);
