@@ -24,7 +24,7 @@ impl EditorState {
     fn record(&self, prev: Option<SvelteNode>) {
         self.history.borrow_mut().push(prev);
         self.future.borrow_mut().clear();
-        if self.history.borrow().len() > 80 {
+        if self.history.borrow().len() > 40 {
             self.history.borrow_mut().remove(0);
         }
         self.can_undo.set(true);
