@@ -94,13 +94,16 @@ const LAYOUT_PROPS: &[&str] = &[
 
 pub fn check(file: &str, app: &SeqApp) -> Result<(), SeqError> {
     check_styles(file, app)?;
-    let comps = check_components(file, &app.components, &app.styles)?;
-    let fns = check_fns(file, app)?;
+    let (fns, props, states) = check_fns(file, app)?;
+    let comps = check_components(file, &app.components, &app.styles, &props, &states, &fns)?;
     check_seq_calls(file, app, &fns)?;
     let ctx = CheckCtx {
         styles: &app.styles,
         components: &app.components,
         comps: &comps,
+        fns: &fns,
+        props,
+        states,
         in_comp: false,
     };
     for w in &app.windows {
@@ -119,7 +122,9 @@ struct CheckCtx<'a> {
     styles: &'a [StyleDecl],
     components: &'a [ComponentDef],
     comps: &'a CompTable,
-
+    fns: &'a FnTable,
+    props: std::collections::HashMap<String, Ty>,
+    states: std::collections::HashMap<String, Ty>,
     in_comp: bool,
 }
 
@@ -127,6 +132,9 @@ fn check_components(
     file: &str,
     components: &[ComponentDef],
     styles: &[StyleDecl],
+    app_props: &std::collections::HashMap<String, Ty>,
+    states: &std::collections::HashMap<String, Ty>,
+    fns: &FnTable,
 ) -> Result<CompTable, SeqError> {
     let mut comps: CompTable = std::collections::HashMap::new();
     for (i, c) in components.iter().enumerate() {
@@ -197,13 +205,22 @@ fn check_components(
         }
     }
 
-    let body_ctx = CheckCtx {
-        styles,
-        components,
-        comps: &comps,
-        in_comp: true,
-    };
     for c in components {
+        let mut comp_props = app_props.clone();
+        for p in &c.params {
+            if let Some(ty) = Ty::from_sig(&p.ty) {
+                comp_props.insert(p.name.clone(), ty);
+            }
+        }
+        let body_ctx = CheckCtx {
+            styles,
+            components,
+            comps: &comps,
+            fns,
+            props: comp_props,
+            states: states.clone(),
+            in_comp: true,
+        };
         for n in &c.body {
             check_node(&c.file, n, None, false, &body_ctx)?;
         }
@@ -605,7 +622,7 @@ fn check_node(
         }
     }
     for arg in &node.args {
-        check_arg(file, node, arg, parent, in_canvas, ctx.styles)?;
+        check_arg(file, node, arg, parent, in_canvas, ctx)?;
     }
     for child in &node.children {
         check_node(file, child, Some(node.kind.as_str()), in_canvas, ctx)?;
@@ -671,7 +688,7 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
             ));
         }
         seen.push(arg.name.as_str());
-        check_comp_value(file, &def.name, param, arg)?;
+        check_comp_value(file, &def.name, param, arg, ctx)?;
     }
     for p in &def.params {
         if !seen.contains(&p.name.as_str()) {
@@ -705,41 +722,90 @@ fn check_comp_value(
     comp: &str,
     param: &crate::ir::CompParam,
     arg: &crate::ir::SeqArg,
+    ctx: &CheckCtx<'_>,
 ) -> Result<(), SeqError> {
-    if !comp_value_ok(&arg.value, param) {
+    let Some(expected) = Ty::from_sig(&param.ty) else {
+        return Err(SeqError::new(
+            file,
+            arg.line,
+            1,
+            format!("nieznany typ parametru '{}'", param.ty),
+        ));
+    };
+    let ty = value_ty(&arg.value, ctx, file, arg.line)?;
+    if !ty.fits(&expected) {
         return Err(SeqError::new(
             file,
             arg.line,
             1,
             format!(
-                "bad type of parameter '{}' in {comp} (expected {})",
-                param.name, param.ty
+                "bad type of parameter '{}' in {comp} (expected {}, is {})",
+                param.name,
+                expected.name(),
+                ty.name()
             ),
         ));
     }
     Ok(())
 }
 
-fn comp_value_ok(value: &SeqValue, param: &crate::ir::CompParam) -> bool {
+fn expected_attr_ty(attr: &str) -> Option<Ty> {
+    match attr {
+        "width" | "height" | "size" | "flex" => Some(Ty::Float),
+        "enabled" | "visible" | "wrap" => Some(Ty::Bool),
+        "text" | "label" | "placeholder" => Some(Ty::Str),
+        "background" | "fill" | "color" => Some(Ty::Color),
+        _ => None,
+    }
+}
+
+fn value_ty(
+    value: &SeqValue,
+    ctx: &CheckCtx<'_>,
+    file: &str,
+    line: usize,
+) -> Result<Ty, SeqError> {
     match value {
-        SeqValue::Str(_) => param.ty == "String",
-        SeqValue::Bool(_) => param.ty == "Bool",
-        SeqValue::Num(n) => match param.ty.as_str() {
-            "Float" => n.is_finite(),
-            "Int" => n.is_finite() && n.fract() == 0.0,
-            _ => false,
-        },
-        SeqValue::Color(_) | SeqValue::Theme(_) => param.ty == "Color",
-        SeqValue::Ident(_) | SeqValue::Dynamic(_) | SeqValue::Env(_) | SeqValue::ItemField(_) => {
-            true
+        SeqValue::Str(_) => Ok(Ty::Str),
+        SeqValue::Theme(_) => Ok(Ty::Color),
+        SeqValue::Num(n) => {
+            if n.is_finite() && n.fract() == 0.0 {
+                Ok(Ty::Int)
+            } else {
+                Ok(Ty::Float)
+            }
         }
-        SeqValue::Length(_) | SeqValue::Tuple(_) | SeqValue::Array(_) => false,
-        SeqValue::Callback { .. } => false,
-        SeqValue::CallSeq { .. } => true,
-        SeqValue::Expr(expr) => match crate::ir::evaluate_seq_expr(expr) {
-            Ok(value) => comp_value_ok(&value, param),
-            Err(_) => true,
-        },
+        SeqValue::Bool(_) => Ok(Ty::Bool),
+        SeqValue::Color(_) => Ok(Ty::Color),
+        SeqValue::Ident(_) | SeqValue::Dynamic(_) | SeqValue::Env(_) | SeqValue::ItemField(_) => {
+            Ok(Ty::Any)
+        }
+        SeqValue::CallSeq { .. } => Ok(Ty::Any),
+        SeqValue::Length(_) => Ok(Ty::Float),
+        SeqValue::Tuple(items) => {
+            let mut tys = Vec::with_capacity(items.len());
+            for item in items {
+                tys.push(value_ty(item, ctx, file, line)?);
+            }
+            Ok(Ty::Tuple(tys))
+        }
+        SeqValue::Array(_) => Ok(Ty::Array),
+        SeqValue::Callback { .. } => Ok(Ty::Null),
+        SeqValue::Expr(expr) => {
+            let fn_props: std::collections::HashMap<&str, Ty> = ctx
+                .props
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.clone()))
+                .collect();
+            let fn_ctx = FnCtx {
+                file,
+                fns: ctx.fns,
+                props: &fn_props,
+                states: &ctx.states,
+            };
+            let mut locals = Vec::new();
+            expr_ty(&fn_ctx, &mut locals, expr)
+        }
     }
 }
 
@@ -749,7 +815,7 @@ fn check_arg(
     arg: &crate::ir::SeqArg,
     parent: Option<&str>,
     in_canvas: bool,
-    styles: &[StyleDecl],
+    ctx: &CheckCtx<'_>,
 ) -> Result<(), SeqError> {
     let name = arg.name.as_str();
 
@@ -1479,6 +1545,18 @@ fn check_arg(
         ));
     }
 
+    if let Some(expected_ty) = expected_attr_ty(name) {
+        let ty = value_ty(&arg.value, ctx, file, arg.line)?;
+        if !ty.fits(&expected_ty) {
+            return Err(SeqError::new(
+                file,
+                arg.line,
+                1,
+                format!("expected {}, is {}", expected_ty.name(), ty.name()),
+            ));
+        }
+    }
+
     if name == "style" {
         let evaluated;
         let value = match &arg.value {
@@ -1511,7 +1589,7 @@ fn check_arg(
         if want_target == "Button" && BUTTON_PRESETS.contains(&style_name) {
             return Ok(());
         }
-        match find_style(styles, style_name) {
+        match find_style(ctx.styles, style_name) {
             Some(s) if s.target == want_target => {}
             Some(s) => {
                 return Err(SeqError::new(
@@ -1564,7 +1642,9 @@ enum Ty {
     Float,
     Str,
     Bool,
+    Color,
     Tuple(Vec<Ty>),
+    Array,
     Option(Box<Ty>),
     Row,
     Any,
@@ -1582,6 +1662,7 @@ impl Ty {
             "Float" => Some(Self::Float),
             "String" => Some(Self::Str),
             "Bool" => Some(Self::Bool),
+            "Color" => Some(Self::Color),
             _ => None,
         }
     }
@@ -1610,12 +1691,14 @@ impl Ty {
             Self::Float => "Float".to_string(),
             Self::Str => "String".to_string(),
             Self::Bool => "Bool".to_string(),
+            Self::Color => "Color".to_string(),
             Self::Tuple(items) => format!(
                 "({})",
                 items.iter().map(Self::name).collect::<Vec<_>>().join(", ")
             ),
             Self::Option(inner) => format!("Option<{}>", inner.name()),
             Self::Row => "wiersz".to_string(),
+            Self::Array => "array".to_string(),
             Self::Any => "value".to_string(),
             Self::Null => "no value".to_string(),
         }
@@ -1629,7 +1712,11 @@ impl Ty {
         match (self, target) {
             (_, Self::Any) | (Self::Any, _) => true,
             (Self::Int, Self::Int) | (Self::Int, Self::Float) | (Self::Float, Self::Float) => true,
-            (Self::Str, Self::Str) | (Self::Bool, Self::Bool) | (Self::Row, Self::Row) => true,
+            (Self::Str, Self::Str)
+                | (Self::Bool, Self::Bool)
+                | (Self::Color, Self::Color)
+                | (Self::Row, Self::Row)
+                | (Self::Array, Self::Array) => true,
             (Self::Tuple(a), Self::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.fits(y))
             }
@@ -1659,8 +1746,18 @@ struct FnCtx<'a> {
     states: &'a std::collections::HashMap<String, Ty>,
 }
 
-fn check_fns(file: &str, app: &SeqApp) -> Result<FnTable, SeqError> {
-    let mut prop_tys: std::collections::HashMap<&str, Ty> = std::collections::HashMap::new();
+fn check_fns(
+    file: &str,
+    app: &SeqApp,
+) -> Result<
+    (
+        FnTable,
+        std::collections::HashMap<String, Ty>,
+        std::collections::HashMap<String, Ty>,
+    ),
+    SeqError,
+> {
+    let mut prop_tys: std::collections::HashMap<String, Ty> = std::collections::HashMap::new();
     for d in &app.deferred {
         if d.kind == crate::ir::DeferredKind::Prop {
             let ty = d
@@ -1668,7 +1765,7 @@ fn check_fns(file: &str, app: &SeqApp) -> Result<FnTable, SeqError> {
                 .first()
                 .and_then(|s| Ty::from_sig(s))
                 .unwrap_or(Ty::Any);
-            prop_tys.entry(d.name.as_str()).or_insert(ty);
+            prop_tys.entry(d.name.clone()).or_insert(ty);
         }
     }
     let mut states: std::collections::HashMap<String, Ty> = std::collections::HashMap::new();
@@ -1686,7 +1783,7 @@ fn check_fns(file: &str, app: &SeqApp) -> Result<FnTable, SeqError> {
                 file,
                 s.line,
                 1,
-                format!("state '{}': typ Int/Float/String/Bool", s.name),
+                format!("state '{}': typ Int/Float/String/Bool/Color", s.name),
             ));
         };
         if prop_tys.contains_key(s.name.as_str()) {
@@ -1817,9 +1914,11 @@ fn check_fns(file: &str, app: &SeqApp) -> Result<FnTable, SeqError> {
         table.insert(f.name.clone(), FnSig { params, ret });
     }
     for f in &app.fns {
-        check_fn_body(file, f, &table, &prop_tys, &states)?;
+        let prop_refs: std::collections::HashMap<&str, Ty> =
+            prop_tys.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+        check_fn_body(file, f, &table, &prop_refs, &states)?;
     }
-    Ok(table)
+    Ok((table, prop_tys, states))
 }
 
 fn check_fn_body(

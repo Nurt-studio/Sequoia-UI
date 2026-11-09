@@ -151,3 +151,24 @@ fn deep_nesting_is_refused_not_overflow() {
     let app = parse("Main.seq", &ok_src).unwrap();
     check("Main.seq", &app).unwrap();
 }
+
+#[test]
+fn attr_expr_type_checking() {
+    let src_ok = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Text(\"hi\", size: 16 + 4)\n  }\n}\n";
+    let app = parse("Main.seq", src_ok).unwrap();
+    check("Main.seq", &app).unwrap();
+
+    let src_bool = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Text(\"hi\", size: true)\n  }\n}\n";
+    let app = parse("Main.seq", src_bool).unwrap();
+    let err = check("Main.seq", &app).unwrap_err();
+    assert!(err.message.contains("expected Float, is Bool"), "{err}");
+
+    let src_str = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Text(\"hi\", size: \"big\")\n  }\n}\n";
+    let app = parse("Main.seq", src_str).unwrap();
+    assert!(check("Main.seq", &app).is_err());
+
+    let src_prop = "app A {\n  title: \"A\"\n  size: (10, 10)\n  prop count: Int\n  window M {\n    If(when: count > 0) {\n      Text(\"yes\")\n    }\n  }\n}\n";
+    let app = parse("Main.seq", src_prop).unwrap();
+    check("Main.seq", &app).unwrap();
+}
+
