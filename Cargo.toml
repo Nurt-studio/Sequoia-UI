@@ -105,8 +105,6 @@ inherent_to_string = "allow"
 result_unit_err = "allow"
 should_implement_trait = "allow"
 
-[profile.dev]
-opt-level = 3
 
 [profile.release]
 opt-level = 3
