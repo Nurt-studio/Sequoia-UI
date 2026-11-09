@@ -73,6 +73,12 @@ pub enum FlexDir {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wrap {
+    NoWrap,
+    Wrap,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Align {
     Start,
     Center,
@@ -150,7 +156,12 @@ pub struct Style {
     pub display: Display,
     pub flex_dir: FlexDir,
     pub grid_cols: Option<u16>,
+    /// Spacing between items along the main axis (`gap` / item spacing).
     pub gap: f32,
+    /// Spacing between wrapped lines (`gap` / row gap, cross axis).
+    pub row_gap: f32,
+    pub flex_wrap: Wrap,
+    pub align_content: Align,
     pub padding: Edges,
     pub align_items: Align,
     pub justify_content: Align,
@@ -180,6 +191,9 @@ impl Default for Style {
             flex_dir: FlexDir::Row,
             grid_cols: None,
             gap: 0.0,
+            row_gap: 0.0,
+            flex_wrap: Wrap::NoWrap,
+            align_content: Align::Start,
             padding: Edges::all(0.0),
             align_items: Align::Start,
             justify_content: Align::Start,
@@ -208,6 +222,9 @@ pub struct TextStyle {
     pub color: Color,
     pub color_hex: String,
     pub align: Align,
+    /// Percent (0-100). Multiplied into the painted layer alpha, so a text
+    /// child of a translucent frame fades with it.
+    pub opacity: f32,
 }
 
 impl Default for TextStyle {
@@ -218,8 +235,98 @@ impl Default for TextStyle {
             color: Color::WHITE,
             color_hex: "#FFFFFF".into(),
             align: Align::Start,
+            opacity: 100.0,
         }
     }
+}
+
+// ── component contract (Phase 1) ──────────────────────────────
+
+/// What a prop drives on its target node. Phase 1 covers the two
+/// families from the design doc: copy (text) and colors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PropKind {
+    /// Content of a `TextNode`.
+    Text,
+    /// Background (`fill`) of an element.
+    Fill,
+    /// Text color of a `TextNode`.
+    TextColor,
+}
+
+impl PropKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PropKind::Text => "text",
+            PropKind::Fill => "fill",
+            PropKind::TextColor => "text_color",
+        }
+    }
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "text" => PropKind::Text,
+            "fill" => PropKind::Fill,
+            "text_color" => PropKind::TextColor,
+            _ => return None,
+        })
+    }
+}
+
+/// The interface a master component publishes: what it accepts (props),
+/// what it announces (events) and where parent content enters (slots).
+/// Phase 1 implements props end to end; events and slots are part of the
+/// model already, so the JSON format stays stable in later phases.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ComponentInterface {
+    pub props: Vec<PropDef>,
+    pub events: Vec<String>,
+    pub slots: Vec<SlotDef>,
+}
+
+impl ComponentInterface {
+    pub fn prop(&self, name: &str) -> Option<&PropDef> {
+        self.props.iter().find(|p| p.name == name)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.props.is_empty() && self.events.is_empty() && self.slots.is_empty()
+    }
+}
+
+/// A single knob of a component: a named value driving one node of the
+/// master subtree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropDef {
+    pub name: String,
+    /// Default value as text ("Okno", "#FA4D56", ...).
+    pub default: String,
+    /// Id of the node inside the master this prop drives.
+    pub target: u64,
+    pub kind: PropKind,
+}
+
+/// A hole for parent content. Rendered and filled in Phase 4.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlotDef {
+    pub name: String,
+    /// Id of the element the parent's content falls into.
+    pub container: u64,
+}
+
+/// One overridden prop on an instance. Keyed by prop **name** (not by node
+/// id), so overrides survive re-id and reference the master's contract.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Override {
+    pub prop: String,
+    pub value: String,
+}
+
+/// Content the parent puts into one slot of an instance (Phase 4). Stored on
+/// the instance element, keyed by slot **name**; the nodes are laid out in
+/// place of the slot container's fallback children (design doc §3.2).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlotContent {
+    pub slot: String,
+    pub nodes: Vec<SvelteNode>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -233,6 +340,18 @@ pub struct Element {
     pub locked: bool,
     pub component: bool,
     pub instance: bool,
+    /// Master contract — only meaningful when `component` is set.
+    pub interface: Option<ComponentInterface>,
+    /// Overridden props — only meaningful when `instance` is set.
+    pub overrides: Vec<Override>,
+    /// Per-slot content provided by the parent (Phase 4, `instance` only).
+    pub slot_content: Vec<SlotContent>,
+    /// Local state + rules triggered by events on this element (Phase 2).
+    pub behavior: Option<crate::model::behavior::Behavior>,
+    /// Conditional visibility: `{#if var}` (Phase 2, design doc §5.2).
+    pub binding: Option<crate::model::behavior::Binding>,
+    /// Pure-CSS hover state (Phase 2, design doc §6.1).
+    pub hover: Option<crate::model::behavior::HoverStyle>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -243,6 +362,12 @@ pub struct TextNode {
     pub style: TextStyle,
     pub width: Option<f32>, // fixed width (optional); None = auto
     pub height: Option<f32>,
+    /// Position in world coordinates, used when `absolute` is set.
+    pub x: f32,
+    pub y: f32,
+    /// Positioned freely like `position: absolute` on elements, instead of
+    /// taking a slot in the parent's flow layout.
+    pub absolute: bool,
     pub visible: bool,
     pub locked: bool,
 }
@@ -259,6 +384,14 @@ impl SvelteNode {
             SvelteNode::Element(e) => e.id,
             SvelteNode::Text(t) => t.id,
         }
+    }
+    /// A master component definition (◇).
+    pub fn is_component(&self) -> bool {
+        matches!(self, SvelteNode::Element(e) if e.component)
+    }
+    /// An instance of a component (◈).
+    pub fn is_instance(&self) -> bool {
+        matches!(self, SvelteNode::Element(e) if e.instance)
     }
     pub fn name(&self) -> &str {
         match self {
@@ -343,6 +476,12 @@ pub fn new_frame(id: u64, x: f32, y: f32, w: f32, h: f32) -> SvelteNode {
         locked: false,
         component: false,
         instance: false,
+        interface: None,
+        overrides: Vec::new(),
+        slot_content: Vec::new(),
+        behavior: None,
+        binding: None,
+        hover: None,
     })
 }
 
@@ -368,6 +507,12 @@ pub fn new_rect(id: u64, x: f32, y: f32, w: f32, h: f32, hex: u32) -> SvelteNode
         locked: false,
         component: false,
         instance: false,
+        interface: None,
+        overrides: Vec::new(),
+        slot_content: Vec::new(),
+        behavior: None,
+        binding: None,
+        hover: None,
     })
 }
 
@@ -381,9 +526,8 @@ pub fn new_ellipse(id: u64, x: f32, y: f32, w: f32, h: f32, hex: u32) -> SvelteN
 }
 
 pub fn new_text(id: u64, x: f32, y: f32, text: &str) -> SvelteNode {
-    // The text position (x, y) is determined by the parent layout (flow/flex),
-    // so the parameters are unused here — kept for compatibility with drawing tools.
-    let _ = (x, y);
+    // New text starts in the parent's flow; the drawing tools flip `absolute`
+    // so a click on the canvas places the text where the pointer was.
     SvelteNode::Text(TextNode {
         id,
         name: format!("Text {}", id),
@@ -391,6 +535,9 @@ pub fn new_text(id: u64, x: f32, y: f32, text: &str) -> SvelteNode {
         style: TextStyle::default(),
         width: Some(200.0),
         height: Some(24.0),
+        x,
+        y,
+        absolute: false,
         visible: true,
         locked: false,
     })
@@ -428,5 +575,11 @@ pub fn new_button(id: u64, x: f32, y: f32) -> SvelteNode {
         locked: false,
         component: false,
         instance: false,
+        interface: None,
+        overrides: Vec::new(),
+        slot_content: Vec::new(),
+        behavior: None,
+        binding: None,
+        hover: None,
     })
 }

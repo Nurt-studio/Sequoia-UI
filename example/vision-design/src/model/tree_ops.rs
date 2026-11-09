@@ -40,6 +40,38 @@ pub fn parent_of<'a>(node: &'a SvelteNode, id: u64) -> Option<&'a SvelteNode> {
     None
 }
 
+/// Mutable handle on the node whose direct children contain `id`.
+pub fn parent_of_mut<'a>(node: &'a mut SvelteNode, id: u64) -> Option<&'a mut SvelteNode> {
+    if node.children().iter().any(|c| c.id() == id) {
+        return Some(node);
+    }
+    if let Some(children) = node.children_mut() {
+        for c in children.iter_mut() {
+            if let Some(p) = parent_of_mut(c, id) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Removes the direct child `id` from `parent`.
+pub fn take_child(parent: &mut SvelteNode, id: u64) -> Option<SvelteNode> {
+    let children = parent.children_mut()?;
+    let i = children.iter().position(|c| c.id() == id)?;
+    Some(children.remove(i))
+}
+
+/// Inserts `child` at `index` (clamped to the end) among `parent`'s children.
+pub fn insert_child_at(parent: &mut SvelteNode, index: usize, child: SvelteNode) -> bool {
+    let Some(children) = parent.children_mut() else {
+        return false;
+    };
+    let index = index.min(children.len());
+    children.insert(index, child);
+    true
+}
+
 pub fn remove(root: &mut Option<SvelteNode>, id: u64) -> Option<SvelteNode> {
     if let Some(r) = root {
         if r.id() == id {

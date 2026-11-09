@@ -1,0 +1,731 @@
+{
+  "version": 1,
+  "root": {
+      "type": "element",
+      "id": 1,
+      "name": "Frame 1",
+      "tag": "div",
+      "visible": true,
+      "locked": false,
+      "component": false,
+      "instance": false,
+      "behavior": {
+        "vars": [
+          {"name":"open","ty":"bool","init":false}
+        ],
+        "rules": []
+      },
+      "style": {
+        "display": "flex",
+        "flex_dir": "row",
+        "grid_cols": null,
+        "gap": 0,
+        "row_gap": 0,
+        "flex_wrap": "nowrap",
+        "align_content": "start",
+        "padding": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        },
+        "align_items": "start",
+        "justify_content": "start",
+        "position": "absolute",
+        "top": 0,
+        "right": null,
+        "bottom": null,
+        "left": 0,
+        "width": 800,
+        "height": 600,
+        "fill": "#1B1B1B",
+        "stroke": "#00000000",
+        "stroke_width": 0,
+        "radius": 0,
+        "opacity": 100
+      },
+      "children": [
+        {
+          "type": "element",
+          "id": 2,
+          "name": "Rectangle 2",
+          "tag": "div",
+          "visible": true,
+          "locked": false,
+          "component": false,
+          "instance": false,
+          "style": {
+            "display": "none",
+            "flex_dir": "row",
+            "grid_cols": null,
+            "gap": 0,
+            "row_gap": 0,
+            "flex_wrap": "nowrap",
+            "align_content": "start",
+            "padding": {
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            },
+            "align_items": "start",
+            "justify_content": "start",
+            "position": "absolute",
+            "top": 100,
+            "right": null,
+            "bottom": null,
+            "left": 100,
+            "width": 220,
+            "height": 140,
+            "fill": "#0D99FF",
+            "stroke": "#00000000",
+            "stroke_width": 0,
+            "radius": 8,
+            "opacity": 100
+          },
+          "children": []
+        },
+        {
+          "type": "element",
+          "id": 3,
+          "name": "Ellipse 3",
+          "tag": "div",
+          "visible": true,
+          "locked": false,
+          "component": false,
+          "instance": false,
+          "style": {
+            "display": "none",
+            "flex_dir": "row",
+            "grid_cols": null,
+            "gap": 0,
+            "row_gap": 0,
+            "flex_wrap": "nowrap",
+            "align_content": "start",
+            "padding": {
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            },
+            "align_items": "start",
+            "justify_content": "start",
+            "position": "absolute",
+            "top": 100,
+            "right": null,
+            "bottom": null,
+            "left": 360,
+            "width": 120,
+            "height": 120,
+            "fill": "#42BE65",
+            "stroke": "#00000000",
+            "stroke_width": 0,
+            "radius": 9999,
+            "opacity": 100
+          },
+          "children": []
+        },
+        {
+          "type": "text",
+          "id": 4,
+          "name": "Title",
+          "content": "Design with Sequoia",
+          "width": 380,
+          "height": 40,
+          "x": 0,
+          "y": 0,
+          "absolute": true,
+          "visible": true,
+          "locked": false,
+          "style": {
+            "font_size": 28,
+            "font_weight": 400,
+            "color": "#FFFFFF",
+            "align": "start"
+          }
+        },
+        {
+          "type": "element",
+          "id": 5,
+          "name": "Overlay",
+          "tag": "div",
+          "visible": true,
+          "locked": false,
+          "component": true,
+          "instance": false,
+          "interface": {
+            "props": [
+              {
+                "name": "title",
+                "default": "Okno dialogowe",
+                "kind": "text",
+                "target": 6
+              },
+              {
+                "name": "confirmTxt",
+                "default": "OK",
+                "kind": "text",
+                "target": 9
+              },
+              {
+                "name": "cancelTxt",
+                "default": "Anuluj",
+                "kind": "text",
+                "target": 11
+              },
+              {
+                "name": "accent",
+                "default": "#FA4D56",
+                "kind": "fill",
+                "target": 8
+              }
+            ],
+            "events": ["confirm", "cancel"],
+            "slots": []
+          },
+          "style": {
+            "display": "flex",
+            "flex_dir": "column",
+            "grid_cols": null,
+            "gap": 12,
+            "row_gap": 0,
+            "flex_wrap": "nowrap",
+            "align_content": "start",
+            "padding": {
+              "top": 16,
+              "right": 16,
+              "bottom": 16,
+              "left": 16
+            },
+            "align_items": "start",
+            "justify_content": "start",
+            "position": "absolute",
+            "top": 220,
+            "right": null,
+            "bottom": null,
+            "left": 417.75,
+            "width": 280,
+            "height": "auto",
+            "fill": "#26262A",
+            "stroke": "#00000000",
+            "stroke_width": 0,
+            "radius": 12,
+            "opacity": 100
+          },
+          "children": [
+            {
+              "type": "text",
+              "id": 6,
+              "name": "Dialog title",
+              "content": "Okno dialogowe",
+              "width": null,
+              "height": null,
+              "x": 500,
+              "y": 360,
+              "absolute": true,
+              "visible": true,
+              "locked": false,
+              "style": {
+                "font_size": 15,
+                "font_weight": 600,
+                "color": "#FFFFFF",
+                "align": "start"
+              }
+            },
+            {
+              "type": "element",
+              "id": 7,
+              "name": "Actions",
+              "tag": "div",
+              "visible": true,
+              "locked": false,
+              "component": false,
+              "instance": false,
+              "style": {
+                "display": "flex",
+                "flex_dir": "row",
+                "grid_cols": null,
+                "gap": 8,
+                "row_gap": 0,
+                "flex_wrap": "nowrap",
+                "align_content": "start",
+                "padding": {
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "align_items": "start",
+                "justify_content": "end",
+                "position": "relative",
+                "top": 346,
+                "right": null,
+                "bottom": null,
+                "left": 516,
+                "width": "fill",
+                "height": "auto",
+                "fill": "#26262A",
+                "stroke": "#00000000",
+                "stroke_width": 0,
+                "radius": 0,
+                "opacity": 100
+              },
+              "children": [
+                {
+                  "type": "element",
+                  "id": 10,
+                  "name": "Cancel button",
+                  "tag": "button",
+                  "visible": true,
+                  "locked": false,
+                  "component": false,
+                  "instance": false,
+                  "behavior": {
+                    "vars": [],
+                    "rules": [
+                      {"on":"click","do": [{"act":"emit","event":"cancel"}]}
+                    ]
+                  },
+                  "hover": {"fill":"#4A4A4E"},
+                  "style": {
+                    "display": "none",
+                    "flex_dir": "row",
+                    "grid_cols": null,
+                    "gap": 0,
+                    "row_gap": 0,
+                    "flex_wrap": "nowrap",
+                    "align_content": "start",
+                    "padding": {
+                      "top": 7,
+                      "right": 14,
+                      "bottom": 7,
+                      "left": 14
+                    },
+                    "align_items": "start",
+                    "justify_content": "start",
+                    "position": "relative",
+                    "top": null,
+                    "right": null,
+                    "bottom": null,
+                    "left": null,
+                    "width": "auto",
+                    "height": "auto",
+                    "fill": "#3A3A3E",
+                    "stroke": "#00000000",
+                    "stroke_width": 0,
+                    "radius": 8,
+                    "opacity": 100
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": 11,
+                      "name": "Cancel label",
+                      "content": "Anuluj",
+                      "width": null,
+                      "height": null,
+                      "x": 0,
+                      "y": 0,
+                      "absolute": false,
+                      "visible": true,
+                      "locked": false,
+                      "style": {
+                        "font_size": 13,
+                        "font_weight": 600,
+                        "color": "#E8E8E8",
+                        "align": "start"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "element",
+                  "id": 8,
+                  "name": "Confirm button",
+                  "tag": "button",
+                  "visible": true,
+                  "locked": false,
+                  "component": false,
+                  "instance": false,
+                  "behavior": {
+                    "vars": [],
+                    "rules": [
+                      {"on":"click","do": [{"act":"emit","event":"confirm"}]}
+                    ]
+                  },
+                  "hover": {"fill":"#FF6B72"},
+                  "style": {
+                    "display": "none",
+                    "flex_dir": "row",
+                    "grid_cols": null,
+                    "gap": 0,
+                    "row_gap": 0,
+                    "flex_wrap": "nowrap",
+                    "align_content": "start",
+                    "padding": {
+                      "top": 7,
+                      "right": 14,
+                      "bottom": 7,
+                      "left": 14
+                    },
+                    "align_items": "start",
+                    "justify_content": "start",
+                    "position": "relative",
+                    "top": null,
+                    "right": null,
+                    "bottom": null,
+                    "left": null,
+                    "width": "auto",
+                    "height": "auto",
+                    "fill": "#FA4D56",
+                    "stroke": "#00000000",
+                    "stroke_width": 0,
+                    "radius": 8,
+                    "opacity": 100
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": 9,
+                      "name": "Confirm label",
+                      "content": "OK",
+                      "width": null,
+                      "height": null,
+                      "x": 0,
+                      "y": 0,
+                      "absolute": false,
+                      "visible": true,
+                      "locked": false,
+                      "style": {
+                        "font_size": 13,
+                        "font_weight": 600,
+                        "color": "#FFFFFF",
+                        "align": "start"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "element",
+          "id": 12,
+          "name": "Overlay",
+          "tag": "div",
+          "visible": true,
+          "locked": false,
+          "component": false,
+          "instance": true,
+          "overrides": [
+            {
+              "prop": "title",
+              "value": "Usunąć plik?"
+            },
+            {
+              "prop": "confirmTxt",
+              "value": "Usuń"
+            },
+            {
+              "prop": "accent",
+              "value": "#42BE65"
+            }
+          ],
+          "binding": {"var":"open","transition":{"kind":"slide","ms":200}},
+          "style": {
+            "display": "flex",
+            "flex_dir": "column",
+            "grid_cols": null,
+            "gap": 12,
+            "row_gap": 0,
+            "flex_wrap": "nowrap",
+            "align_content": "start",
+            "padding": {
+              "top": 16,
+              "right": 16,
+              "bottom": 16,
+              "left": 16
+            },
+            "align_items": "start",
+            "justify_content": "start",
+            "position": "absolute",
+            "top": 360,
+            "right": null,
+            "bottom": null,
+            "left": 100,
+            "width": 280,
+            "height": "auto",
+            "fill": "#26262A",
+            "stroke": "#00000000",
+            "stroke_width": 0,
+            "radius": 12,
+            "opacity": 100
+          },
+          "children": [
+            {
+              "type": "text",
+              "id": 13,
+              "name": "Dialog title",
+              "content": "Usunąć plik?",
+              "width": null,
+              "height": null,
+              "x": 0,
+              "y": 0,
+              "absolute": false,
+              "visible": true,
+              "locked": false,
+              "style": {
+                "font_size": 15,
+                "font_weight": 600,
+                "color": "#FFFFFF",
+                "align": "start"
+              }
+            },
+            {
+              "type": "element",
+              "id": 14,
+              "name": "Actions",
+              "tag": "div",
+              "visible": true,
+              "locked": false,
+              "component": false,
+              "instance": false,
+              "style": {
+                "display": "flex",
+                "flex_dir": "row",
+                "grid_cols": null,
+                "gap": 8,
+                "row_gap": 0,
+                "flex_wrap": "nowrap",
+                "align_content": "start",
+                "padding": {
+                  "top": 0,
+                  "right": 0,
+                  "bottom": 0,
+                  "left": 0
+                },
+                "align_items": "start",
+                "justify_content": "end",
+                "position": "relative",
+                "top": null,
+                "right": null,
+                "bottom": null,
+                "left": null,
+                "width": "fill",
+                "height": "auto",
+                "fill": "#00000000",
+                "stroke": "#00000000",
+                "stroke_width": 0,
+                "radius": 0,
+                "opacity": 100
+              },
+              "children": [
+                {
+                  "type": "element",
+                  "id": 15,
+                  "name": "Cancel button",
+                  "tag": "button",
+                  "visible": true,
+                  "locked": false,
+                  "component": false,
+                  "instance": false,
+                  "behavior": {
+                    "vars": [],
+                    "rules": [
+                      {"on":"click","do": [{"act":"emit","event":"cancel"}]}
+                    ]
+                  },
+                  "hover": {"fill":"#4A4A4E"},
+                  "style": {
+                    "display": "none",
+                    "flex_dir": "row",
+                    "grid_cols": null,
+                    "gap": 0,
+                    "row_gap": 0,
+                    "flex_wrap": "nowrap",
+                    "align_content": "start",
+                    "padding": {
+                      "top": 7,
+                      "right": 14,
+                      "bottom": 7,
+                      "left": 14
+                    },
+                    "align_items": "start",
+                    "justify_content": "start",
+                    "position": "relative",
+                    "top": null,
+                    "right": null,
+                    "bottom": null,
+                    "left": null,
+                    "width": "auto",
+                    "height": "auto",
+                    "fill": "#3A3A3E",
+                    "stroke": "#00000000",
+                    "stroke_width": 0,
+                    "radius": 8,
+                    "opacity": 100
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": 16,
+                      "name": "Cancel label",
+                      "content": "Anuluj",
+                      "width": null,
+                      "height": null,
+                      "x": 0,
+                      "y": 0,
+                      "absolute": false,
+                      "visible": true,
+                      "locked": false,
+                      "style": {
+                        "font_size": 13,
+                        "font_weight": 600,
+                        "color": "#E8E8E8",
+                        "align": "start"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "element",
+                  "id": 17,
+                  "name": "Confirm button",
+                  "tag": "button",
+                  "visible": true,
+                  "locked": false,
+                  "component": false,
+                  "instance": false,
+                  "behavior": {
+                    "vars": [],
+                    "rules": [
+                      {"on":"click","do": [{"act":"emit","event":"confirm"}]}
+                    ]
+                  },
+                  "hover": {"fill":"#FF6B72"},
+                  "style": {
+                    "display": "none",
+                    "flex_dir": "row",
+                    "grid_cols": null,
+                    "gap": 0,
+                    "row_gap": 0,
+                    "flex_wrap": "nowrap",
+                    "align_content": "start",
+                    "padding": {
+                      "top": 7,
+                      "right": 14,
+                      "bottom": 7,
+                      "left": 14
+                    },
+                    "align_items": "start",
+                    "justify_content": "start",
+                    "position": "relative",
+                    "top": null,
+                    "right": null,
+                    "bottom": null,
+                    "left": null,
+                    "width": "auto",
+                    "height": "auto",
+                    "fill": "#42BE65",
+                    "stroke": "#00000000",
+                    "stroke_width": 0,
+                    "radius": 8,
+                    "opacity": 100
+                  },
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": 18,
+                      "name": "Confirm label",
+                      "content": "Usuń",
+                      "width": null,
+                      "height": null,
+                      "x": 0,
+                      "y": 0,
+                      "absolute": false,
+                      "visible": true,
+                      "locked": false,
+                      "style": {
+                        "font_size": 13,
+                        "font_weight": 600,
+                        "color": "#FFFFFF",
+                        "align": "start"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "element",
+          "id": 19,
+          "name": "Button 19",
+          "tag": "button",
+          "visible": true,
+          "locked": false,
+          "component": false,
+          "instance": false,
+          "behavior": {
+            "vars": [],
+            "rules": [
+              {"on":"click","do": [{"act":"toggle","var":"open"}]}
+            ]
+          },
+          "hover": {"fill":"#3DB6FF"},
+          "style": {
+            "display": "none",
+            "flex_dir": "row",
+            "grid_cols": null,
+            "gap": 0,
+            "row_gap": 0,
+            "flex_wrap": "nowrap",
+            "align_content": "start",
+            "padding": {
+              "top": 8,
+              "right": 16,
+              "bottom": 8,
+              "left": 16
+            },
+            "align_items": "start",
+            "justify_content": "start",
+            "position": "absolute",
+            "top": 500,
+            "right": null,
+            "bottom": null,
+            "left": 100,
+            "width": "auto",
+            "height": "auto",
+            "fill": "#0D99FF",
+            "stroke": "#00000000",
+            "stroke_width": 0,
+            "radius": 8,
+            "opacity": 100
+          },
+          "children": [
+            {
+              "type": "text",
+              "id": 20,
+              "name": "Button label 19",
+              "content": "Show dialog",
+              "width": null,
+              "height": null,
+              "x": 0,
+              "y": 0,
+              "absolute": false,
+              "visible": true,
+              "locked": false,
+              "style": {
+                "font_size": 13,
+                "font_weight": 600,
+                "color": "#FFFFFF",
+                "align": "start"
+              }
+            }
+          ]
+        }
+      ]
+    }
+}

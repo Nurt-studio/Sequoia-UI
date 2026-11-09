@@ -98,6 +98,12 @@ fn scene_tree(n: usize) -> SvelteNode {
             locked: false,
             component: false,
             instance: false,
+            interface: None,
+            overrides: Vec::new(),
+            slot_content: Vec::new(),
+            behavior: None,
+            binding: None,
+            hover: None,
         }));
     }
 
@@ -121,6 +127,12 @@ fn scene_tree(n: usize) -> SvelteNode {
         locked: false,
         component: false,
         instance: false,
+        interface: None,
+        overrides: Vec::new(),
+        slot_content: Vec::new(),
+        behavior: None,
+        binding: None,
+        hover: None,
     })
 }
 

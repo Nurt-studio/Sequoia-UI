@@ -2,15 +2,26 @@ use super::EditorState;
 use crate::model::svelte_ast::SvelteNode;
 
 impl EditorState {
+    /// Snapshots the PRE-mutation tree. Called before every editor
+    /// mutation, so the value differs from the post-mutation root and must
+    /// not go through `push_snapshot`'s no-op dedupe — otherwise the undo
+    /// stack (and the node-graph rebuild stamp, which is the history
+    /// length) would never move.
     pub(crate) fn push_history(&self) {
-        let current = self.root.get_untracked();
-        self.push_snapshot(current);
+        self.record(self.root.get_untracked());
     }
 
+    /// Pushes an explicitly captured older state (e.g. the drag-session
+    /// `before` snapshot taken at pointer-down). Skips when the captured
+    /// state equals the current one (click without a drag).
     pub(crate) fn push_snapshot(&self, prev: Option<SvelteNode>) {
         if prev == self.root.get_untracked() {
             return;
         }
+        self.record(prev);
+    }
+
+    fn record(&self, prev: Option<SvelteNode>) {
         self.history.borrow_mut().push(prev);
         self.future.borrow_mut().clear();
         if self.history.borrow().len() > 80 {

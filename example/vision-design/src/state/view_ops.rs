@@ -146,6 +146,34 @@ impl EditorState {
         }
     }
 
+    /// Multi-file export: masters → `svelte-project/components/*.svelte`,
+    /// the page → `svelte-project/App.svelte`.
+    pub(crate) fn save_svelte_project(&self) {
+        let root = self.root.get_untracked();
+        let files = crate::codegen::export_project(&root);
+        let dir = std::path::Path::new("svelte-project");
+        let mut ok = true;
+        for f in &files {
+            let path = dir.join(&f.path);
+            match std::fs::create_dir_all(path.parent().unwrap_or(dir))
+                .and_then(|_| std::fs::write(&path, &f.code))
+            {
+                Ok(_) => {}
+                Err(_) => ok = false,
+            }
+        }
+        if ok {
+            self.toast(format!(
+                "Exported {} file{} to {}/",
+                files.len(),
+                if files.len() == 1 { "" } else { "s" },
+                dir.display()
+            ));
+        } else {
+            self.toast_error("Could not write the Svelte project");
+        }
+    }
+
     // ─────────────────────────────── JSON ───────────────────────────────
 
     /// Exports the document (AST) as JSON to the system clipboard.
@@ -199,51 +227,135 @@ impl EditorState {
 
     // ─────────────────────────────── Auto layout ───────────────────────────────
 
-    /// Cycles the auto layout mode of the selected frame: none → row → column → grid → none.
-    pub(crate) fn auto_layout_selection(&self) {
-        use crate::model::svelte_ast::{Display, FlexDir};
+    /// Applies one auto layout mode (`H`, `V`, `G` or `NONE`) to the selected
+    /// frame.
+    ///
+    /// Applying a flow mode pulls the frame's absolutely positioned children
+    /// into that flow — an auto-layout parent skips absolute children, so
+    /// without this the layout changed but nothing on the canvas moved ("auto
+    /// layout doesn't work"). Turning the layout off bakes the current world
+    /// rectangles back into the children, so nothing jumps. Both the panel
+    /// buttons and Ctrl+L go through here, so they cannot disagree.
+    pub(crate) fn set_layout_mode(&self, mode: &str) {
+        use crate::model::layout_engine::is_absolute;
+        use crate::model::svelte_ast::{Display, FlexDir, SvelteNode};
         let Some(id) = self.selected_layer.get_untracked() else {
             self.toast_warn("Nothing selected");
             return;
         };
-        let mut msg = String::new();
+        let is_element = self
+            .root
+            .get_untracked()
+            .as_ref()
+            .and_then(|r| crate::model::tree_ops::find(r, id))
+            .is_some_and(|n| matches!(n, SvelteNode::Element(_)));
+        if !is_element {
+            self.toast_warn("Selected layer is not a frame");
+            return;
+        }
+
+        // World rects of the children BEFORE the mode change — turning the
+        // layout off bakes them into `left`/`top` so nothing jumps.
+        let world: std::collections::HashMap<u64, (f32, f32)> = self
+            .flat_snapshot()
+            .into_iter()
+            .map(|f| (f.id, (f.rect.left(), f.rect.top())))
+            .collect();
         self.push_history();
         self.root.update(|r| {
             let Some(rr) = r else { return };
-            if let Some(crate::model::svelte_ast::SvelteNode::Element(e)) =
-                crate::model::tree_ops::find_mut(rr, id)
-            {
-                match e.style.display {
-                    Display::None => {
-                        e.style.display = Display::Flex;
-                        e.style.flex_dir = FlexDir::Row;
-                        msg = "Auto layout: row (H)".into();
+            let Some(SvelteNode::Element(e)) = crate::model::tree_ops::find_mut(rr, id) else {
+                return;
+            };
+            let was_flow = matches!(e.style.display, Display::Flex | Display::Grid);
+            match mode {
+                "H" => {
+                    e.style.display = Display::Flex;
+                    e.style.flex_dir = FlexDir::Row;
+                }
+                "V" => {
+                    e.style.display = Display::Flex;
+                    e.style.flex_dir = FlexDir::Col;
+                }
+                "G" => {
+                    e.style.display = Display::Grid;
+                    if e.style.grid_cols.is_none() {
+                        e.style.grid_cols = Some(2);
                     }
-                    Display::Flex if e.style.flex_dir == FlexDir::Row => {
-                        e.style.display = Display::Flex;
-                        e.style.flex_dir = FlexDir::Col;
-                        msg = "Auto layout: column (V)".into();
-                    }
-                    Display::Flex => {
-                        e.style.display = Display::Grid;
-                        if e.style.grid_cols.is_none() {
-                            e.style.grid_cols = Some(2);
+                }
+                _ => {
+                    e.style.display = Display::None;
+                    e.style.grid_cols = None;
+                }
+            }
+            let now_flow = matches!(e.style.display, Display::Flex | Display::Grid);
+            if now_flow {
+                for c in e.children.iter_mut() {
+                    if is_absolute(c) {
+                        // Enter the flow: the parent positions it from now on.
+                        match c {
+                            SvelteNode::Element(ce) => {
+                                ce.style.position = crate::model::svelte_ast::Position::Relative;
+                                ce.style.left = None;
+                                ce.style.top = None;
+                                ce.style.right = None;
+                                ce.style.bottom = None;
+                            }
+                            SvelteNode::Text(ct) => ct.absolute = false,
                         }
-                        msg = "Auto layout: grid (G, 2 columns)".into();
                     }
-                    Display::Grid => {
-                        e.style.display = Display::None;
-                        e.style.grid_cols = None;
-                        msg = "Auto layout disabled".into();
+                }
+            } else if was_flow {
+                for c in e.children.iter_mut() {
+                    if !is_absolute(c) {
+                        // Layout off: keep the current on-screen rectangle.
+                        let (x, y) = world.get(&c.id()).copied().unwrap_or((0.0, 0.0));
+                        match c {
+                            SvelteNode::Element(ce) => {
+                                ce.style.position = crate::model::svelte_ast::Position::Absolute;
+                                ce.style.left = Some(x);
+                                ce.style.top = Some(y);
+                            }
+                            SvelteNode::Text(ct) => {
+                                ct.absolute = true;
+                                ct.x = x;
+                                ct.y = y;
+                            }
+                        }
                     }
                 }
             }
         });
-        if msg.is_empty() {
+        self.toast(match mode {
+            "H" => "Auto layout: row (H)",
+            "V" => "Auto layout: column (V)",
+            "G" => "Auto layout: grid (G, 2 columns)",
+            _ => "Auto layout disabled",
+        });
+    }
+
+    /// Cycles the auto layout mode of the selected frame: none → row → column → grid → none.
+    pub(crate) fn auto_layout_selection(&self) {
+        use crate::model::svelte_ast::{Display, FlexDir, SvelteNode};
+        let Some(id) = self.selected_layer.get_untracked() else {
+            self.toast_warn("Nothing selected");
+            return;
+        };
+        let root = self.root.get_untracked();
+        let Some(SvelteNode::Element(e)) = root
+            .as_ref()
+            .and_then(|r| crate::model::tree_ops::find(r, id))
+        else {
             self.toast_warn("Selected layer is not a frame");
-        } else {
-            self.toast(msg);
-        }
+            return;
+        };
+        let next = match e.style.display {
+            Display::None => "H",
+            Display::Flex if e.style.flex_dir == FlexDir::Row => "V",
+            Display::Flex => "G",
+            Display::Grid => "NONE",
+        };
+        self.set_layout_mode(next);
     }
 
     pub(crate) fn apply_code_edit(&self, new_code: String) {

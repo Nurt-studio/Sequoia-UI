@@ -4,13 +4,7 @@ use crate::model::tree_ops;
 
 impl EditorState {
     pub(crate) fn new_document(&self) {
-        self.push_history();
-        self.root.set(None);
-        self.selected_layer.set(None);
-        self.zoom.set(1.0);
-        self.pan_x.set(0.0);
-        self.pan_y.set(0.0);
-        self.toast("New document");
+        self.new_project();
     }
 
     pub(crate) fn duplicate_selected(&self) {
@@ -168,6 +162,17 @@ impl EditorState {
         let Some(id) = self.selected_layer.get_untracked() else {
             return;
         };
+        self.toggle_layer_visible(id);
+    }
+
+    /// Eye toggle in the Layers panel: flips `visible` in the DOCUMENT.
+    ///
+    /// The old code mutated the derived `layers` signal, which the layout
+    /// effect overwrote on the next rebuild — the change never stuck (and
+    /// hidden layers were not even listed). Hidden layers now stay in the
+    /// list (dimmed) and the eye actually hides/shows on canvas.
+    pub(crate) fn toggle_layer_visible(&self, id: u64) {
+        self.push_history();
         self.root.update(|r| {
             if let Some(rr) = r {
                 if let Some(n) = tree_ops::find_mut(rr, id) {
@@ -204,9 +209,98 @@ impl EditorState {
         self.toast(if now_locked { "Locked" } else { "Unlocked" });
     }
 
+    /// Auto-layout parents position their children, so dragging a flow child
+    /// reorders it instead of moving it. Returns `true` when the layer belongs
+    /// to an auto-layout parent, i.e. the drag was handled here.
+    pub(crate) fn reorder_in_auto_layout(&self, id: u64, wx: f32, wy: f32) -> bool {
+        use crate::model::layout_engine::is_absolute;
+        use crate::model::svelte_ast::{Display, FlexDir};
+
+        let root = self.root.get_untracked();
+        let Some(r) = root.as_ref() else {
+            return false;
+        };
+        // Text is edited inline and its box is the drag target, so it never
+        // reorders: dragging always moves it, even inside auto layout.
+        if matches!(tree_ops::find(r, id), Some(SvelteNode::Text(_))) {
+            return false;
+        }
+        let Some(SvelteNode::Element(parent)) = tree_ops::parent_of(r, id) else {
+            return false;
+        };
+        let row = parent.style.display == Display::Flex && parent.style.flex_dir == FlexDir::Row;
+        let grid = parent.style.display == Display::Grid;
+        if parent.style.display != Display::Flex && !grid {
+            return false;
+        }
+
+        // Only flow children are ordered by the parent; absolute ones move freely.
+        let flow: Vec<(usize, u64)> = parent
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !is_absolute(c))
+            .map(|(i, c)| (i, c.id()))
+            .collect();
+        let Some(pos) = flow.iter().position(|(_, sid)| *sid == id) else {
+            return false;
+        };
+
+        let flat = self.flat_snapshot();
+        let mut target = 0usize;
+        for (_, sid) in &flow {
+            if *sid == id {
+                continue;
+            }
+            let Some(rect) = flat.iter().find(|f| f.id == *sid).map(|f| f.rect) else {
+                continue;
+            };
+            let before = if grid {
+                let mid_y = rect.top() + rect.size.height * 0.5;
+                wy > mid_y + 0.01
+                    || (wy >= rect.top()
+                        && wy <= rect.top() + rect.size.height
+                        && wx > rect.left() + rect.size.width * 0.5)
+            } else if row {
+                wx > rect.left() + rect.size.width * 0.5
+            } else {
+                wy > rect.top() + rect.size.height * 0.5
+            };
+            if before {
+                target += 1;
+            }
+        }
+        if target == pos {
+            return true;
+        }
+
+        let before_id = flow
+            .iter()
+            .filter(|(_, sid)| *sid != id)
+            .nth(target)
+            .map(|(_, sid)| *sid);
+        self.root.update(|slot| {
+            if let Some(rr) = slot.as_mut()
+                && let Some(p) = tree_ops::parent_of_mut(rr, id)
+                && let Some(node) = tree_ops::take_child(p, id)
+            {
+                let index = before_id
+                    .and_then(|bid| p.children().iter().position(|c| c.id() == bid))
+                    .unwrap_or(usize::MAX);
+                tree_ops::insert_child_at(p, index, node);
+            }
+        });
+        true
+    }
+
     pub(crate) fn move_layer(&self, id: u64, x: f32, y: f32) {
         self.root.update(|r| {
             if let Some(rr) = r {
+                // Flow children of an auto-layout parent are positioned by that
+                // parent; the drag handler reorders them instead.
+                if owns_child_positions(rr, id) {
+                    return;
+                }
                 if let Some(n) = tree_ops::find_mut(rr, id) {
                     match n {
                         SvelteNode::Element(e) => {
@@ -214,7 +308,11 @@ impl EditorState {
                             e.style.left = Some(x);
                             e.style.top = Some(y);
                         }
-                        SvelteNode::Text(_) => {}
+                        SvelteNode::Text(t) => {
+                            t.absolute = true;
+                            t.x = x;
+                            t.y = y;
+                        }
                     }
                 }
             }
@@ -224,16 +322,25 @@ impl EditorState {
     pub(crate) fn resize_layer(&self, id: u64, x: f32, y: f32, w: f32, h: f32) {
         self.root.update(|r| {
             if let Some(rr) = r {
+                // A flow child keeps its flow placement; resizing only changes
+                // its size, like Figma does inside auto layout.
+                let in_flow = owns_child_positions(rr, id);
                 if let Some(n) = tree_ops::find_mut(rr, id) {
                     match n {
                         SvelteNode::Element(e) => {
-                            e.style.position = crate::model::svelte_ast::Position::Absolute;
-                            e.style.left = Some(x);
-                            e.style.top = Some(y);
+                            if !in_flow {
+                                e.style.position = crate::model::svelte_ast::Position::Absolute;
+                                e.style.left = Some(x);
+                                e.style.top = Some(y);
+                            }
                             e.style.width = crate::model::svelte_ast::Dimension::Fixed(w);
                             e.style.height = crate::model::svelte_ast::Dimension::Fixed(h);
                         }
                         SvelteNode::Text(t) => {
+                            if t.absolute {
+                                t.x = x;
+                                t.y = y;
+                            }
                             t.width = Some(w);
                             t.height = Some(h);
                         }
@@ -242,22 +349,304 @@ impl EditorState {
             }
         });
     }
+
+    // ───────────────────────── Drag & drop / reparenting ─────────────────────────
+
+    /// `true` when `candidate` lies inside the subtree rooted at `id`.
+    pub(crate) fn is_descendant(&self, id: u64, candidate: u64) -> bool {
+        let root = self.root.get_untracked();
+        let Some(r) = root.as_ref() else {
+            return false;
+        };
+        let mut cursor = tree_ops::find(r, candidate);
+        while let Some(c) = cursor {
+            if c.id() == id {
+                return true;
+            }
+            cursor = tree_ops::parent_of(r, c.id());
+        }
+        false
+    }
+
+    /// Canvas drag & drop: dropping a layer over another container moves it
+    /// there. `sx/sy` is the grab point, `wx/wy` the release point; a click
+    /// without a real drag is ignored.
+    pub(crate) fn reparent_on_drop(&self, id: u64, sx: f32, sy: f32, wx: f32, wy: f32) {
+        if (wx - sx).abs() + (wy - sy).abs() <= 2.0 {
+            return;
+        }
+        let root = self.root.get_untracked();
+        let Some(r) = root.as_ref() else {
+            return;
+        };
+        let Some(cur_parent) = tree_ops::parent_of(r, id).map(|p| p.id()) else {
+            return;
+        };
+        // Deepest container under the release point, outside the dragged
+        // subtree (a frame cannot be dropped into itself).
+        let mut target =
+            crate::model::tree_ops::deepest_container_at(&self.flat_snapshot(), wx, wy);
+        while let Some(t) = target {
+            if t != id && !self.is_descendant(id, t) {
+                break;
+            }
+            target = tree_ops::parent_of(r, t).map(|p| p.id());
+        }
+        let Some(target) = target.filter(|t| *t != cur_parent && *t != 0) else {
+            return;
+        };
+        self.move_node_into(id, target);
+    }
+
+    /// Moves `id` into `new_parent` (appended last). Auto-layout parents
+    /// position flow children themselves, so the node becomes relative;
+    /// otherwise it stays absolute at its current world rectangle.
+    pub(crate) fn move_node_into(&self, id: u64, new_parent: u64) {
+        let world = self
+            .flat_snapshot()
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| (f.rect.left(), f.rect.top()))
+            .unwrap_or((0.0, 0.0));
+        self.push_history();
+        self.root.update(|r| {
+            let Some(rr) = r.as_mut() else {
+                return;
+            };
+            reparent_node(rr, id, ReparentPlace::IntoParent(new_parent), world);
+        });
+    }
+
+    /// Layers-panel drop: `Before(next_id)` inserts the node right before
+    /// `next_id` (becoming its sibling); `None` appends at the document root.
+    /// Reordering within the same parent only changes the order; crossing
+    /// parents repositions like `move_node_into`.
+    pub(crate) fn move_layer_before(&self, id: u64, next_id: Option<u64>) {
+        if next_id == Some(id) {
+            return;
+        }
+        let world = self
+            .flat_snapshot()
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| (f.rect.left(), f.rect.top()))
+            .unwrap_or((0.0, 0.0));
+        self.push_history();
+        self.root.update(|r| {
+            let Some(rr) = r.as_mut() else {
+                return;
+            };
+            if let Some(nid) = next_id {
+                if tree_ops::find(rr, nid).is_none() {
+                    return;
+                }
+            }
+            reparent_node(rr, id, ReparentPlace::Before(next_id), world);
+        });
+    }
+}
+
+/// Where a reparented node should land.
+pub(crate) enum ReparentPlace {
+    /// Appended as the last child of `parent`.
+    IntoParent(u64),
+    /// Inserted right before `next` in its parent (document root when `None`).
+    Before(Option<u64>),
+}
+
+/// Detaches `id` and re-inserts it at `place`. When the parent changes the
+/// node is repositioned: flow children of auto-layout parents become
+/// relative (the parent places them), everything else keeps its world
+/// rectangle as an absolute node. Returns `true` when the tree changed.
+fn reparent_node(root: &mut SvelteNode, id: u64, place: ReparentPlace, world: (f32, f32)) -> bool {
+    use crate::model::svelte_ast::{Display, Position};
+
+    let old_parent = tree_ops::parent_of(root, id).map(|p| p.id());
+    let old_index =
+        tree_ops::parent_of(root, id).and_then(|p| p.children().iter().position(|c| c.id() == id));
+    let root_id = root.id();
+
+    // Resolve the destination BEFORE detaching. A drop target that lives in
+    // the dragged subtree disappears together with the node; resolving it
+    // afterwards made the insert fail and silently lost the layer.
+    let inside_dragged = |node: u64| {
+        let mut cursor = tree_ops::find(root, node);
+        while let Some(c) = cursor {
+            if c.id() == id {
+                return true;
+            }
+            cursor = tree_ops::parent_of(root, c.id());
+        }
+        false
+    };
+    let (parent_id, mut index) = match &place {
+        ReparentPlace::IntoParent(pid) => (*pid, usize::MAX),
+        // The root row has no parent: dropping before it means "first child of
+        // the document", not "before the root element".
+        ReparentPlace::Before(Some(next)) if *next == root_id => (root_id, 0),
+        ReparentPlace::Before(Some(next)) => match tree_ops::parent_of(root, *next) {
+            Some(p) => {
+                let idx = p
+                    .children()
+                    .iter()
+                    .position(|c| c.id() == *next)
+                    .unwrap_or(usize::MAX);
+                (p.id(), idx)
+            }
+            None => return false,
+        },
+        ReparentPlace::Before(None) => (root_id, usize::MAX),
+    };
+    // Refuse to drop a node into its own subtree, or before one of its own
+    // descendants (that slot travels with the node).
+    if parent_id == id || inside_dragged(parent_id) {
+        return false;
+    }
+    if let ReparentPlace::Before(Some(next)) = &place
+        && *next != root_id
+        && inside_dragged(*next)
+    {
+        return false;
+    }
+    // Detaching the node first shifts a later slot in the same parent left.
+    if old_parent == Some(parent_id)
+        && let Some(old) = old_index
+        && index != usize::MAX
+        && old < index
+    {
+        index -= 1;
+    }
+
+    let Some(old_p) = tree_ops::parent_of_mut(root, id) else {
+        return false;
+    };
+    let Some(node) = tree_ops::take_child(old_p, id) else {
+        return false;
+    };
+
+    let inserted = {
+        let Some(p) = tree_ops::find_mut(root, parent_id) else {
+            return false;
+        };
+        tree_ops::insert_child_at(p, index, node)
+    };
+    if !inserted {
+        return false;
+    }
+
+    // Positioning only matters when the node changed parents. Root children
+    // have no `parent_of` (None), so compare against the root id; otherwise a
+    // plain reorder at the top level would pull the layer into the root's
+    // auto layout.
+    let old_parent_id = old_parent.unwrap_or(root_id);
+    if parent_id != old_parent_id {
+        let auto = match tree_ops::find(root, parent_id) {
+            Some(SvelteNode::Element(e)) => {
+                matches!(e.style.display, Display::Flex | Display::Grid)
+            }
+            _ => false,
+        };
+        if let Some(n) = tree_ops::find_mut(root, id) {
+            match n {
+                SvelteNode::Element(e) => {
+                    if auto {
+                        e.style.position = Position::Relative;
+                        e.style.left = None;
+                        e.style.top = None;
+                    } else {
+                        e.style.position = Position::Absolute;
+                        e.style.left = Some(world.0);
+                        e.style.top = Some(world.1);
+                    }
+                    e.style.right = None;
+                    e.style.bottom = None;
+                }
+                SvelteNode::Text(t) => {
+                    if auto {
+                        t.absolute = false;
+                    } else {
+                        t.absolute = true;
+                        t.x = world.0;
+                        t.y = world.1;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// True when `id` is a flow child of an auto-layout parent, i.e. the parent
+/// decides its position.
+fn owns_child_positions(root: &SvelteNode, id: u64) -> bool {
+    use crate::model::layout_engine::is_absolute;
+    use crate::model::svelte_ast::Display;
+
+    let Some(node) = tree_ops::find(root, id) else {
+        return false;
+    };
+    // Text can always be dragged; it leaves the flow and becomes positioned.
+    if matches!(node, SvelteNode::Text(_)) {
+        return false;
+    }
+    let Some(SvelteNode::Element(parent)) = tree_ops::parent_of(root, id) else {
+        return false;
+    };
+    if parent.style.display == Display::None {
+        return false;
+    }
+    !is_absolute(node)
 }
 
 fn reid(node: &SvelteNode, next: &mut u64) -> SvelteNode {
+    let mut map = std::collections::HashMap::new();
+    reid_map(node, &mut map, next)
+}
+
+/// Deep clone with fresh ids — used by the slot-content fill (Phase 4): the
+/// copy placed in a slot is an independent node tree.
+pub(crate) fn clone_with_new_ids(node: &SvelteNode, next: &mut u64) -> SvelteNode {
+    reid(node, next)
+}
+
+/// Re-id walk that records old→new ids, so a duplicated master keeps its
+/// interface targets (and slot containers) pointing at the right nodes.
+fn reid_map(
+    node: &SvelteNode,
+    map: &mut std::collections::HashMap<u64, u64>,
+    next: &mut u64,
+) -> SvelteNode {
     let id = *next;
     *next += 1;
+    map.insert(node.id(), id);
     match node {
         SvelteNode::Element(e) => SvelteNode::Element(crate::model::svelte_ast::Element {
             id,
             name: e.name.clone(),
             tag: e.tag,
             style: e.style.clone(),
-            children: e.children.iter().map(|c| reid(c, next)).collect(),
+            children: e.children.iter().map(|c| reid_map(c, map, next)).collect(),
             visible: e.visible,
             locked: e.locked,
             component: e.component,
             instance: e.instance,
+            interface: e.interface.as_ref().map(|it| {
+                let mut it = it.clone();
+                crate::model::component_ops::remap_interface(&mut it, map);
+                it
+            }),
+            overrides: e.overrides.clone(),
+            slot_content: e
+                .slot_content
+                .iter()
+                .map(|sc| crate::model::svelte_ast::SlotContent {
+                    slot: sc.slot.clone(),
+                    nodes: sc.nodes.iter().map(|n| reid_map(n, map, next)).collect(),
+                })
+                .collect(),
+            behavior: e.behavior.clone(),
+            binding: e.binding.clone(),
+            hover: e.hover.clone(),
         }),
         SvelteNode::Text(t) => SvelteNode::Text(crate::model::svelte_ast::TextNode {
             id,
@@ -266,8 +655,171 @@ fn reid(node: &SvelteNode, next: &mut u64) -> SvelteNode {
             style: t.style.clone(),
             width: t.width,
             height: t.height,
+            x: t.x,
+            y: t.y,
+            absolute: t.absolute,
             visible: t.visible,
             locked: t.locked,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::svelte_ast::{
+        Dimension, Display, Element, FlexDir, Position, Style, Tag, new_frame, new_rect,
+    };
+
+    fn row_frame() -> SvelteNode {
+        let mut child = new_rect(2, 0.0, 0.0, 100.0, 40.0, 0x0D99FF);
+        if let SvelteNode::Element(e) = &mut child {
+            e.style.position = Position::Relative;
+        }
+        SvelteNode::Element(Element {
+            id: 1,
+            name: "Row".into(),
+            tag: Tag::Div,
+            style: Style {
+                display: Display::Flex,
+                flex_dir: FlexDir::Row,
+                width: Dimension::Fixed(400.0),
+                height: Dimension::Fixed(100.0),
+                ..Default::default()
+            },
+            children: vec![child],
+            visible: true,
+            locked: false,
+            component: false,
+            instance: false,
+            interface: None,
+            overrides: Vec::new(),
+            slot_content: Vec::new(),
+            behavior: None,
+            binding: None,
+            hover: None,
+        })
+    }
+
+    #[test]
+    fn opacity_of_a_frame_multiplies_into_children() {
+        let mut frame = new_frame(1, 0.0, 0.0, 200.0, 100.0);
+        let mut child = new_rect(2, 10.0, 10.0, 20.0, 20.0, 0x0D99FF);
+        if let (SvelteNode::Element(f), SvelteNode::Element(c)) = (&mut frame, &mut child) {
+            f.style.opacity = 50.0;
+            c.style.opacity = 50.0;
+        }
+        let text = SvelteNode::Text(crate::model::svelte_ast::TextNode {
+            id: 3,
+            name: "Label".into(),
+            content: "Hi".into(),
+            style: crate::model::svelte_ast::TextStyle {
+                opacity: 50.0,
+                ..Default::default()
+            },
+            width: None,
+            height: None,
+            x: 80.0,
+            y: 10.0,
+            absolute: false,
+            visible: true,
+            locked: false,
+        });
+        if let SvelteNode::Element(f) = &mut frame {
+            f.children = vec![child, text];
+        }
+
+        let flat = crate::model::layout_engine::compute_layout(&Some(frame));
+        let layers = crate::state::layers_from_flat(&flat);
+        let frame_op = layers.iter().find(|l| l.id == 1).expect("frame").opacity;
+        let child_op = layers.iter().find(|l| l.id == 2).expect("child").opacity;
+        let text_op = layers.iter().find(|l| l.id == 3).expect("text").opacity;
+        assert_eq!(frame_op, 50.0);
+        assert_eq!(child_op, 25.0, "child opacity is relative to its parent");
+        assert_eq!(text_op, 25.0, "text opacity is relative to its parent");
+    }
+
+    #[test]
+    fn reordering_root_children_does_not_change_their_positioning() {
+        let mut root = new_frame(1, 0.0, 0.0, 400.0, 200.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.children = vec![
+                new_rect(2, 10.0, 20.0, 50.0, 40.0, 0x0D99FF),
+                new_rect(3, 80.0, 20.0, 50.0, 40.0, 0x42BE65),
+            ];
+        }
+        let state = EditorState::with_seed(Some(root), Some(2));
+        state.move_layer_before(2, Some(3));
+
+        let root = state.root.get_untracked().expect("root");
+        match tree_ops::find(&root, 2).expect("layer") {
+            SvelteNode::Element(e) => {
+                assert_eq!(e.style.position, Position::Absolute);
+                assert_eq!(e.style.left, Some(10.0));
+                assert_eq!(e.style.top, Some(20.0));
+            }
+            _ => panic!("expected an element"),
+        }
+    }
+
+    #[test]
+    fn dropping_before_the_root_row_keeps_the_layer() {
+        let state = EditorState::with_seed(Some(row_frame()), Some(2));
+        state.move_layer_before(2, Some(1));
+
+        let root = state.root.get_untracked().expect("root");
+        assert!(tree_ops::find(&root, 2).is_some(), "layer lost on drop");
+        assert_eq!(root.children().first().map(|c| c.id()), Some(2));
+    }
+
+    #[test]
+    fn dropping_a_frame_before_its_own_child_keeps_the_frame() {
+        let mut outer = new_frame(1, 0.0, 0.0, 400.0, 200.0);
+        let mut inner = new_frame(2, 0.0, 0.0, 200.0, 100.0);
+        if let SvelteNode::Element(e) = &mut inner {
+            e.style.position = Position::Absolute;
+            e.children = vec![new_rect(3, 0.0, 0.0, 50.0, 20.0, 0x0D99FF)];
+        }
+        if let SvelteNode::Element(e) = &mut outer {
+            e.style.display = Display::None;
+            e.children = vec![inner, new_rect(4, 300.0, 0.0, 50.0, 20.0, 0x42BE65)];
+        }
+        let state = EditorState::with_seed(Some(outer), Some(2));
+        state.move_layer_before(2, Some(3));
+
+        let root = state.root.get_untracked().expect("root");
+        assert!(tree_ops::find(&root, 2).is_some(), "frame lost on drop");
+        assert!(tree_ops::find(&root, 3).is_some(), "child lost on drop");
+    }
+
+    #[test]
+    fn resizing_and_nudging_a_flow_child_keeps_it_in_the_auto_layout() {
+        let state = EditorState::with_seed(Some(row_frame()), Some(2));
+
+        state.resize_layer(2, 500.0, 500.0, 150.0, 50.0);
+        state.move_layer(2, 900.0, 900.0);
+
+        let root = state.root.get_untracked().expect("root");
+        match tree_ops::find(&root, 2).expect("child") {
+            SvelteNode::Element(e) => {
+                assert_eq!(e.style.position, Position::Relative, "stays in the flow");
+                assert_eq!(e.style.width, Dimension::Fixed(150.0));
+                assert_eq!(e.style.height, Dimension::Fixed(50.0));
+            }
+            _ => panic!("expected an element"),
+        }
+
+        let rect = state
+            .flat_snapshot()
+            .into_iter()
+            .find(|f| f.id == 2)
+            .map(|f| f.rect)
+            .expect("child laid out");
+        assert_eq!(
+            (rect.left(), rect.top()),
+            (0.0, 0.0),
+            "parent still places it"
+        );
+        assert_eq!(rect.size.width, 150.0);
     }
 }
