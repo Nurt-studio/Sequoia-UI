@@ -19,8 +19,8 @@ pub use sequoia_platform::wgpu;
 pub use sequoia_platform::{
     Accelerator, AcceleratorCtx, App, CliArgs, DockLayoutStore, Executor, FileFilter,
     GlobalHotkeys, HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles,
-    RedrawMode, Settings, SingleInstance, WindowSettings, WindowSpec, Windows, help_text,
-    native_message, not_editing,
+    RedrawMode, ResizeDirection, Settings, SingleInstance, WindowSettings, WindowSpec, Windows,
+    help_text, native_message, not_editing,
 };
 pub use sequoia_reactive as reactive;
 pub use sequoia_reactive::{Binding, Environment, Signal, Store, UndoSignal};
@@ -39,9 +39,10 @@ pub mod prelude {
     pub use crate::{
         Accelerator, AcceleratorCtx, AnyView, App, AsyncRuntime, AsyncState, CliArgs, Debouncer,
         DockLayoutStore, Emitter, Environment, Executor, FileFilter, GlobalHotkeys, HotkeyError,
-        HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles, RedrawMode, Resource,
-        ScopedTask, Settings, Signal, SignalAsyncExt, SingleInstance, Store, TaskHandle, TaskId,
-        Throttler, View, WindowId, WindowSpec, Windows, help_text, native_message, not_editing,
+        HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles, RedrawMode, ResizeDirection,
+        Resource, ScopedTask, Settings, Signal, SignalAsyncExt, SingleInstance, Store, TaskHandle,
+        TaskId, Throttler, View, WindowId, WindowSpec, Windows, help_text, native_message,
+        not_editing,
     };
     pub use crate::{sleep, timeout};
     pub use sequoia_animation::Track as AnimTrack;

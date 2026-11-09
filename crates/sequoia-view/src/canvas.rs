@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use sequoia_core::{BlendMode, Color, Dirty, Fill, Length, Point, Rect, Size, TexInput, Vec2};
 use sequoia_input::{
-    CursorIcon, Event, EventPhase, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
+    CursorIcon, Event, EventPhase, ImeEvent, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
 };
 use sequoia_layout::LayoutStyle;
 
@@ -69,6 +69,8 @@ pub struct Canvas {
     on_pointer: Option<Rc<dyn Fn(Point, &PointerEvent, &mut EventCtx)>>,
     bindings: Vec<KeyBinding>,
     on_key: Option<Rc<dyn Fn(&KeyEvent) -> bool>>,
+    on_ime: Option<Rc<dyn Fn(&ImeEvent) -> bool>>,
+    text_input: Option<Rc<dyn Fn() -> bool>>,
     track: Option<Rc<dyn Fn()>>,
     clip: bool,
 
@@ -105,6 +107,8 @@ impl Canvas {
             on_pointer: None,
             bindings: Vec::new(),
             on_key: None,
+            on_ime: None,
+            text_input: None,
             track: None,
             clip: true,
             overflow: 0.0,
@@ -377,6 +381,27 @@ impl Canvas {
         self
     }
 
+    /// Forwards platform input-method events to `handler`.
+    ///
+    /// Return `true` from the handler when the event was consumed. Composition
+    /// events only reach the canvas while [`Canvas::text_input`] reports that it
+    /// is editing text.
+    pub fn on_ime(mut self, handler: impl Fn(&ImeEvent) -> bool + 'static) -> Self {
+        self.on_ime = Some(Rc::new(handler));
+        self
+    }
+
+    /// Reports this canvas as a text input while `editing` returns `true`.
+    ///
+    /// Hosts use this to keep plain-key accelerators from stealing keystrokes
+    /// and to enable the platform IME while an inline text editor is open on the
+    /// canvas. The predicate is read on every keystroke, so it can follow a
+    /// signal instead of the view being rebuilt.
+    pub fn text_input(mut self, editing: impl Fn() -> bool + 'static) -> Self {
+        self.text_input = Some(Rc::new(editing));
+        self
+    }
+
     pub fn track(mut self, track: impl Fn() + 'static) -> Self {
         self.track = Some(Rc::new(track));
         self
@@ -579,6 +604,10 @@ impl View for Canvas {
         true
     }
 
+    fn accepts_text_input(&self) -> bool {
+        self.text_input.as_ref().is_some_and(|editing| editing())
+    }
+
     fn cursor_icon(&self, _state: sequoia_style::VisualState) -> sequoia_input::CursorIcon {
         self.cursor
     }
@@ -648,7 +677,13 @@ impl View for Canvas {
                     ctx.handled();
                 }
             }
-            Event::Ime(_) => {}
+            Event::Ime(ime) => {
+                if let Some(handler) = &self.on_ime
+                    && handler(ime)
+                {
+                    ctx.handled();
+                }
+            }
             Event::FilesHovered { .. } | Event::FilesDropped { .. } | Event::FilesCancelled => {}
 
             _ => {}

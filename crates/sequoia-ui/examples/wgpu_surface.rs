@@ -252,21 +252,13 @@ fn main() {
                 .size(12.0)
                 .color(MUTED),
         )
-        .child(
-            Button::new("Pause / play")
-                .width(180.0)
-                .on_click(move || {
-                    let mut field = pause.borrow_mut();
-                    field.animating = !field.animating;
-                }),
-        )
-        .child(
-            Button::new("Reset time")
-                .width(180.0)
-                .on_click(move || {
-                    reset.borrow_mut().time = 0.0;
-                }),
-        );
+        .child(Button::new("Pause / play").width(180.0).on_click(move || {
+            let mut field = pause.borrow_mut();
+            field.animating = !field.animating;
+        }))
+        .child(Button::new("Reset time").width(180.0).on_click(move || {
+            reset.borrow_mut().time = 0.0;
+        }));
 
     let header = Row::new()
         .fill_width()
@@ -276,11 +268,7 @@ fn main() {
         .child(Spacer::flex(1.0))
         .child(Text::new("a raw wgpu pipeline inside the layout").color(MUTED));
 
-    let body = Row::new()
-        .expand()
-        .gap(12.0)
-        .child(sidebar)
-        .child(viewport);
+    let body = Row::new().expand().gap(12.0).child(sidebar).child(viewport);
 
     let view = Column::new()
         .fill_size()

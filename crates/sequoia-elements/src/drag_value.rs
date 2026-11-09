@@ -22,6 +22,10 @@ const MAX_PRECISION: usize = 9;
 
 const CLICK_SLOP: f32 = 3.0;
 
+/// Pointer movement below this many pixels leaves the value untouched, so the
+/// jitter of a plain click does not nudge it.
+const DRAG_DEAD_ZONE: f32 = 1.0;
+
 const VARIANT_DRAG_PX: f32 = 20.0;
 
 const CARET: char = '|';
@@ -565,12 +569,19 @@ impl DragValue {
         (self.max - self.min).abs().max(f32::EPSILON)
     }
 
+    /// Units changed per pixel of drag.
+    ///
+    /// The default spans the whole range over `DRAG_PX_FULL_RANGE` pixels, but
+    /// never more than one unit per pixel: ranges like X/Y (±9999) would
+    /// otherwise jump by tens of units for a single pixel of movement.
     fn units_per_px(&self) -> f32 {
-        self.sensitivity.unwrap_or(self.span() / DRAG_PX_FULL_RANGE)
+        self.sensitivity
+            .unwrap_or((self.span() / DRAG_PX_FULL_RANGE).min(1.0))
     }
 
+    /// Arrow-key step, capped like the drag so wide ranges stay usable.
     fn key_step(&self) -> f32 {
-        self.step.unwrap_or(self.span() / KEY_FRACTION)
+        self.step.unwrap_or((self.span() / KEY_FRACTION).min(1.0))
     }
 
     fn clamped(&self, v: f32) -> f32 {
@@ -946,7 +957,7 @@ impl View for DragValue {
                 ctx.capture_pointer();
                 ctx.handled();
             }
-            Event::Pointer(PointerEvent::Move { pos, .. }) => {
+            Event::Pointer(PointerEvent::Move { pos, modifiers, .. }) => {
                 let Some(drag) = self.anchor() else { return };
 
                 if !ctx.state.pressed {
@@ -960,7 +971,22 @@ impl View for DragValue {
                     Axis::Vertical => drag.origin.y - pos.y,
                 };
                 if self.variants.is_empty() {
-                    self.set_value(drag.value + delta * self.units_per_px());
+                    let delta = if delta.abs() > DRAG_DEAD_ZONE {
+                        delta
+                    } else {
+                        0.0
+                    };
+                    // Shift scrubs finely, Ctrl/Cmd coarsely, like the wheel.
+                    let mult = if modifiers.contains(Modifiers::SHIFT) {
+                        0.1
+                    } else if modifiers.contains(Modifiers::CONTROL)
+                        || modifiers.contains(Modifiers::SUPER)
+                    {
+                        10.0
+                    } else {
+                        1.0
+                    };
+                    self.set_value(drag.value + delta * self.units_per_px() * mult);
                 } else if delta.is_finite() {
                     let len = self.variants.len() as f32;
                     let steps = (delta / VARIANT_DRAG_PX).round().clamp(-len, len) as isize;
@@ -1019,39 +1045,8 @@ impl View for DragValue {
                 ctx.handled();
             }
 
-            Event::Pointer(PointerEvent::Wheel {
-                delta, modifiers, ..
-            }) => {
-                if self.is_editing() {
-                    return;
-                }
-                let dir = if delta.y < 0.0 {
-                    1
-                } else if delta.y > 0.0 {
-                    -1
-                } else {
-                    0
-                };
-                if dir != 0 && !self.variants.is_empty() {
-                    let before = self.value.get_untracked();
-                    self.step_variant(dir);
-                    self.commit_if_changed(before);
-                } else if dir != 0 {
-                    let mult = if modifiers.contains(Modifiers::SHIFT) {
-                        0.1
-                    } else if modifiers.contains(Modifiers::CONTROL)
-                        || modifiers.contains(Modifiers::SUPER)
-                    {
-                        10.0
-                    } else {
-                        1.0
-                    };
-                    let before = self.value.get_untracked();
-                    self.set_value(before + self.span() / 100.0 * mult * dir as f32);
-                    self.commit_if_changed(before);
-                }
-                ctx.handled();
-            }
+            // Wheel events are deliberately left to bubble: scrolling over a
+            // field must scroll the panel instead of nudging the value.
             _ => {}
         }
     }

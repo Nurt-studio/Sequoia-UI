@@ -67,6 +67,10 @@ pub struct GpuRenderer {
     pub(crate) backdrop_tex: Option<BackdropBuffers>,
     pub(crate) frame_target: Option<FrameTarget>,
     pub(crate) frame_target_valid: bool,
+    /// Present mode from the window settings, restored after a live resize.
+    preferred_present_mode: wgpu::PresentMode,
+    /// Lowest-latency mode the surface supports, used while resizing.
+    resize_present_mode: wgpu::PresentMode,
     pub(crate) capacity: usize,
     pub(crate) glyph_capacity: usize,
     pub(crate) quad_ceiling: usize,
@@ -394,7 +398,10 @@ impl GpuRenderer {
             present_mode,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: resolved.view_formats,
-            desired_maximum_frame_latency: 2,
+            // One frame in flight keeps a window drag from showing a frame
+            // that is two vblanks old; the resize path also paints inside the
+            // `Resized` event, so this is the remaining presentation delay.
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
 
@@ -623,6 +630,8 @@ impl GpuRenderer {
             backdrop_tex: None,
             frame_target: None,
             frame_target_valid: false,
+            preferred_present_mode: present_mode,
+            resize_present_mode: resolve_present_mode(&caps.present_modes, PresentMode::Immediate),
             atlas_bgl,
             bind_group,
             uniform_buf,
@@ -1157,6 +1166,27 @@ impl GpuRenderer {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Uses the lowest-latency present mode while the user drags a window
+    /// edge, then returns to the configured mode.
+    ///
+    /// With Fifo, `Present` waits for a vblank, so inside Windows' modal
+    /// resize loop each step can show a frame that is one to two vblanks older
+    /// than the window - the content trails the edge and the strip the window
+    /// grew is still the window background. Presenting unpaced during the
+    /// drag removes that wait; the tear risk is limited to the resize itself.
+    pub fn set_resize_present_mode(&mut self, resizing: bool) {
+        let mode = if resizing {
+            self.resize_present_mode
+        } else {
+            self.preferred_present_mode
+        };
+        if self.config.present_mode == mode {
+            return;
+        }
+        self.config.present_mode = mode;
+        self.surface.configure(&self.device, &self.config);
+    }
+
     /// Compiles and registers a user shader from a complete WGSL module.
     ///
     /// The source must define `vs_main` and `fs_main` entry points matching the
@@ -1280,6 +1310,9 @@ impl GpuRenderer {
     /// Doing this before recording passes keeps pipeline creation out of the
     /// hot drawing loop and makes the per-blend-mode cache observable in debug.
     fn prepare_shader_pipelines(&mut self, list: &RenderList) {
+        if !list.has_shaders() {
+            return;
+        }
         for item in list.items() {
             if let sequoia_core::RenderItem::Shader(draw) = item {
                 self.ensure_shader_pipeline(draw.shader, draw.blend);
@@ -1751,14 +1784,17 @@ impl GpuRenderer {
             .as_ref()
             .map(|plan| opacity_plan_depth(plan))
             .unwrap_or(0);
-        let target_ranges: Vec<std::ops::Range<usize>> = list
-            .target_plan()
-            .into_iter()
-            .filter_map(|node| match node {
-                sequoia_core::PassNode::Render { items, .. } => Some(items),
-                _ => None,
-            })
-            .collect();
+        let target_ranges: Vec<std::ops::Range<usize>> = if list.has_targets() {
+            list.target_plan()
+                .into_iter()
+                .filter_map(|node| match node {
+                    sequoia_core::PassNode::Render { items, .. } => Some(items),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let has_targets = !target_ranges.is_empty() && !has_backdrops && !has_filters;
         if !target_ranges.is_empty() && !has_targets {
             log::warn!(
@@ -1846,7 +1882,9 @@ impl GpuRenderer {
         crate::utils::index_image_sources(scene_items, image_sources);
         let gradients = &mut self.scratch_gradients;
         let runs = &mut self.scratch_runs;
-        self.shader_data = ShaderGroupData::default();
+        self.shader_data.instances.clear();
+        self.shader_data.uniforms.clear();
+        self.shader_data.textures.clear();
         let mut backdrop_plans: Vec<BackdropSegPlan> = Vec::new();
         let mut backdrop_insts: Vec<GpuBackdrop> = Vec::new();
         let mut comp_plans: Vec<CompPlan> = Vec::new();

@@ -1280,6 +1280,10 @@ pub struct RenderList {
     filters: Vec<FilterSpan>,
 
     next_target: u64,
+
+    target_count: u32,
+
+    shader_count: u32,
 }
 
 /// Snapshot of a `RenderList` used to capture a suffix for layer caching.
@@ -1294,6 +1298,8 @@ pub struct RenderMark {
     clip_depth: usize,
     opacity_depth: usize,
     transform_depth: usize,
+    target_count: u32,
+    shader_count: u32,
 }
 
 impl RenderList {
@@ -1312,6 +1318,8 @@ impl RenderList {
         self.backdrops.clear();
         self.filters.clear();
         self.next_target = 0;
+        self.target_count = 0;
+        self.shader_count = 0;
     }
 
     pub fn push_opacity(&mut self, opacity: f32) {
@@ -1410,9 +1418,12 @@ impl RenderList {
 
     /// Returns `true` when the list contains any offscreen target pass.
     pub fn has_targets(&self) -> bool {
-        self.items
-            .iter()
-            .any(|item| matches!(item, RenderItem::TargetBegin { .. }))
+        self.target_count > 0
+    }
+
+    /// Returns `true` when the list contains any custom-shader draw.
+    pub fn has_shaders(&self) -> bool {
+        self.shader_count > 0
     }
 
     /// Builds the execution plan for offscreen targets.
@@ -1909,6 +1920,7 @@ impl RenderList {
         self.items.push(RenderItem::Shader(draw));
         self.item_clips.push(rounded);
         self.item_transforms.push(t);
+        self.shader_count += 1;
     }
 
     /// Pushes a copy of an offscreen target into the current target.
@@ -1963,6 +1975,7 @@ impl RenderList {
         self.items.push(RenderItem::TargetBegin { id, size, blend });
         self.item_clips.push(None);
         self.item_transforms.push(Transform::default());
+        self.target_count += 1;
         id
     }
 
@@ -2250,6 +2263,8 @@ impl RenderList {
             clip_depth: self.clip_stack.len(),
             opacity_depth: self.opacity_stack.len(),
             transform_depth: self.transform_stack.len(),
+            target_count: self.target_count,
+            shader_count: self.shader_count,
         }
     }
 
@@ -2304,6 +2319,8 @@ impl RenderList {
                 })
                 .collect(),
             next_target: self.next_target,
+            target_count: self.target_count.saturating_sub(mark.target_count),
+            shader_count: self.shader_count.saturating_sub(mark.shader_count),
         })
     }
 
@@ -2341,6 +2358,8 @@ impl RenderList {
                 end: span.end + base,
                 ..*span
             }));
+        self.target_count = self.target_count.saturating_add(other.target_count);
+        self.shader_count = self.shader_count.saturating_add(other.shader_count);
     }
 }
 
@@ -3421,6 +3440,43 @@ mod tests {
             RenderItem::Blit { target: id, blend: BlendMode::Screen, .. } if id == target
         ));
         assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn fast_flags_track_targets_shaders_and_cached_suffixes() {
+        let mut list = RenderList::new();
+        assert!(!list.has_targets());
+        assert!(!list.has_shaders());
+
+        let target = list.begin_target(Size::new(32.0, 16.0), BlendMode::Normal);
+        list.push_shader(ShaderDraw {
+            rect: Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+            uv: [0.0, 0.0, 1.0, 1.0],
+            shader: ShaderId::new(1),
+            uniforms: Arc::from(Vec::new()),
+            textures: Arc::from(Vec::new()),
+            blend: BlendMode::Normal,
+            opacity: 1.0,
+        });
+        assert!(list.has_targets());
+        assert!(list.has_shaders());
+
+        let mark = list.mark();
+        list.end_target(target);
+        let suffix = list.suffix(mark).expect("suffix");
+        assert!(!suffix.has_targets(), "TargetEnd adds no target");
+        assert!(!suffix.has_shaders());
+
+        let mark = list.mark();
+        list.begin_target(Size::new(8.0, 8.0), BlendMode::Normal);
+        let suffix = list.suffix(mark).expect("suffix");
+        assert!(suffix.has_targets());
+        let mut replay = RenderList::new();
+        replay.append(&suffix);
+        assert!(replay.has_targets());
+        replay.clear();
+        assert!(!replay.has_targets());
+        assert!(!replay.has_shaders());
     }
 
     #[test]

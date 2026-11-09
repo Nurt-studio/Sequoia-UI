@@ -55,6 +55,19 @@ impl ElementId {
 struct PaintPass<'a> {
     env: &'a Environment,
     hover_chain: &'a [ElementId],
+    session: &'a RefCell<PaintSession>,
+}
+
+/// Layer-cache side effects of one paint pass.
+///
+/// The prefetch pass paints placeholder shapes, so its captures and counters
+/// are kept only when no shape was missing; committing them otherwise would
+/// cache incomplete layers.
+#[derive(Default)]
+struct PaintSession {
+    layer_hits: u64,
+    layer_misses: u64,
+    captures: Vec<(LayerKey, LayerStamp, RenderList)>,
 }
 
 impl PaintPass<'_> {
@@ -1358,6 +1371,61 @@ impl Runtime {
     /// need a full CPU pass; RenderList still drops items fully outside the
     /// active clip at push time, so the visible output is the same.
     pub fn paint_region(&self, list: &mut RenderList, text: &mut TextSystem, cull: CullCtx) {
+        // Paint once into a scratch list while the shape cache records misses
+        // instead of tessellating them, then build the recorded set on worker
+        // threads before the real pass. If nothing was missing the scratch
+        // list already is the frame, so warm frames still paint only once.
+        // `paint_self` therefore has to stay free of accumulated state, which
+        // the glyph-atlas repaint loop already requires.
+        let session = RefCell::new(PaintSession::default());
+        let mut scratch = RenderList::new();
+        self.inner.shapes.begin_prefetch();
+        self.paint_pass(&mut scratch, text, cull, &session);
+        let misses = self.inner.shapes.end_prefetch();
+        if misses == 0 {
+            self.commit_paint_session(session.into_inner());
+            if list.is_empty() {
+                *list = scratch;
+            } else {
+                list.append(&scratch);
+            }
+            return;
+        }
+        // The prefetch pass painted placeholder shapes, so drop everything it
+        // would have cached and paint again with the shapes now available.
+        session.replace(PaintSession::default());
+        self.inner.shapes.tessellate_prefetch();
+        self.paint_pass(list, text, cull, &session);
+        self.commit_paint_session(session.into_inner());
+    }
+
+    fn commit_paint_session(&self, session: PaintSession) {
+        self.inner
+            .layer_hits
+            .set(self.inner.layer_hits.get().wrapping_add(session.layer_hits));
+        self.inner.layer_misses.set(
+            self.inner
+                .layer_misses
+                .get()
+                .wrapping_add(session.layer_misses),
+        );
+        if session.captures.is_empty() {
+            return;
+        }
+        let mut layers = self.inner.layers.borrow_mut();
+        for (key, stamp, captured) in session.captures {
+            layers.invalidate_element(key.element_id);
+            layers.insert_stamped(key, captured, stamp);
+        }
+    }
+
+    fn paint_pass(
+        &self,
+        list: &mut RenderList,
+        text: &mut TextSystem,
+        cull: CullCtx,
+        session: &RefCell<PaintSession>,
+    ) {
         self.inner.surfaces.borrow_mut().clear();
 
         let doomed = self.inner.overlays.borrow().transient_ids();
@@ -1372,7 +1440,17 @@ impl Runtime {
         let pass = PaintPass {
             env: &env,
             hover_chain: &hover_chain,
+            session,
         };
+        // Nothing outside the viewport can reach the image, so clip the root
+        // paint to it. Without this, an unbounded subtree (for example a
+        // scroll view whose height follows its content) keeps shaping text and
+        // pushing quads for thousands of rows that are never shown.
+        let viewport = self.inner.viewport.get();
+        let root_clip = cull.is_enabled() && !viewport.is_empty();
+        if root_clip {
+            list.push_clip(viewport);
+        }
         self.paint_rec(
             root,
             Vec2::ZERO,
@@ -1417,6 +1495,9 @@ impl Runtime {
                     pass,
                 );
             }
+        }
+        if root_clip {
+            list.pop_clip();
         }
 
         self.inner
@@ -5455,9 +5536,7 @@ impl Runtime {
                 cull,
             };
             if let Some(hit) = self.inner.layers.borrow().get_stamped(key, &stamp) {
-                self.inner
-                    .layer_hits
-                    .set(self.inner.layer_hits.get().wrapping_add(1));
+                pass.session.borrow_mut().layer_hits += 1;
                 list.append(&hit);
                 if should_clip {
                     list.pop_clip();
@@ -5470,9 +5549,7 @@ impl Runtime {
                 }
                 return;
             }
-            self.inner
-                .layer_misses
-                .set(self.inner.layer_misses.get().wrapping_add(1));
+            pass.session.borrow_mut().layer_misses += 1;
             self.inner.layers.borrow_mut().invalidate_element(id.key());
             let surfaces = self.inner.surfaces.borrow().len();
             Some((key, stamp, list.mark(), surfaces))
@@ -5566,9 +5643,10 @@ impl Runtime {
             && self.inner.surfaces.borrow().len() == surfaces
             && let Some(captured) = list.suffix(mark)
         {
-            let mut layers = self.inner.layers.borrow_mut();
-            layers.invalidate_element(key.element_id);
-            layers.insert_stamped(key, captured, stamp);
+            pass.session
+                .borrow_mut()
+                .captures
+                .push((key, stamp, captured));
         }
 
         list.truncate_clips(depth);

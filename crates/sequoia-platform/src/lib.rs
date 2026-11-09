@@ -37,7 +37,7 @@ pub use sequoia_core::WindowId;
 pub use sequoia_hotkey::{Error as HotkeyError, GlobalHotkeys, HotkeyId};
 pub use settings::{Settings, SettingsError};
 pub use single_instance::SingleInstance;
-pub use window::{WindowSettings, WindowSpec, Windows};
+pub use window::{ResizeDirection, WindowSettings, WindowSpec, Windows};
 
 pub use sequoia_assets::AssetRegistry as Assets;
 use sequoia_render::{FrameSkip, RenderStats};
@@ -51,7 +51,8 @@ use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, NamedKey};
 use winit::window::{
-    CursorGrabMode, Fullscreen, Icon, Window, WindowId as WinitWindowId, WindowLevel,
+    CursorGrabMode, Fullscreen, Icon, ResizeDirection as WinitResizeDirection, Window,
+    WindowId as WinitWindowId, WindowLevel,
 };
 
 #[derive(Debug)]
@@ -935,6 +936,9 @@ struct WindowState {
 
     next_frame: Option<Instant>,
 
+    /// When to drop the unpaced present mode used during a live resize.
+    resize_present_until: Option<Instant>,
+
     fps_base: String,
     fps_frames: std::collections::VecDeque<(Instant, f64)>,
     fps_last_push: Option<Instant>,
@@ -1067,6 +1071,10 @@ impl WindowState {
 /// Upper bound on paint passes per frame; one extra pass is normally enough
 /// to re-emit glyphs after the atlas grew mid-paint.
 const ATLAS_REPAINT_LIMIT: usize = 8;
+
+/// How long after the last `Resized` the surface keeps its unpaced present
+/// mode before returning to the configured one.
+const RESIZE_PRESENT_TAIL: Duration = Duration::from_millis(250);
 
 const FPS_WINDOW: Duration = Duration::from_millis(1000);
 
@@ -1216,6 +1224,8 @@ fn map_cursor(icon: CursorIcon) -> winit::window::CursorIcon {
         CursorIcon::Text => W::Text,
         CursorIcon::ColResize => W::ColResize,
         CursorIcon::RowResize => W::RowResize,
+        CursorIcon::NwseResize => W::NwseResize,
+        CursorIcon::NeswResize => W::NeswResize,
         CursorIcon::Crosshair => W::Crosshair,
 
         _ => W::Default,
@@ -1447,6 +1457,13 @@ impl PlatformApp {
         // IME, which breaks plain-key accelerators in non-text widgets.
         window.set_ime_allowed(false);
 
+        // The app theme is independent of the desktop theme: a dark UI on a
+        // light desktop otherwise gets a white title bar, border and resize
+        // edge. Ask for the frame that matches the app background instead.
+        if s.decorations {
+            window.set_theme(Some(window_frame_theme(self.theme.background)));
+        }
+
         window.set_cursor_visible(s.cursor_visible);
         if s.cursor_grab
             && let Err(e) = grab_cursor(&window)
@@ -1586,6 +1603,7 @@ impl PlatformApp {
             ime_allowed: false,
             settings: s.clone(),
             next_frame: initial_next_frame(continuous_paced, s.fps_limit),
+            resize_present_until: None,
             fps_base: spec.title.clone(),
             fps_frames: std::collections::VecDeque::new(),
             fps_last_push: None,
@@ -1690,6 +1708,27 @@ impl PlatformApp {
                         log::warn!("sequoia-platform: window drag failed: {e}");
                     }
                 }
+                window::WindowRequest::BeginResize(id, direction) => {
+                    if let Some(wid) = self.id_map.get(&id)
+                        && let Some(ws) = self.live.get_mut(wid)
+                    {
+                        let direction = match direction {
+                            window::ResizeDirection::North => WinitResizeDirection::North,
+                            window::ResizeDirection::NorthEast => WinitResizeDirection::NorthEast,
+                            window::ResizeDirection::East => WinitResizeDirection::East,
+                            window::ResizeDirection::SouthEast => WinitResizeDirection::SouthEast,
+                            window::ResizeDirection::South => WinitResizeDirection::South,
+                            window::ResizeDirection::SouthWest => WinitResizeDirection::SouthWest,
+                            window::ResizeDirection::West => WinitResizeDirection::West,
+                            window::ResizeDirection::NorthWest => WinitResizeDirection::NorthWest,
+                        };
+                        if let Err(e) = ws.window.drag_resize_window(direction) {
+                            log::warn!("sequoia-platform: window resize failed: {e}");
+                        } else {
+                            eprintln!("drag_resize_window started");
+                        }
+                    }
+                }
             }
         }
     }
@@ -1723,6 +1762,17 @@ impl PlatformApp {
             };
         } else if let Some(refresh) = self.fps_refresh_deadline() {
             deadline = Some(refresh);
+        }
+        if let Some(restore) = self
+            .live
+            .values()
+            .filter_map(|ws| ws.resize_present_until)
+            .min()
+        {
+            deadline = Some(match deadline {
+                Some(current) => current.min(restore),
+                None => restore,
+            });
         }
         if let Some(watch) = &self.shader_watch {
             deadline = Some(match deadline {
@@ -1933,8 +1983,18 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             }
             match event {
                 WindowEvent::Resized(size) => {
+                    // Present unpaced and paint before returning to the OS
+                    // resize loop. Deferring to the queued redraw leaves the
+                    // previous, smaller frame stretched over the new client
+                    // area and the grown strip at the window background while
+                    // the user drags. Fifo would add another wait here.
+                    ws.gpu.set_resize_present_mode(true);
                     ws.gpu.resize(size.width, size.height);
                     ws.rt.mark_full_damage();
+                    if size.width > 0 && size.height > 0 {
+                        ws.draw_frame(wid);
+                    }
+                    ws.resize_present_until = Some(Instant::now() + RESIZE_PRESENT_TAIL);
                     ws.request_redraw();
                 }
 
@@ -1943,6 +2003,7 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                         ws.scale = sanitize_scale(scale_factor);
                         ws.text.set_scale_factor(ws.scale);
                         ws.rt.mark_full_damage();
+                        ws.draw_frame(wid);
                         ws.request_redraw();
                     }
                 }
@@ -2186,6 +2247,16 @@ impl ApplicationHandler<JobWake> for PlatformApp {
             return;
         }
 
+        let restore_now = Instant::now();
+        for ws in self.live.values_mut() {
+            if ws
+                .resize_present_until
+                .is_some_and(|until| restore_now >= until)
+            {
+                ws.resize_present_until = None;
+                ws.gpu.set_resize_present_mode(false);
+            }
+        }
         for ws in self.live.values_mut() {
             ws.paint_if_requested();
         }
@@ -2289,6 +2360,20 @@ fn initial_next_frame(continuous_paced: bool, fps_limit: Option<u32>) -> Option<
         fps_limit.map(frame_deadline)
     } else {
         None
+    }
+}
+
+/// OS frame theme matching the app background.
+///
+/// `set_theme` controls the non-client area drawn by the window manager; a
+/// dark background has to ask for the dark frame explicitly, or a light
+/// desktop paints a white title bar and resize edge around the app.
+fn window_frame_theme(background: Color) -> winit::window::Theme {
+    let luma = 0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b;
+    if luma < 0.5 {
+        winit::window::Theme::Dark
+    } else {
+        winit::window::Theme::Light
     }
 }
 
@@ -2834,6 +2919,18 @@ mod tests {
         assert!(deadline > start);
         assert!(initial_next_frame(false, Some(60)).is_none());
         assert!(initial_next_frame(true, None).is_none());
+    }
+
+    #[test]
+    fn window_frame_follows_the_app_background() {
+        assert_eq!(
+            window_frame_theme(Color::hex(0x1B1B1B)),
+            winit::window::Theme::Dark
+        );
+        assert_eq!(
+            window_frame_theme(Color::hex(0xFAFAFA)),
+            winit::window::Theme::Light
+        );
     }
 
     #[test]

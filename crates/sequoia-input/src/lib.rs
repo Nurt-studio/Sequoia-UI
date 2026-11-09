@@ -392,6 +392,10 @@ pub enum CursorIcon {
 
     RowResize,
 
+    NwseResize,
+
+    NeswResize,
+
     Crosshair,
 }
 

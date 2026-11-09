@@ -242,6 +242,19 @@ impl WindowSpec {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResizeDirection {
+    North,
+    NorthEast,
+    East,
+    SouthEast,
+    South,
+    SouthWest,
+    West,
+    NorthWest,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum WindowRequest {
     Open(WindowId),
@@ -255,6 +268,8 @@ pub(crate) enum WindowRequest {
     ToggleMaximize(WindowId),
 
     BeginDrag(WindowId),
+
+    BeginResize(WindowId, ResizeDirection),
 }
 
 struct WindowsInner {
@@ -364,6 +379,17 @@ impl Windows {
             .pending
             .borrow_mut()
             .push(WindowRequest::BeginDrag(id));
+        true
+    }
+
+    pub fn begin_resize(&self, id: WindowId, direction: ResizeDirection) -> bool {
+        if !self.contains(id) {
+            return false;
+        }
+        self.inner
+            .pending
+            .borrow_mut()
+            .push(WindowRequest::BeginResize(id, direction));
         true
     }
 

@@ -33,6 +33,28 @@ fn assert_finite_rect(rect: Rect, what: &str) {
 }
 
 #[test]
+fn filling_canvas_reaches_the_right_edge_at_any_window_size() {
+    let h = Harness::new(
+        Row::new()
+            .fill_size()
+            .child(Panel::new().width(280.0).height(1.0.fill()))
+            .child(Canvas::new())
+            .child(Panel::new().width(300.0).height(1.0.fill())),
+    );
+    for (w, hgt) in [(1440.0, 900.0), (1000.0, 700.0), (1440.0, 900.0)] {
+        h.layout(w, hgt);
+        let kids = h.children(h.root().unwrap());
+        let canvas = h.rect(kids[1]).unwrap();
+        assert_rect(canvas, 280.0, 0.0, w - 580.0, hgt);
+        let right = h.rect(kids[2]).unwrap();
+        assert!(
+            approx(right.left() + right.size.width, w),
+            "right panel must end at the window edge at {w}px: {right:?}"
+        );
+    }
+}
+
+#[test]
 fn percent_height_in_unbounded_scroll_content_stays_finite() {
     let h = Harness::new(ScrollView::new(
         Column::new()
@@ -496,4 +518,44 @@ fn length_percent_and_px_are_not_confused() {
     let kids = h.children(h.root().unwrap());
     assert_rect(h.rect(kids[0]).unwrap(), 0.0, 0.0, 20.0, 20.0);
     assert_rect(h.rect(kids[1]).unwrap(), 0.0, 20.0, 50.0, 25.0);
+}
+
+#[test]
+fn resizing_down_and_back_restores_the_same_layout() {
+    let build = || {
+        Harness::new(
+            Column::new()
+                .fill_size()
+                .padding(8.0)
+                .gap(6.0)
+                .child(Panel::new().fill_width().height(40.0))
+                .child(
+                    Row::new()
+                        .fill_width()
+                        .flex(1.0)
+                        .child(Panel::new().width(60.0).height(1.0.fill()))
+                        .child(Text::new("hello world").flex(1.0)),
+                )
+                .child(Wrap::new().fill_width().gap(4.0).children([
+                    Panel::new().width(50.0).height(20.0),
+                    Panel::new().width(50.0).height(20.0),
+                    Panel::new().width(50.0).height(20.0),
+                ])),
+        )
+    };
+
+    let h = build();
+    h.layout(320.0, 240.0);
+    let first = h.dump();
+    h.layout(900.0, 700.0);
+    h.layout(320.0, 240.0);
+    assert_eq!(first, h.dump(), "resize round-trip changed the layout");
+
+    let fresh = build();
+    fresh.layout(320.0, 240.0);
+    assert_eq!(
+        first,
+        fresh.dump(),
+        "layout after resizing differs from a fresh one"
+    );
 }

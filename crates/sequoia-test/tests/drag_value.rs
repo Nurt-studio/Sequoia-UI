@@ -641,21 +641,15 @@ fn nan_pointer_move_does_not_poison_the_signal() {
 }
 
 #[test]
-fn wheel_steps_value_like_slider() {
+fn wheel_does_not_change_the_value() {
     let value = Signal::new(24.0);
     let h = Harness::new(DragValue::new(value.clone()).min(0.0).max(100.0));
     h.layout(200.0, 80.0);
     let r = h.rect(h.root().unwrap()).unwrap();
 
     h.wheel(r.left() + 4.0, r.top() + 4.0, -120.0);
-    assert_eq!(value.get_untracked(), 25.0);
-
     h.wheel(r.left() + 4.0, r.top() + 4.0, 120.0);
-    assert_eq!(value.get_untracked(), 24.0);
-
     h.wheel_with_modifiers(r.left() + 4.0, r.top() + 4.0, 0.0, -120.0, Modifiers::SHIFT);
-    assert!((value.get_untracked() - 24.1).abs() < 1e-4);
-
     h.wheel_with_modifiers(
         r.left() + 4.0,
         r.top() + 4.0,
@@ -663,11 +657,15 @@ fn wheel_steps_value_like_slider() {
         -120.0,
         Modifiers::CONTROL,
     );
-    assert!((value.get_untracked() - 34.1).abs() < 1e-4);
+    assert_eq!(
+        value.get_untracked(),
+        24.0,
+        "scrolling over a field must not change it"
+    );
 }
 
 #[test]
-fn variants_step_through_values_with_drag_wheel_and_arrows() {
+fn variants_step_through_values_with_drag_and_arrows() {
     let value = Signal::new(2.0);
     let h = Harness::new(
         DragValue::new(value.clone())
@@ -687,12 +685,11 @@ fn variants_step_through_values_with_drag_wheel_and_arrows() {
     assert_eq!(value.get_untracked(), 8.0);
     h.pointer_up(x + 45.0, y);
 
-    h.wheel(x, y, -120.0);
-    assert_eq!(value.get_untracked(), 16.0);
-    h.wheel(x, y, -120.0);
-    assert_eq!(value.get_untracked(), 2.0, "wrap to the first variant");
-
     h.runtime().set_focus(h.root());
+    h.key(Key::ARROW_RIGHT);
+    assert_eq!(value.get_untracked(), 16.0);
+    h.key(Key::ARROW_RIGHT);
+    assert_eq!(value.get_untracked(), 2.0, "wrap to the first variant");
     h.key(Key::ARROW_LEFT);
     assert_eq!(value.get_untracked(), 16.0, "arrow wraps backwards");
     h.key(Key::ARROW_RIGHT);
@@ -712,8 +709,6 @@ fn variants_clamp_without_wrap() {
     let r = h.rect(h.root().unwrap()).unwrap();
     let (x, y) = (r.left() + 100.0, r.top() + 20.0);
 
-    h.wheel(x, y, -120.0);
-    assert_eq!(value.get_untracked(), 16.0);
     h.pointer_down(x, y);
     h.pointer_move(x + 60.0, y);
     assert_eq!(value.get_untracked(), 16.0);
@@ -756,19 +751,19 @@ fn variants_can_show_text_labels() {
             .height(40.0),
     );
     h.layout(200.0, 80.0);
-    let r = h.rect(h.root().unwrap()).unwrap();
 
     if has_fonts() {
         assert_eq!(glyph_count(&h.paint()), "Auto".chars().count());
     }
 
-    h.wheel(r.left() + 4.0, r.top() + 4.0, -120.0);
+    h.runtime().set_focus(h.root());
+    h.key(Key::ARROW_RIGHT);
     assert_eq!(value.get_untracked(), 10.0);
     if has_fonts() {
         assert_eq!(glyph_count(&h.paint()), "Full".chars().count());
     }
 
-    h.wheel(r.left() + 4.0, r.top() + 4.0, -120.0);
+    h.key(Key::ARROW_RIGHT);
     assert_eq!(value.get_untracked(), 0.0, "wraps to the first variant");
     if has_fonts() {
         assert_eq!(glyph_count(&h.paint()), "Off".chars().count());
@@ -806,4 +801,80 @@ fn style_can_paint_background_border_and_padding() {
     h.pointer_move(rect.left() + 5.0, rect.top() + 5.0);
     h.tick();
     assert_eq!(h.paint().quads().next().unwrap().color, Color::GREEN);
+}
+
+#[test]
+fn wide_ranges_drag_at_one_unit_per_pixel() {
+    let value = Signal::new(0.0);
+    let h = Harness::new(
+        DragValue::new(value.clone())
+            .min(-9999.0)
+            .max(9999.0)
+            .precision(0)
+            .width(200.0),
+    );
+    h.layout(200.0, 80.0);
+
+    h.pointer_down(50.0, 12.0);
+    h.pointer_move(60.0, 12.0);
+    assert_eq!(
+        value.get_untracked(),
+        10.0,
+        "10 px of drag must move a wide range by 10 units"
+    );
+    h.pointer_up(60.0, 12.0);
+}
+
+#[test]
+fn pointer_jitter_under_a_pixel_keeps_the_value() {
+    let value = Signal::new(50.0);
+    let h = Harness::new(
+        DragValue::new(value.clone())
+            .min(0.0)
+            .max(100.0)
+            .sensitivity(1.0)
+            .width(200.0),
+    );
+    h.layout(200.0, 80.0);
+
+    h.pointer_down(50.0, 12.0);
+    h.pointer_move(50.6, 12.0);
+    assert_eq!(value.get_untracked(), 50.0, "sub-pixel jitter is ignored");
+    h.pointer_up(50.6, 12.0);
+}
+
+#[test]
+fn shift_drag_is_fine_and_cmd_drag_is_coarse() {
+    let value = Signal::new(50.0);
+    let h = Harness::new(
+        DragValue::new(value.clone())
+            .min(0.0)
+            .max(200.0)
+            .sensitivity(1.0)
+            .width(200.0),
+    );
+    h.layout(200.0, 80.0);
+
+    let rt = h.runtime();
+    let mut text = sequoia_text::TextSystem::new();
+    let start = Point::new(50.0, 12.0);
+    rt.pointer_down(start, PointerButton::Left, Modifiers::NONE, &mut text);
+    rt.pointer_move_with_mods(Point::new(60.0, 12.0), Modifiers::SHIFT, &mut text);
+    assert!(
+        (value.get_untracked() - 51.0).abs() < 1e-4,
+        "Shift = 0.1x: {}",
+        value.get_untracked()
+    );
+    rt.pointer_move_with_mods(Point::new(60.0, 12.0), Modifiers::CONTROL, &mut text);
+    assert!(
+        (value.get_untracked() - 150.0).abs() < 1e-4,
+        "Ctrl = 10x: {}",
+        value.get_untracked()
+    );
+    rt.pointer_up(
+        Point::new(60.0, 12.0),
+        PointerButton::Left,
+        Modifiers::NONE,
+        &mut text,
+    );
 }
