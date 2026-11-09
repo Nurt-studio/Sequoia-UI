@@ -15,6 +15,10 @@ pub struct RasterOptions {
     pub aa_samples: u32,
 
     pub analytic: bool,
+
+    /// Split large rasters across worker threads. Small shapes always stay on
+    /// the calling thread, so this only matters for big fills and strokes.
+    pub parallel: bool,
 }
 
 impl Default for RasterOptions {
@@ -30,6 +34,7 @@ impl RasterOptions {
         merge_tol: 0.35,
         aa_samples: 4,
         analytic: true,
+        parallel: true,
     };
 
     pub const CRISP: Self = Self {
@@ -38,6 +43,7 @@ impl RasterOptions {
         merge_tol: 0.35,
         aa_samples: 1,
         analytic: true,
+        parallel: true,
     };
 
     pub const BANDED: Self = Self {
@@ -46,6 +52,7 @@ impl RasterOptions {
         merge_tol: 0.35,
         aa_samples: 4,
         analytic: false,
+        parallel: true,
     };
 
     pub fn tolerance(mut self, tolerance: f32) -> Self {
@@ -70,6 +77,15 @@ impl RasterOptions {
 
     pub fn analytic(mut self, analytic: bool) -> Self {
         self.analytic = analytic;
+        self
+    }
+
+    /// Enables or disables band-parallel tessellation of large rasters.
+    ///
+    /// Useful on single-core hosts and when a caller needs repeatable span
+    /// order.
+    pub fn parallel(mut self, parallel: bool) -> Self {
+        self.parallel = parallel;
         self
     }
 
@@ -221,7 +237,105 @@ pub fn fill_contours(
     if cols == 0 {
         return Rect::ZERO;
     }
+    let rows = ((last_row - first_row).max(0.0).ceil() as usize) + 1;
 
+    // Large rasters dominate a frame, so they are split into row bands and
+    // tessellated on worker threads. UI-sized shapes stay on the calling
+    // thread: spawning threads would cost more than the raster itself.
+    let bands = if opts.parallel {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        band_count(rows, cols, samples, cores)
+    } else {
+        1
+    };
+
+    if bands <= 1 {
+        return raster_rows(
+            &edges, rule, cell, samples, merge_tol, first_row, first_col, cols, 0, rows, out,
+        );
+    }
+
+    let band_rows = rows.div_ceil(bands);
+    let mut parts: Vec<(usize, Vec<Span>, Rect)> = Vec::with_capacity(bands);
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(bands);
+        for band in 0..bands {
+            let start = (band * band_rows).min(rows);
+            let end = (start + band_rows).min(rows);
+            if start >= end {
+                continue;
+            }
+            let edges = &edges;
+            handles.push((
+                start,
+                scope.spawn(move || {
+                    let mut spans = Vec::new();
+                    let coverage = raster_rows(
+                        edges, rule, cell, samples, merge_tol, first_row, first_col, cols, start,
+                        end, &mut spans,
+                    );
+                    (spans, coverage)
+                }),
+            ));
+        }
+        for (start, handle) in handles {
+            if let Ok((spans, coverage)) = handle.join() {
+                parts.push((start, spans, coverage));
+            }
+        }
+    });
+    // Bands run in parallel but spans must stay ordered by row for the
+    // renderer's batching and for stable output.
+    parts.sort_by_key(|(start, _, _)| *start);
+
+    let mut coverage = Rect::ZERO;
+    for (_, spans, part_coverage) in parts {
+        out.extend(spans);
+        coverage = union_rect(coverage, part_coverage);
+    }
+    coverage
+}
+
+const PARALLEL_MIN_ROWS: usize = 64;
+
+/// Parallel floor in raster *work* units: cells times anti-aliasing samples.
+///
+/// The old floor was 256k cells regardless of sample count, so a one-sample
+/// `CRISP` fill spawned threads for a quarter of the work a four-sample fill
+/// needed. Keeping the floor in work units makes the decision follow the
+/// actual per-cell cost.
+const PARALLEL_MIN_WORK: usize = 256 * 1024 * 4;
+
+const MAX_BANDS: usize = 8;
+
+/// Number of row bands to split a raster into.
+///
+/// `cores` is passed in so the decision can be tested without asking the
+/// process how many CPUs it has.
+fn band_count(rows: usize, cols: usize, samples: usize, cores: usize) -> usize {
+    let work = rows.saturating_mul(cols).saturating_mul(samples.max(1));
+    if rows < PARALLEL_MIN_ROWS || work < PARALLEL_MIN_WORK {
+        return 1;
+    }
+    cores.min(MAX_BANDS).min(rows / PARALLEL_MIN_ROWS).max(1)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn raster_rows(
+    edges: &[Edge],
+    rule: FillRule,
+    cell: f32,
+    samples: usize,
+    merge_tol: f32,
+    first_row: f32,
+    first_col: f32,
+    cols: usize,
+    row_start: usize,
+    row_end: usize,
+    out: &mut Vec<Span>,
+) -> Rect {
     let mut coverage_per_cell = vec![0.0f32; cols];
     let mut crossings: Vec<(f32, i32)> = Vec::new();
     let mut spans: Vec<(f32, f32)> = Vec::new();
@@ -231,17 +345,15 @@ pub fn fill_contours(
     let mut coverage = Rect::ZERO;
     let inv_samples = 1.0 / samples as f32;
 
-    let mut row = first_row;
-    while row <= last_row {
-        let y0 = row * cell;
+    for row_index in row_start..row_end {
+        let y0 = (first_row + row_index as f32) * cell;
         let y1 = y0 + cell;
-        row += 1.0;
         coverage_per_cell.fill(0.0);
 
         for sample in 0..samples {
             let y = y0 + (sample as f32 + 0.5) * inv_samples * cell;
             crossings.clear();
-            for e in &edges {
+            for e in edges {
                 let (ymin, ymax) = (e.y0.min(e.y1), e.y0.max(e.y1));
                 if y < ymin || y >= ymax {
                     continue;
@@ -455,7 +567,21 @@ pub(crate) fn contains(contours: &[Contour], p: Point, rule: FillRule) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::quantize_alpha;
+    use super::{MAX_BANDS, band_count, quantize_alpha};
+
+    #[test]
+    fn band_count_follows_work_not_cells() {
+        assert_eq!(band_count(1000, 1000, 4, 4), 4);
+        assert_eq!(band_count(1000, 1000, 1, 4), 1, "1 sample = 1/4 work");
+        assert_eq!(band_count(1000, 1000, 8, 4), 4);
+    }
+
+    #[test]
+    fn band_count_keeps_small_and_single_core_shapes_serial() {
+        assert_eq!(band_count(32, 4000, 4, 8), 1, "too few rows");
+        assert_eq!(band_count(1000, 1000, 4, 1), 1, "single core");
+        assert_eq!(band_count(1000, 1000, 4, 64), MAX_BANDS);
+    }
 
     #[test]
     fn alpha_quantization_keeps_64_levels() {

@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use sequoia_core::{Point, Rect};
 use sequoia_draw::{
-    Contour, Dash, FillRule, LineCap, LineJoin, Path, RasterOptions, ShapeCache, Span, StrokeStyle,
-    TOLERANCE, fill, stroke, stroke_path,
+    Contour, DEFAULT_CAPACITY, Dash, FillRule, LineCap, LineJoin, Path, RasterOptions, ShapeCache,
+    Span, StrokeStyle, TOLERANCE, fill, stroke, stroke_path,
 };
 
 fn sum_area(spans: &[Span]) -> f32 {
@@ -587,6 +587,50 @@ fn cache_ignores_color_and_evicts_old_entries() {
     cache.fill(&a, FillRule::NonZero, opts());
     cache.fill(&a, FillRule::NonZero, opts().row_height(0.5));
     assert_eq!(cache.stats().misses, 2);
+}
+
+#[test]
+fn default_cache_grows_instead_of_re_tessellating_a_hot_working_set() {
+    let cache = ShapeCache::default();
+    let paths: Vec<Path> = (0..DEFAULT_CAPACITY + 32)
+        .map(|i| {
+            let mut p = Path::new();
+            p.rect(Rect::from_xywh(i as f32 * 4.0, 0.0, 2.0, 2.0));
+            p
+        })
+        .collect();
+
+    for path in &paths {
+        cache.fill(path, FillRule::NonZero, opts());
+    }
+    assert_eq!(
+        cache.stats().evictions,
+        0,
+        "a live working set must grow the cache, not be evicted"
+    );
+    assert_eq!(cache.capacity(), DEFAULT_CAPACITY * 2);
+    assert_eq!(cache.len(), paths.len());
+
+    let hits = cache.stats().hits;
+    for path in &paths {
+        cache.fill(path, FillRule::NonZero, opts());
+    }
+    assert_eq!(cache.stats().misses, paths.len() as u64);
+    assert_eq!(cache.stats().hits, hits + paths.len() as u64);
+}
+
+#[test]
+fn growing_cache_still_evicts_past_its_cap() {
+    let cache = ShapeCache::growing(2, 4);
+    for i in 0..12 {
+        let mut p = Path::new();
+        p.rect(Rect::from_xywh(i as f32 * 4.0, 0.0, 2.0, 2.0));
+        cache.fill(&p, FillRule::NonZero, opts());
+    }
+    assert_eq!(cache.capacity(), 4);
+    assert_eq!(cache.max_capacity(), 4);
+    assert!(cache.stats().evictions > 0);
+    assert!(cache.len() <= 4);
 }
 
 #[test]

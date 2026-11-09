@@ -1,9 +1,10 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use sequoia_core::{Point, Rect, Vec2};
 
+use crate::flatten::Contour;
 use crate::path::{FillRule, Path};
 use crate::raster::{self, FillStyle, RasterOptions};
 use crate::stroke::{self, StrokeStyle};
@@ -92,7 +93,93 @@ struct Entry {
     used: u64,
 }
 
+/// Owned description of a cache miss, captured so it can be tessellated after
+/// the paint pass that asked for it has returned.
+#[derive(Debug)]
+enum Request {
+    Fill {
+        path: Path,
+        rule: FillRule,
+        opts: RasterOptions,
+        offset: Vec2,
+    },
+    Stroke {
+        path: Path,
+        style: StrokeStyle,
+        opts: RasterOptions,
+        offset: Vec2,
+    },
+    Contours {
+        contours: Vec<Contour>,
+        rule: FillRule,
+        opts: RasterOptions,
+    },
+}
+
+impl Request {
+    fn opts(&self) -> RasterOptions {
+        match self {
+            Request::Fill { opts, .. }
+            | Request::Stroke { opts, .. }
+            | Request::Contours { opts, .. } => *opts,
+        }
+    }
+
+    /// Rough work estimate: source vertices, not raster cells. Used only to
+    /// decide whether a batch is worth spawning threads for.
+    fn cost(&self) -> usize {
+        match self {
+            Request::Fill { path, .. } | Request::Stroke { path, .. } => path.segs().len(),
+            Request::Contours { contours, .. } => contours.iter().map(|c| c.points.len()).sum(),
+        }
+    }
+
+    fn build(&self, opts: RasterOptions, out: &mut Vec<Span>) {
+        match self {
+            Request::Fill {
+                path, rule, offset, ..
+            } => {
+                if *offset == Vec2::ZERO {
+                    raster::fill(path, *rule, opts, out);
+                } else {
+                    raster::fill(&path.translated(offset.x, offset.y), *rule, opts, out);
+                }
+            }
+            Request::Stroke {
+                path,
+                style,
+                offset,
+                ..
+            } => {
+                if *offset == Vec2::ZERO {
+                    stroke::stroke_path(path, style, opts, out);
+                } else {
+                    stroke::stroke_path(&path.translated(offset.x, offset.y), style, opts, out);
+                }
+            }
+            Request::Contours { contours, rule, .. } => {
+                raster::fill_contours(contours, *rule, opts, out);
+            }
+        }
+    }
+}
+
+/// Below this many shapes a batch stays on the calling thread: thread startup
+/// costs more than a few small rasters.
+const BATCH_MIN_SHAPES: usize = 4;
+
+/// Below this many source vertices a batch stays on the calling thread, even
+/// when it has enough shapes.
+const BATCH_MIN_COST: usize = 256;
+
+const BATCH_MAX_WORKERS: usize = 8;
+
 pub const DEFAULT_CAPACITY: usize = 256;
+
+/// Upper bound for the default cache. A scene whose *live* working set is
+/// bigger than [`DEFAULT_CAPACITY`] grows up to this size instead of
+/// re-tessellating the same outlines every frame (see [`ShapeCache::growing`]).
+pub const MAX_CAPACITY: usize = 2048;
 
 #[derive(Debug)]
 pub struct ShapeCache {
@@ -103,30 +190,52 @@ pub struct ShapeCache {
 struct Inner {
     entries: HashMap<Key, Entry>,
     capacity: usize,
+    max_capacity: usize,
     tick: u64,
     stats: ShapeStats,
+    prefetching: bool,
+    pending: Vec<(Key, Request)>,
+    pending_keys: HashSet<Key>,
 }
 
 impl Default for ShapeCache {
     fn default() -> Self {
-        Self::new(DEFAULT_CAPACITY)
+        Self::growing(DEFAULT_CAPACITY, MAX_CAPACITY)
     }
 }
 
 impl ShapeCache {
     pub fn new(capacity: usize) -> Self {
+        Self::growing(capacity, capacity)
+    }
+
+    /// A cache that may grow from `capacity` up to `max_capacity` once all of
+    /// its entries are live, i.e. every one was touched within the last
+    /// `capacity` lookups. Evicting an on-screen shape forces the next frame to
+    /// re-tessellate it, so growing once is the cheaper response to a working
+    /// set that outgrew the cache.
+    pub fn growing(capacity: usize, max_capacity: usize) -> Self {
+        let max_capacity = max_capacity.max(capacity);
         Self {
             inner: RefCell::new(Inner {
                 entries: HashMap::new(),
                 capacity,
+                max_capacity,
                 tick: 0,
                 stats: ShapeStats::default(),
+                prefetching: false,
+                pending: Vec::new(),
+                pending_keys: HashSet::new(),
             }),
         }
     }
 
     pub fn capacity(&self) -> usize {
         self.inner.borrow().capacity
+    }
+
+    pub fn max_capacity(&self) -> usize {
+        self.inner.borrow().max_capacity
     }
 
     pub fn len(&self) -> usize {
@@ -161,9 +270,18 @@ impl ShapeCache {
             opts: opts_key(style.opts),
             offset: 0,
         };
-        self.get_or_build(key, |out| {
-            raster::fill(path, style.rule, style.opts, out);
-        })
+        self.get_or_build(
+            key,
+            |out| {
+                raster::fill(path, style.rule, style.opts, out);
+            },
+            || Request::Fill {
+                path: path.clone(),
+                rule: style.rule,
+                opts: style.opts,
+                offset: Vec2::ZERO,
+            },
+        )
     }
 
     pub fn fill_offset(
@@ -180,10 +298,19 @@ impl ShapeCache {
             opts: opts_key(opts),
             offset: offset_key(offset),
         };
-        self.get_or_build(key, |out| {
-            let translated = path.translated(offset.x, offset.y);
-            raster::fill(&translated, rule, opts, out);
-        })
+        self.get_or_build(
+            key,
+            |out| {
+                let translated = path.translated(offset.x, offset.y);
+                raster::fill(&translated, rule, opts, out);
+            },
+            || Request::Fill {
+                path: path.clone(),
+                rule,
+                opts,
+                offset,
+            },
+        )
     }
 
     pub fn stroke(&self, path: &Path, style: &StrokeStyle, opts: RasterOptions) -> Rc<Shape> {
@@ -194,9 +321,18 @@ impl ShapeCache {
             opts: opts_key(opts),
             offset: 0,
         };
-        self.get_or_build(key, |out| {
-            stroke::stroke_path(path, style, opts, out);
-        })
+        self.get_or_build(
+            key,
+            |out| {
+                stroke::stroke_path(path, style, opts, out);
+            },
+            || Request::Stroke {
+                path: path.clone(),
+                style: style.clone(),
+                opts,
+                offset: Vec2::ZERO,
+            },
+        )
     }
 
     pub fn stroke_offset(
@@ -213,10 +349,19 @@ impl ShapeCache {
             opts: opts_key(opts),
             offset: offset_key(offset),
         };
-        self.get_or_build(key, |out| {
-            let translated = path.translated(offset.x, offset.y);
-            stroke::stroke_path(&translated, style, opts, out);
-        })
+        self.get_or_build(
+            key,
+            |out| {
+                let translated = path.translated(offset.x, offset.y);
+                stroke::stroke_path(&translated, style, opts, out);
+            },
+            || Request::Stroke {
+                path: path.clone(),
+                style: style.clone(),
+                opts,
+                offset,
+            },
+        )
     }
 
     pub fn fill_contours(
@@ -232,9 +377,17 @@ impl ShapeCache {
             opts: opts_key(opts),
             offset: 0,
         };
-        self.get_or_build(key, |out| {
-            raster::fill_contours(contours, rule, opts, out);
-        })
+        self.get_or_build(
+            key,
+            |out| {
+                raster::fill_contours(contours, rule, opts, out);
+            },
+            || Request::Contours {
+                contours: contours.to_vec(),
+                rule,
+                opts,
+            },
+        )
     }
 
     pub fn disk(&self, center: Point, radius: f32) -> Rc<Shape> {
@@ -263,7 +416,105 @@ impl ShapeCache {
         Rc::new(Shape::new(vec![Span::rect(rect)]))
     }
 
-    fn get_or_build(&self, key: Key, build: impl FnOnce(&mut Vec<Span>)) -> Rc<Shape> {
+    /// Starts a prefetch pass.
+    ///
+    /// While the pass is active, cache misses are recorded instead of
+    /// tessellated, and each miss returns an empty placeholder [`Shape`]. The
+    /// caller is expected to paint again after
+    /// [`ShapeCache::tessellate_prefetch`], so the placeholders never reach the
+    /// screen. Do not retain placeholder shapes across the pass.
+    pub fn begin_prefetch(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.prefetching = true;
+        inner.pending.clear();
+        inner.pending_keys.clear();
+    }
+
+    /// Ends a prefetch pass and returns how many distinct shapes missed the
+    /// cache. Nothing has been tessellated yet.
+    pub fn end_prefetch(&self) -> usize {
+        let mut inner = self.inner.borrow_mut();
+        inner.prefetching = false;
+        inner.pending.len()
+    }
+
+    /// Tessellates the shapes recorded by the last prefetch pass and inserts
+    /// them into the cache, returning how many were built.
+    ///
+    /// Big batches are split across worker threads; each worker builds its
+    /// shapes with `parallel(false)` because the batch already keeps the cores
+    /// busy. Small batches stay on the calling thread, and a lone shape keeps
+    /// its own band-parallel rasterizer. Results are inserted in request order
+    /// so a batch produces the same spans every time.
+    pub fn tessellate_prefetch(&self) -> usize {
+        let pending = {
+            let mut inner = self.inner.borrow_mut();
+            inner.prefetching = false;
+            inner.pending_keys.clear();
+            std::mem::take(&mut inner.pending)
+        };
+        if pending.is_empty() {
+            return 0;
+        }
+
+        let cost: usize = pending.iter().map(|(_, req)| req.cost()).sum();
+        let workers = if pending.len() >= BATCH_MIN_SHAPES && cost >= BATCH_MIN_COST {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+                .min(BATCH_MAX_WORKERS)
+                .min(pending.len())
+        } else {
+            1
+        };
+
+        let built: Vec<(Key, Vec<Span>)> = if workers <= 1 {
+            pending
+                .iter()
+                .map(|(key, req)| (*key, build_request(req, req.opts())))
+                .collect()
+        } else {
+            let chunk = pending.len().div_ceil(workers);
+            let mut parts: Vec<Vec<(Key, Vec<Span>)>> = Vec::with_capacity(workers);
+            std::thread::scope(|scope| {
+                let mut handles = Vec::with_capacity(workers);
+                for chunk in pending.chunks(chunk) {
+                    handles.push(scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .map(|(key, req)| {
+                                (*key, build_request(req, req.opts().parallel(false)))
+                            })
+                            .collect::<Vec<_>>()
+                    }));
+                }
+                // Join in submission order so the cache sees requests in the
+                // order they were asked for.
+                for handle in handles {
+                    if let Ok(part) = handle.join() {
+                        parts.push(part);
+                    }
+                }
+            });
+            parts.into_iter().flatten().collect()
+        };
+
+        let count = built.len();
+        let mut inner = self.inner.borrow_mut();
+        for (key, spans) in built {
+            inner.tick += 1;
+            let used = inner.tick;
+            inner.insert_used(key, Rc::new(Shape::new(spans)), used);
+        }
+        count
+    }
+
+    fn get_or_build(
+        &self,
+        key: Key,
+        build: impl FnOnce(&mut Vec<Span>),
+        request: impl FnOnce() -> Request,
+    ) -> Rc<Shape> {
         let mut inner = self.inner.borrow_mut();
         inner.tick += 1;
         let tick = inner.tick;
@@ -272,6 +523,17 @@ impl ShapeCache {
             let shape = entry.shape.clone();
             inner.stats.hits += 1;
             return shape;
+        }
+        if inner.prefetching {
+            if inner.pending_keys.insert(key) {
+                inner.stats.misses += 1;
+                inner.pending.push((key, request()));
+            } else {
+                // A repeat lookup in the same pass would have been a hit if
+                // the first one had been built, so do not report it as a miss.
+                inner.stats.hits += 1;
+            }
+            return Rc::new(Shape::empty());
         }
         inner.stats.misses += 1;
         if inner.capacity == 0 {
@@ -284,25 +546,41 @@ impl ShapeCache {
         let mut spans = Vec::new();
         build(&mut spans);
         let shape = Rc::new(Shape::new(spans));
-        if inner.entries.len() >= inner.capacity
-            && let Some(oldest) = inner
+        inner.insert_used(key, shape.clone(), tick);
+        shape
+    }
+}
+
+impl Inner {
+    fn insert_used(&mut self, key: Key, shape: Rc<Shape>, used: u64) {
+        if self.capacity == 0 {
+            return;
+        }
+        if self.entries.len() >= self.capacity
+            && let Some((oldest, oldest_used)) = self
                 .entries
                 .iter()
                 .min_by_key(|(_, entry)| entry.used)
-                .map(|(key, _)| *key)
+                .map(|(key, entry)| (*key, entry.used))
         {
-            inner.entries.remove(&oldest);
-            inner.stats.evictions += 1;
+            // Everything is still in use, so the working set outgrew the
+            // cache: grow instead of evicting a shape that is on screen.
+            let hot = used.saturating_sub(oldest_used) <= self.capacity as u64;
+            if hot && self.capacity < self.max_capacity {
+                self.capacity = self.capacity.saturating_mul(2).min(self.max_capacity);
+            } else {
+                self.entries.remove(&oldest);
+                self.stats.evictions += 1;
+            }
         }
-        inner.entries.insert(
-            key,
-            Entry {
-                shape: shape.clone(),
-                used: tick,
-            },
-        );
-        shape
+        self.entries.insert(key, Entry { shape, used });
     }
+}
+
+fn build_request(req: &Request, opts: RasterOptions) -> Vec<Span> {
+    let mut spans = Vec::new();
+    req.build(opts, &mut spans);
+    spans
 }
 
 fn offset_key(offset: Vec2) -> u64 {
@@ -324,6 +602,8 @@ fn opts_key(opts: RasterOptions) -> u64 {
     hash ^= u64::from(opts.aa_samples);
     hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     hash ^= u64::from(opts.analytic);
+    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    hash ^= u64::from(opts.parallel);
     hash.wrapping_mul(0x0000_0100_0000_01b3)
 }
 

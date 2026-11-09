@@ -32,6 +32,7 @@ pub const DEFAULT_OPTIONS: RasterOptions = RasterOptions {
     merge_tol: 0.35,
     aa_samples: 4,
     analytic: true,
+    parallel: true,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
