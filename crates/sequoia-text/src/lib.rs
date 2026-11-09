@@ -12,6 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use cosmic_text::{
     Attrs, Buffer, CacheKey, Family, FontSystem, Metrics, Shaping, Style as CosmicStyle,
@@ -300,7 +301,7 @@ impl ShapedLine {
     }
 }
 
-const LINE_CACHE_MAX: usize = 16_384;
+const LINE_CACHE_MAX: usize = 4_096;
 
 pub type LineCacheKey = (u64, u32);
 
@@ -315,7 +316,7 @@ pub struct AtlasEntry {
     pub color: bool,
 }
 
-const ATLAS_MAX_DIM: u32 = 2048;
+const ATLAS_MAX_DIM: u32 = 1024;
 
 const ATLAS_BPP: usize = 4;
 
@@ -881,6 +882,8 @@ pub struct TextSystem {
     aliases: HashMap<String, String>,
 
     subpixel_y: bool,
+
+    font_system_bg: Option<Arc<Mutex<Option<FontSystem>>>>,
 }
 
 impl Default for TextSystem {
@@ -895,8 +898,24 @@ impl TextSystem {
     }
 
     pub fn with_atlas(width: u32, height: u32) -> Self {
+        let mut db = cosmic_text::fontdb::Database::new();
+        db.load_font_data(DEFAULT_FONT_REGULAR.to_vec());
+        db.load_font_data(DEFAULT_FONT_MEDIUM.to_vec());
+        db.load_font_data(DEFAULT_FONT_SEMIBOLD.to_vec());
+        db.load_font_data(DEFAULT_FONT_BOLD.to_vec());
+        let font_system = FontSystem::new_with_locale_and_db("en-US".into(), db);
+
+        let font_system_bg = Some(Arc::new(Mutex::new(None)));
+        let bg_slot = Arc::clone(font_system_bg.as_ref().unwrap());
+        std::thread::spawn(move || {
+            let full_fs = FontSystem::new();
+            if let Ok(mut lock) = bg_slot.lock() {
+                *lock = Some(full_fs);
+            }
+        });
+
         let mut this = Self {
-            font_system: FontSystem::new(),
+            font_system,
             swash: SwashCache::new(),
             atlas: GlyphAtlas::new(width, height),
             shaped: HashMap::new(),
@@ -918,6 +937,7 @@ impl TextSystem {
             default_weights: Vec::new(),
             aliases: HashMap::new(),
             subpixel_y: false,
+            font_system_bg,
         };
 
         this.load_font(DEFAULT_FONT_REGULAR.to_vec());
@@ -927,6 +947,21 @@ impl TextSystem {
         this.default_family = Some(DEFAULT_FAMILY.to_owned());
         this.refresh_default_weights();
         this
+    }
+
+    fn check_bg_font_system(&mut self) {
+        let fs_opt = self.font_system_bg.as_ref().and_then(|bg| {
+            bg.lock().ok().and_then(|mut lock| lock.take())
+        });
+        if let Some(fs) = fs_opt {
+            self.font_system = fs;
+            self.load_font(DEFAULT_FONT_REGULAR.to_vec());
+            self.load_font(DEFAULT_FONT_MEDIUM.to_vec());
+            self.load_font(DEFAULT_FONT_SEMIBOLD.to_vec());
+            self.load_font(DEFAULT_FONT_BOLD.to_vec());
+            self.clear_caches();
+            self.refresh_default_weights();
+        }
     }
 
     fn refresh_default_weights(&mut self) {
@@ -1076,6 +1111,7 @@ impl TextSystem {
     }
 
     pub fn shape_weighted(&mut self, text: &str, size: f32, weight: FontWeight) -> Rc<ShapedText> {
+        self.check_bg_font_system();
         self.shape_wrapped(text, size, weight, 0.0, WrapMode::default())
     }
 

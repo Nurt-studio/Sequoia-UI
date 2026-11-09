@@ -57,7 +57,7 @@ pub(crate) const LINE_WIDTHS: [f32; 4] = [1.0, 3.0, 5.0, 8.0];
 
 pub(crate) const DEFAULT_DOC_W: u32 = 1152;
 pub(crate) const DEFAULT_DOC_H: u32 = 600;
-pub(crate) const MAX_UNDO: usize = 30;
+pub(crate) const MAX_UNDO: usize = 15;
 pub(crate) const COL_BG: Color = Color::hex(0xF3F3F3);
 pub(crate) const COL_BORDER: Color = Color::hex(0xD6D6D6);
 pub(crate) const COL_TEXT: Color = Color::hex(0x202020);
@@ -516,12 +516,17 @@ pub(crate) enum Drag {
     DialogSlider(SliderChannel),
 }
 
+pub(crate) struct UndoPatch {
+    pub rect: Rect,
+    pub pixels: Pixels,
+}
+
 pub(crate) struct State {
     pub doc: Pixels,
     pub path: Option<PathBuf>,
     pub dirty: bool,
-    pub undo: Vec<Pixels>,
-    pub redo: Vec<Pixels>,
+    pub undo: Vec<UndoPatch>,
+    pub redo: Vec<UndoPatch>,
     pub tool: Tool,
     pub brush: BrushKind,
     pub shape: ShapeKind,
@@ -595,18 +600,38 @@ impl State {
         self.bump();
     }
 
-    pub(crate) fn push_undo(&mut self) {
-        self.undo.push(self.doc.clone());
+    pub(crate) fn push_undo_rect(&mut self, rect: Rect) {
+        let x0 = rect.left().floor().max(0.0) as i32;
+        let y0 = rect.top().floor().max(0.0) as i32;
+        let x1 = (rect.left() + rect.size.width).ceil().min(self.doc.width() as f32) as i32;
+        let y1 = (rect.top() + rect.size.height).ceil().min(self.doc.height() as f32) as i32;
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        let r = Rect::from_xywh(x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32);
+        let patch = UndoPatch {
+            rect: r,
+            pixels: self.doc.crop(r),
+        };
+        self.undo.push(patch);
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
         }
         self.redo.clear();
     }
 
+    pub(crate) fn push_undo(&mut self) {
+        self.push_undo_rect(Rect::from_xywh(0.0, 0.0, self.doc.width() as f32, self.doc.height() as f32));
+    }
+
     pub(crate) fn undo(&mut self) {
-        if let Some(prev) = self.undo.pop() {
-            let current = std::mem::replace(&mut self.doc, prev);
-            self.redo.push(current);
+        if let Some(patch) = self.undo.pop() {
+            let current_patch_pixels = self.doc.crop(patch.rect);
+            self.doc.blit(&patch.pixels, patch.rect.left() as i32, patch.rect.top() as i32);
+            self.redo.push(UndoPatch {
+                rect: patch.rect,
+                pixels: current_patch_pixels,
+            });
             if self.redo.len() > MAX_UNDO {
                 self.redo.remove(0);
             }
@@ -618,9 +643,13 @@ impl State {
     }
 
     pub(crate) fn redo(&mut self) {
-        if let Some(next) = self.redo.pop() {
-            let current = std::mem::replace(&mut self.doc, next);
-            self.undo.push(current);
+        if let Some(patch) = self.redo.pop() {
+            let current_patch_pixels = self.doc.crop(patch.rect);
+            self.doc.blit(&patch.pixels, patch.rect.left() as i32, patch.rect.top() as i32);
+            self.undo.push(UndoPatch {
+                rect: patch.rect,
+                pixels: current_patch_pixels,
+            });
             if self.undo.len() > MAX_UNDO {
                 self.undo.remove(0);
             }

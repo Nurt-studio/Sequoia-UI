@@ -280,18 +280,25 @@ pub(crate) fn select_backend(
     Err(RenderError::NoAdapter)
 }
 
+#[inline]
+pub(crate) fn dbg_label(name: &'static str) -> Option<&'static str> {
+    if cfg!(debug_assertions) {
+        Some(name)
+    } else {
+        None
+    }
+}
+
 /// Requests the shared device configuration used by every renderer.
 pub(crate) fn request_device(
     adapter: &wgpu::Adapter,
 ) -> Result<(wgpu::Device, wgpu::Queue), RenderError> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("sequoia-device"),
+        label: dbg_label("sequoia-device"),
         required_features: wgpu::Features::empty(),
         required_limits: wgpu::Limits::default(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
-        memory_hints: wgpu::MemoryHints::Manual {
-            suballocated_device_memory_block_size: (4 << 20)..(32 << 20),
-        },
+        memory_hints: wgpu::MemoryHints::MemoryUsage,
         trace: wgpu::Trace::Off,
     }))
     .map_err(RenderError::Device)?;
