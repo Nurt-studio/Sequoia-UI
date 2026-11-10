@@ -81,7 +81,7 @@ impl View for NodeGraphView {
                         } else {
                             name.clone()
                         })
-                        .size(11.0)
+                        .size(12.0)
                         .color(if active {
                             Color::WHITE
                         } else {
@@ -95,7 +95,7 @@ impl View for NodeGraphView {
             .child(Spacer::flex(1.0))
             .child(
                 Text::new(format!("{scope_name} · {nodes_n} nodes · {wires_n} wires"))
-                    .size(10.0)
+                    .size(11.0)
                     .font("IBM Plex Mono")
                     .color(colors::active().icon_inactive),
             )
@@ -110,8 +110,8 @@ impl View for NodeGraphView {
                 }
                 if errors == 0 && warns == 0 && nodes_n > 0 {
                     row = row.child(
-                        Text::new("✓ DAG ok")
-                            .size(10.0)
+                        Text::new("�? DAG ok")
+                            .size(11.0)
                             .font("IBM Plex Mono")
                             .color(colors::active().ok),
                     );
@@ -132,7 +132,7 @@ impl View for NodeGraphView {
                     })
                     .child(
                         Text::new("Reset View")
-                            .size(11.0)
+                            .size(12.0)
                             .color(colors::active().icon_active),
                     ),
             );
@@ -161,16 +161,16 @@ fn badge(mark: &str, count: usize, color: Color) -> impl View + 'static {
         .align_items(Align::Center)
         .child(
             Container::new()
-                .width(14.0)
-                .height(14.0)
+                .width(16.0)
+                .height(16.0)
                 .center()
-                .radius(7.0)
+                .radius(8.0)
                 .background(color)
-                .child(Text::new(mark).size(9.0).color(Color::hex(0x111111))),
+                .child(Text::new(mark).size(11.0).color(Color::hex(0x111111))),
         )
         .child(
             Text::new(format!("{count}"))
-                .size(10.5)
+                .size(11.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().text),
         )
@@ -189,8 +189,9 @@ mod tests {
     use super::*;
     use crate::model::behavior::{Action, Behavior, Rule, Trigger, Var, VarType};
     use crate::model::svelte_ast::{SvelteNode, new_button, new_frame};
+    use crate::model::tree_ops;
     use sequoia_ui::core::{RenderItem, RenderList};
-    use sequoia_ui::input::{Modifiers, PointerButton};
+    use sequoia_ui::input::{Key, Modifiers, PointerButton};
     use sequoia_ui::text::TextSystem;
     use sequoia_ui::view::Runtime;
 
@@ -518,5 +519,156 @@ mod tests {
         let nodes = graph.nodes.get();
         assert!(nodes.iter().any(|n| n.key == "s:open"));
         graph.browser_query.set("zzz".into());
+    }
+
+    fn select_key(graph: &NodeGraphState, key: &str) {
+        let node = graph
+            .nodes
+            .get()
+            .iter()
+            .find(|n| n.key == key)
+            .cloned()
+            .unwrap_or_else(|| panic!("missing node {key}"));
+        graph.select_node(node.id);
+    }
+
+    fn behavior_of(graph: &NodeGraphState, el: u64) -> Option<Behavior> {
+        let root = graph.editor.root.get_untracked().unwrap();
+        match tree_ops::find(&root, el) {
+            Some(SvelteNode::Element(e)) => e.behavior.clone(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn add_state_rule_and_action_nodes_grows_the_document() {
+        let (_, graph) = mounted();
+        // State lands on the scope owner (Card), the selected rule's element.
+        assert!(graph.add_state_node());
+        assert!(
+            graph.nodes.get().iter().any(|n| n.key == "s:var1"),
+            "new state node appears"
+        );
+        let card = behavior_of(&graph, 2).expect("Card behavior");
+        assert!(card.vars.iter().any(|v| v.name == "var1"));
+
+        // Rule attaches to the currently selected node's element (Card).
+        assert!(graph.add_rule_node());
+        assert!(graph.nodes.get().iter().any(|n| n.key == "t:2:0"));
+        // Default action: Toggle with the first bool already in scope.
+        assert!(graph.add_action_node("toggle"));
+        assert!(
+            graph.nodes.get().iter().any(|n| n.key == "a:2:0:0"),
+            "action node hangs off the new rule"
+        );
+        let card = behavior_of(&graph, 2).unwrap();
+        assert_eq!(card.rules[0].actions[0], Action::ToggleVar("open".into()));
+
+        // Add an action to the seeded Btn rule.
+        select_key(&graph, "t:3:0");
+        assert!(graph.add_action_node("delay"));
+        let btn = behavior_of(&graph, 3).unwrap();
+        assert_eq!(btn.rules[0].actions.len(), 2);
+        assert!(matches!(btn.rules[0].actions[1], Action::Delay(..)));
+    }
+
+    #[test]
+    fn editing_nodes_updates_the_behavior_model() {
+        let (_, graph) = mounted();
+        select_key(&graph, "s:open");
+        assert!(graph.rename_state("enabled"));
+        assert!(graph.nodes.get().iter().any(|n| n.key == "s:enabled"));
+        assert_eq!(
+            behavior_of(&graph, 3).unwrap().rules[0].actions[0],
+            Action::ToggleVar("enabled".into())
+        );
+
+        select_key(&graph, "t:3:0");
+        assert_eq!(graph.selected_trigger(), Some(Trigger::OnClick));
+        assert!(graph.set_trigger_kind("key"));
+        assert_eq!(
+            graph.selected_trigger(),
+            Some(Trigger::OnKey("Enter".into()))
+        );
+        assert!(graph.set_trigger_param("Space".into()));
+        assert_eq!(
+            graph.selected_trigger(),
+            Some(Trigger::OnKey("Space".into()))
+        );
+
+        select_key(&graph, "a:3:0:0");
+        assert_eq!(
+            graph.selected_action(),
+            Some(Action::ToggleVar("enabled".into()))
+        );
+        assert!(graph.set_action_kind("set"));
+        assert_eq!(
+            graph.selected_action(),
+            Some(Action::SetVar(
+                "enabled".into(),
+                crate::model::behavior::ValueExpr::Value(crate::model::behavior::Value::Bool(
+                    false
+                ))
+            ))
+        );
+        assert!(graph.set_action_literal("true"));
+        assert_eq!(
+            graph.selected_action(),
+            Some(Action::SetVar(
+                "enabled".into(),
+                crate::model::behavior::ValueExpr::Value(crate::model::behavior::Value::Bool(true))
+            ))
+        );
+
+        select_key(&graph, "s:enabled");
+        assert!(graph.set_state_type(VarType::Number));
+        assert_eq!(behavior_of(&graph, 2).unwrap().vars[0].ty, VarType::Number);
+    }
+
+    #[test]
+    fn deleting_nodes_prunes_the_document() {
+        let (_, graph) = mounted();
+        select_key(&graph, "s:open");
+        assert!(graph.delete_selected_node());
+        assert!(
+            !graph.nodes.get().iter().any(|n| n.key == "s:open"),
+            "state node is gone"
+        );
+        let card = behavior_of(&graph, 2);
+        assert!(card.is_none(), "empty Card behavior is dropped");
+        let btn = behavior_of(&graph, 3).unwrap();
+        assert!(
+            btn.rules[0].actions.is_empty(),
+            "Toggle open pruned with the variable"
+        );
+
+        select_key(&graph, "t:3:0");
+        assert!(graph.delete_selected_node());
+        assert!(behavior_of(&graph, 3).is_none());
+        assert!(!graph.nodes.get().iter().any(|n| n.key == "t:3:0"));
+    }
+
+    #[test]
+    fn delete_key_removes_the_selected_node() {
+        let (rt, graph) = mounted();
+        let mut text = TextSystem::new();
+        let t = graph
+            .nodes
+            .get()
+            .iter()
+            .find(|n| n.key == "t:3:0")
+            .cloned()
+            .expect("trigger node");
+        const CANVAS_X: f32 = 236.0;
+        let click = Point::new(CANVAS_X + t.x + 50.0, 36.0 + t.y + 12.0);
+        rt.pointer_down(click, PointerButton::Left, Modifiers::NONE, &mut text);
+        rt.pointer_up(click, PointerButton::Left, Modifiers::NONE, &mut text);
+        assert_eq!(graph.selected_node.get(), Some(t.id));
+        rt.key(Key::DELETE, Modifiers::NONE, &mut text);
+        assert!(
+            !graph.nodes.get().iter().any(|n| n.key == "t:3:0"),
+            "Delete removed the selected Trigger node"
+        );
+        assert!(behavior_of(&graph, 3).is_none());
     }
 }

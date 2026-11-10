@@ -1,14 +1,14 @@
 use sequoia_ui::prelude::*;
 
 // ── dimensions ───────────────────────────────────────────
-pub(crate) const NODE_W: f32 = 180.0;
-pub(crate) const HEADER_H: f32 = 32.0;
-pub(crate) const PORT_ROW_H: f32 = 24.0;
+pub(crate) const NODE_W: f32 = 200.0;
+pub(crate) const HEADER_H: f32 = 42.0;
+pub(crate) const PORT_ROW_H: f32 = 28.0;
 pub(crate) const PORT_R: f32 = 5.0;
 /// Socket hit radius — a bit larger than the drawn dot so grabbing a port
 /// does not require pixel-perfect aim.
 pub(crate) const PORT_HIT_R: f32 = 9.0;
-pub(crate) const NODE_PAD_B: f32 = 10.0;
+pub(crate) const NODE_PAD_B: f32 = 12.0;
 pub(crate) const GRID_STEP: f32 = 24.0;
 
 // ── types ────────────────────────────────────────────────

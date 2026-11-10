@@ -15,6 +15,7 @@ impl View for GraphCanvas {
         let st = self.st.clone();
         let st2 = self.st.clone();
         let st3 = self.st.clone();
+        let st4 = self.st.clone();
 
         Canvas::new()
             .background(colors::active().bg_darker)
@@ -39,6 +40,7 @@ impl View for GraphCanvas {
             .on_pointer(move |pos, ev, ctx| {
                 handle_pointer(&st3, pos, ev, ctx);
             })
+            .on_key(move |ev| handle_key(&st4, ev))
     }
 
     fn layout_style(&self) -> LayoutStyle {
@@ -162,7 +164,7 @@ fn draw_empty_state(p: &mut Painter, size: Size) {
     let line1 = "No rules or variables in this scope yet.";
     let line2 = "Select an element and add rules in the Interact tab.";
     let w1 = line1.len() as f32 * 7.2;
-    let w2 = line2.len() as f32 * 6.1;
+    let w2 = line2.len() as f32 * 7.2;
     p.text_tl(
         line1,
         Point::new((size.width - w1) / 2.0, size.height / 2.0 - 24.0),
@@ -172,7 +174,7 @@ fn draw_empty_state(p: &mut Painter, size: Size) {
     p.text_tl(
         line2,
         Point::new((size.width - w2) / 2.0, size.height / 2.0 - 2.0),
-        11.0,
+        13.0,
         pal.icon_inactive,
     );
 }
@@ -187,8 +189,8 @@ fn draw_legend(p: &mut Painter, size: Size) {
         (NodeKind::Action, "Action"),
     ] {
         p.circle(Point::new(x, y), 4.0, Fill::solid(kind.accent()));
-        p.text_tl(label, Point::new(x + 9.0, y - 6.0), 10.0, pal.icon_inactive);
-        x += 9.0 + label.len() as f32 * 6.0 + 18.0;
+        p.text_tl(label, Point::new(x + 9.0, y - 7.0), 13.0, pal.icon_inactive);
+        x += 9.0 + label.len() as f32 * 7.0 + 20.0;
     }
 }
 
@@ -216,22 +218,22 @@ fn draw_node(p: &mut Painter, node: &GraphNode, selected: bool) {
         Some(sub) => {
             p.text_tl(
                 &node.title,
-                Point::new(node.x + 10.0, node.y + 5.0),
-                11.5,
+                Point::new(node.x + 10.0, node.y + 6.0),
+                13.0,
                 Color::WHITE,
             );
             p.text_tl(
                 sub,
-                Point::new(node.x + 10.0, node.y + 18.0),
-                8.5,
+                Point::new(node.x + 10.0, node.y + 23.0),
+                13.0,
                 Color::hexa(0xFFFFFFB0),
             );
         }
         None => {
             p.text_tl(
                 &node.title,
-                Point::new(node.x + 10.0, node.y + 8.0),
-                12.0,
+                Point::new(node.x + 10.0, node.y + 12.0),
+                13.0,
                 Color::WHITE,
             );
         }
@@ -252,7 +254,7 @@ fn draw_node(p: &mut Painter, node: &GraphNode, selected: bool) {
         p.circle(pos, PORT_R, Fill::solid(pal.bg_darker));
         p.circle(pos, PORT_R - 1.5, Fill::solid(node.kind.accent()));
         if !label.is_empty() {
-            p.text_tl(label, Point::new(pos.x + 10.0, pos.y - 6.0), 10.0, pal.text);
+            p.text_tl(label, Point::new(pos.x + 10.0, pos.y - 7.0), 13.0, pal.text);
         }
     }
     for (i, label) in node.outputs.iter().enumerate() {
@@ -260,11 +262,11 @@ fn draw_node(p: &mut Painter, node: &GraphNode, selected: bool) {
         p.circle(pos, PORT_R, Fill::solid(pal.bg_darker));
         p.circle(pos, PORT_R - 1.5, Fill::solid(node.kind.accent()));
         if !label.is_empty() {
-            let tw = label.len() as f32 * 5.5;
+            let tw = label.len() as f32 * 7.0;
             p.text_tl(
                 label,
-                Point::new(pos.x - 10.0 - tw, pos.y - 6.0),
-                10.0,
+                Point::new(pos.x - 10.0 - tw, pos.y - 7.0),
+                13.0,
                 pal.text,
             );
         }
@@ -307,6 +309,28 @@ fn bezier_eval(t: f32, p0: Point, p1: Point, p2: Point, p3: Point) -> Point {
         uuu * p0.x + 3.0 * uu * t * p1.x + 3.0 * u * tt * p2.x + ttt * p3.x,
         uuu * p0.y + 3.0 * uu * t * p1.y + 3.0 * u * tt * p2.y + ttt * p3.y,
     )
+}
+
+// ── keyboard ─────────────────────────────────────────────
+fn handle_key(st: &NodeGraphState, ev: &KeyEvent) -> bool {
+    if ev
+        .modifiers
+        .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
+    {
+        return false;
+    }
+    if st.selected_node.get_untracked().is_none() {
+        return false;
+    }
+    match ev.key {
+        Key::DELETE | Key::BACKSPACE => st.delete_selected_node(),
+        Key::ESCAPE => {
+            st.selected_node.set(None);
+            st.bump();
+            true
+        }
+        _ => false,
+    }
 }
 
 // ── pointer events ───────────────────────────────────────
