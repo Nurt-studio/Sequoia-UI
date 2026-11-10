@@ -32,14 +32,22 @@ impl View for BenchmarkWidget {
         Container::new()
             .width(Length::Fill(1.0))
             .padding(8.0)
-            .style(BoxStyle::new().background(Color::rgb8(0x20, 0x22, 0x2A)).radius(6.0))
+            .style(
+                BoxStyle::new()
+                    .background(Color::rgb8(0x20, 0x22, 0x2A))
+                    .radius(6.0),
+            )
             .child(
                 Row::new()
                     .gap(8.0)
-                    .child(Text::new(format!("Widget Item #{id:03}")).size(14.0).color(Color::WHITE))
+                    .child(
+                        Text::new(format!("Widget Item #{id:03}"))
+                            .size(14.0)
+                            .color(Color::WHITE),
+                    )
                     .child(Spacer::flex(1.0))
                     .child(Text::with(move || format!("Val: {}", counter.get())).size(12.0))
-                    .child(Button::labeled("Inc"))
+                    .child(Button::labeled("Inc")),
             )
     }
 }
@@ -89,13 +97,19 @@ fn test_framework_core_performance() {
     let element_count = harness.element_count();
     println!("[FRAMEWORK PERF] Cold-start & First-Frame latency: {cold_start_duration:?}");
     println!("[FRAMEWORK PERF] Total framework elements in tree: {element_count}");
-    println!("[FRAMEWORK PERF] Render items generated: {}", render_list.len());
+    println!(
+        "[FRAMEWORK PERF] Render items generated: {}",
+        render_list.len()
+    );
 
     assert!(
         cold_start_duration.as_secs_f64() < 2.0,
         "Cold-start layout and paint took too long: {cold_start_duration:?}"
     );
-    assert!(element_count > count, "Element tree should contain nested components");
+    assert!(
+        element_count > count,
+        "Element tree should contain nested components"
+    );
 
     // 2. Reactivity & Tick Performance Test (100 ticks with state updates)
     let t_ticks = Instant::now();
@@ -115,7 +129,9 @@ fn test_framework_core_performance() {
     let avg_tick_ms = ticks_duration.as_secs_f64() * 1000.0 / iterations as f64;
 
     println!("[FRAMEWORK PERF] Completed {iterations} reactive ticks in {ticks_duration:?}");
-    println!("[FRAMEWORK PERF] Average time per tick (layout + reconcile + paint): {avg_tick_ms:.3} ms");
+    println!(
+        "[FRAMEWORK PERF] Average time per tick (layout + reconcile + paint): {avg_tick_ms:.3} ms"
+    );
 
     assert!(
         avg_tick_ms < 50.0,
