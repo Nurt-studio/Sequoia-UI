@@ -104,6 +104,7 @@ fn scene_tree(n: usize) -> SvelteNode {
             behavior: None,
             binding: None,
             hover: None,
+            prototype: None,
         }));
     }
 
@@ -133,6 +134,7 @@ fn scene_tree(n: usize) -> SvelteNode {
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     })
 }
 
