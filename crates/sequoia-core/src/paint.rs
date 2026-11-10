@@ -614,7 +614,11 @@ pub struct Shadow {
 
 impl Shadow {
     pub fn is_visible(&self) -> bool {
-        !self.rect.is_empty() && self.color.a > 0.0 && self.blur > 0.0 && self.blur.is_finite()
+        !self.rect.is_empty()
+            && self.color.a > 0.0
+            && self.blur >= 0.0
+            && self.blur.is_finite()
+            && (!self.inset || self.blur > 0.0)
     }
 
     pub fn bounds(&self) -> Rect {
@@ -2923,10 +2927,15 @@ mod tests {
     }
 
     #[test]
-    fn shadow_push_filters_invisible_shadows() {
+    fn shadow_push_allows_hard_outer_but_not_hard_inset_shadows() {
         let mut list = RenderList::new();
         list.push_shadow(Shadow {
             blur: 0.0,
+            ..shadow_spec()
+        });
+        list.push_shadow(Shadow {
+            blur: 0.0,
+            inset: true,
             ..shadow_spec()
         });
         list.push_shadow(Shadow {
@@ -2941,7 +2950,7 @@ mod tests {
             rect: Rect::ZERO,
             ..shadow_spec()
         });
-        assert!(list.is_empty(), "hidden shadows create no items");
+        assert_eq!(list.items().len(), 1, "only the hard outer shadow is kept");
     }
 
     #[test]

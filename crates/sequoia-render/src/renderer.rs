@@ -2629,7 +2629,7 @@ impl GpuRenderer {
             }
         }
 
-        if has_backdrops {
+        if has_backdrops || has_filters {
             let mut need_clear = !fb_drawn;
             if !blit_quads.is_empty() {
                 let load = if need_clear {

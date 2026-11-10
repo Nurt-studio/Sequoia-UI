@@ -181,23 +181,56 @@ pub(crate) fn group_runs_with_opacity(
                 let (transform_a, transform_b) = gpu_transform(index);
                 let mut color = linear_rgba(s.color);
                 color[3] *= opacity(index);
+                let hard = s.blur <= 0.0 && !s.inset;
+                let spread = if s.spread.is_finite() {
+                    s.spread
+                } else {
+                    0.0
+                };
+                let shadow_rect = if hard {
+                    Rect::from_xywh(
+                        s.rect.left() + s.offset.x - spread,
+                        s.rect.top() + s.offset.y - spread,
+                        s.rect.size.width + spread * 2.0,
+                        s.rect.size.height + spread * 2.0,
+                    )
+                } else {
+                    s.rect
+                };
+                if shadow_rect.is_empty() {
+                    continue;
+                }
                 quads.push(GpuQuad {
                     rect: [
-                        s.rect.left() * scale,
-                        s.rect.top() * scale,
-                        s.rect.size.width * scale,
-                        s.rect.size.height * scale,
+                        shadow_rect.left() * scale,
+                        shadow_rect.top() * scale,
+                        shadow_rect.size.width * scale,
+                        shadow_rect.size.height * scale,
                     ],
                     color,
-                    radius: s.radius * scale,
+                    radius: (if hard {
+                        (s.radius + spread).max(0.0)
+                    } else {
+                        s.radius
+                    }) * scale,
                     border_color: [0.0; 4],
                     border_width: 0.0,
                     clip_rect,
                     clip_radius,
-                    softness: (s.blur * scale).max(0.0),
-                    spread: s.spread * scale,
-                    shadow_offset: [s.offset.x * scale, s.offset.y * scale],
-                    inset: if s.inset { 1.0 } else { 0.0 },
+                    softness: if hard { 0.0 } else { (s.blur * scale).max(0.0) },
+                    spread: if hard { 0.0 } else { s.spread * scale },
+                    shadow_offset: if hard {
+                        [0.0; 2]
+                    } else {
+                        [s.offset.x * scale, s.offset.y * scale]
+                    },
+                    inset: if hard {
+                        0.0
+                    } else if s.inset {
+                        1.0
+                    } else {
+                        0.0
+                    },
                     transform_a,
                     transform_b,
                 });

@@ -336,7 +336,7 @@ mod tests {
         let mut d = DamageTracker::new();
         d.mark_rect(Rect::ZERO);
         d.mark_rect(r(5.0, 5.0, 0.0, 0.0));
-        assert!(d.is_empty(), "puste recty nie liczą się");
+        assert!(d.is_empty(), "empty rects don't count");
     }
 
     #[test]
@@ -344,7 +344,7 @@ mod tests {
         let mut d = DamageTracker::new();
         d.mark_rect(r(0.0, 0.0, 10.0, 10.0));
         d.mark_full();
-        assert_eq!(d.paint_region(), None, "full = brak partial clip");
+        assert_eq!(d.paint_region(), None, "full = no partial clip");
         assert!(d.flags().contains(Dirty::SURFACE));
     }
 

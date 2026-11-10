@@ -597,6 +597,50 @@ fn shadow_becomes_a_quad_instance_with_softness() {
 }
 
 #[test]
+fn hard_outer_shadow_becomes_a_plain_quad() {
+    use sequoia_core::{RenderList, Shadow, Vec2};
+    let mut list = RenderList::new();
+    list.push_shadow(Shadow {
+        rect: Rect::from_xywh(10.0, 20.0, 100.0, 60.0),
+        color: Color::BLACK,
+        radius: 6.0,
+        blur: 0.0,
+        spread: 2.0,
+        offset: Vec2::new(1.0, 3.0),
+        inset: false,
+    });
+    let items: Vec<RenderItem> = list.items().to_vec();
+    let clips = list.item_clips().to_vec();
+    let mut quads = Vec::new();
+    let (mut glyphs, mut images, mut keys, mut gradients, mut runs) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    group_runs(
+        &items,
+        &clips,
+        &[],
+        2.0,
+        None,
+        usize::MAX,
+        usize::MAX,
+        usize::MAX,
+        usize::MAX,
+        &mut quads,
+        &mut glyphs,
+        &mut images,
+        &mut keys,
+        &mut gradients,
+        &mut runs,
+    );
+    let q = quads[0];
+    assert_eq!(q.rect, [18.0, 42.0, 208.0, 128.0], "offset and spread baked in");
+    assert_eq!(q.radius, 16.0);
+    assert_eq!(q.softness, 0.0);
+    assert_eq!(q.spread, 0.0);
+    assert_eq!(q.shadow_offset, [0.0, 0.0]);
+    assert_eq!(q.inset, 0.0);
+}
+
+#[test]
 fn inset_shadow_maps_to_the_inset_flag() {
     use sequoia_core::{RenderList, Shadow};
     let mut list = RenderList::new();
@@ -813,6 +857,7 @@ fn gui_run_draws_batches_consecutive_atlas_images() {
 fn a_large_scene_loses_nothing() {
     use sequoia_core::Quad;
     use sequoia_core::{GlyphQuad, TextDraw};
+    let start = std::time::Instant::now();
     let mut items = Vec::new();
 
     for i in 0..100_000u32 {

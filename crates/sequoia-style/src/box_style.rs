@@ -32,7 +32,11 @@ impl ShadowSpec {
     }
 
     pub fn is_visible(self) -> bool {
-        self.color.a > 0.0 && self.blur > 0.0 && self.blur.is_finite()
+        self.color.a > 0.0 && self.blur >= 0.0 && self.blur.is_finite()
+    }
+
+    pub fn is_visible_inset(self) -> bool {
+        self.is_visible() && self.blur > 0.0
     }
 }
 
@@ -184,11 +188,16 @@ impl BoxStyle {
             && !self.border_bottom.is_visible()
             && !self.border_left.is_visible()
             && !self.shadow.is_some_and(ShadowSpec::is_visible)
-            && !self.inset_shadow.is_some_and(ShadowSpec::is_visible)
+            && !self.inset_shadow.is_some_and(ShadowSpec::is_visible_inset)
     }
 
     fn paint_shadow(&self, list: &mut RenderList, rect: Rect, spec: ShadowSpec, inset: bool) {
-        if !spec.is_visible() {
+        let visible = if inset {
+            spec.is_visible_inset()
+        } else {
+            spec.is_visible()
+        };
+        if !visible {
             return;
         }
 
@@ -329,6 +338,12 @@ mod tests {
         assert!(!style.is_empty(), "shadow alone is not an empty style");
         let mut list = RenderList::new();
         style.paint(&mut list, Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(list.shadows().count(), 1);
+
+        let hard = BoxStyle::new().shadow(ShadowSpec::new(Color::BLACK, 0.0));
+        assert!(!hard.is_empty(), "hard outer shadows are visible");
+        let mut list = RenderList::new();
+        hard.paint(&mut list, Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
         assert_eq!(list.shadows().count(), 1);
 
         assert!(
