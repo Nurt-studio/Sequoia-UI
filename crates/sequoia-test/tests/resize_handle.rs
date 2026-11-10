@@ -202,6 +202,70 @@ fn gutter_paints_panel_colored_strip() {
 }
 
 #[test]
+fn line_anchor_sits_flush_with_the_panel_edge() {
+    const PANEL: Color = Color::hex(0x2C2C2C);
+    const IDLE: Color = Color::rgb8(0x75, 0x75, 0x75);
+    const ACTIVE: Color = Color::rgb8(0x0D, 0x99, 0xFF);
+
+    struct LineDemo {
+        w: Signal<f32>,
+        handle: ResizeHandle,
+    }
+
+    impl View for LineDemo {
+        fn body(&self) -> impl View + 'static {
+            Row::new()
+                .fill_size()
+                .child(
+                    Container::new()
+                        .width(self.w.get())
+                        .fill_height()
+                        .background(PANEL),
+                )
+                .child(self.handle.clone())
+                .child_flex(Container::new().background(Color::hex(0x1E1E1E)), 1.0)
+        }
+    }
+
+    let w = Signal::new(200.0);
+    let start = Harness::new(LineDemo {
+        w: w.clone(),
+        handle: ResizeHandle::new(w.clone())
+            .gutter(PANEL)
+            .line_at_start()
+            .idle_width(1.0),
+    });
+    start.layout(800.0, 600.0);
+    let list = start.paint();
+    let line = list.quads().find(|q| q.color == IDLE).expect("idle line");
+    assert_eq!(line.rect.left(), 200.0);
+    assert_eq!(line.rect.size.width, 1.0);
+
+    let end = Harness::new(LineDemo {
+        w: w.clone(),
+        handle: ResizeHandle::new(w.clone())
+            .gutter(PANEL)
+            .line_at_end()
+            .idle_width(1.0),
+    });
+    end.layout(800.0, 600.0);
+    let list = end.paint();
+    let line = list.quads().find(|q| q.color == IDLE).expect("idle line");
+    assert_eq!(line.rect.left(), 206.0);
+
+    end.pointer_move(203.5, 300.0);
+    end.tick();
+    end.layout(800.0, 600.0);
+    let list = end.paint();
+    let line = list
+        .quads()
+        .find(|q| q.color == ACTIVE)
+        .expect("hover line");
+    assert_eq!(line.rect.left(), 205.0);
+    assert_eq!(line.rect.size.width, 2.0);
+}
+
+#[test]
 fn move_without_down_changes_nothing() {
     let w = Signal::new(200.0);
     let h = Harness::new(Demo::new(w.clone(), false));

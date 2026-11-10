@@ -10,7 +10,7 @@ use sequoia_view::{EventCtx, PaintCtx, Unit, View};
 
 const DEFAULT_HIT: f32 = 7.0;
 
-const LINE_IDLE: f32 = 1.0;
+const LINE_IDLE: f32 = 2.0;
 
 const LINE_ACTIVE: f32 = 2.0;
 
@@ -24,6 +24,14 @@ struct DragState {
     value: f32,
 }
 
+#[derive(Clone, Copy, Default)]
+enum LineAnchor {
+    #[default]
+    Center,
+    Start,
+    End,
+}
+
 #[derive(Clone)]
 pub struct ResizeHandle {
     value: Signal<f32>,
@@ -32,12 +40,13 @@ pub struct ResizeHandle {
     hit: f32,
     axis: Axis,
     invert: bool,
-    gutter: Color,
+    gutter: Option<Color>,
     style: Option<ResizeHandleStyle>,
     idle: Option<Color>,
     active: Option<Color>,
     idle_width: Option<f32>,
     active_width: Option<f32>,
+    line_anchor: LineAnchor,
     drag: Rc<Cell<Option<DragState>>>,
     margin: Edges,
 }
@@ -51,12 +60,13 @@ impl ResizeHandle {
             hit: DEFAULT_HIT,
             axis: Axis::Horizontal,
             invert: false,
-            gutter: Color::TRANSPARENT,
+            gutter: None,
             style: None,
             idle: None,
             active: None,
             idle_width: None,
             active_width: None,
+            line_anchor: LineAnchor::Center,
             drag: Rc::new(Cell::new(None)),
             margin: Edges::ZERO,
         }
@@ -96,7 +106,7 @@ impl ResizeHandle {
     }
 
     pub fn gutter(mut self, color: Color) -> Self {
-        self.gutter = color;
+        self.gutter = Some(color);
         self
     }
 
@@ -122,6 +132,21 @@ impl ResizeHandle {
 
     pub fn active_width(mut self, width: f32) -> Self {
         self.active_width = Some(width);
+        self
+    }
+
+    pub fn line_at_center(mut self) -> Self {
+        self.line_anchor = LineAnchor::Center;
+        self
+    }
+
+    pub fn line_at_start(mut self) -> Self {
+        self.line_anchor = LineAnchor::Start;
+        self
+    }
+
+    pub fn line_at_end(mut self) -> Self {
+        self.line_anchor = LineAnchor::End;
         self
     }
 
@@ -172,17 +197,6 @@ impl ResizeHandle {
     pub fn margin_bottom(mut self, v: f32) -> Self {
         self.margin.bottom = sanitize_margin(v);
         self
-    }
-
-    fn resolved_gutter(&self) -> Color {
-        if self.gutter != Color::TRANSPARENT {
-            self.gutter
-        } else {
-            self.style
-                .unwrap_or_default()
-                .gutter
-                .unwrap_or(Color::TRANSPARENT)
-        }
     }
 
     fn resolved_idle(&self) -> Color {
@@ -320,9 +334,11 @@ impl View for ResizeHandle {
             return;
         }
 
-        let gutter = self.resolved_gutter();
-        if gutter.a > 0.0 {
-            ctx.quad(r, gutter, 0.0);
+        let style = self.style.unwrap_or_default();
+        if let Some(gutter) = self.gutter.or(style.gutter) {
+            if gutter.a > 0.0 {
+                ctx.quad(r, gutter, 0.0);
+            }
         }
         let active = ctx.state.hovered || ctx.state.pressed || self.drag.get().is_some();
         let (w, c) = if active {
@@ -332,20 +348,20 @@ impl View for ResizeHandle {
         };
         match self.axis {
             Axis::Horizontal => {
-                let cx = r.left() + r.size.width * 0.5;
-                ctx.quad(
-                    Rect::from_xywh(cx - w * 0.5, r.top(), w, r.size.height),
-                    c,
-                    0.0,
-                );
+                let x = match self.line_anchor {
+                    LineAnchor::Center => r.left() + (r.size.width - w) * 0.5,
+                    LineAnchor::Start => r.left(),
+                    LineAnchor::End => r.right() - w,
+                };
+                ctx.quad(Rect::from_xywh(x, r.top(), w, r.size.height), c, 0.0);
             }
             Axis::Vertical => {
-                let cy = r.top() + r.size.height * 0.5;
-                ctx.quad(
-                    Rect::from_xywh(r.left(), cy - w * 0.5, r.size.width, w),
-                    c,
-                    0.0,
-                );
+                let y = match self.line_anchor {
+                    LineAnchor::Center => r.top() + (r.size.height - w) * 0.5,
+                    LineAnchor::Start => r.top(),
+                    LineAnchor::End => r.bottom() - w,
+                };
+                ctx.quad(Rect::from_xywh(r.left(), y, r.size.width, w), c, 0.0);
             }
         }
     }
