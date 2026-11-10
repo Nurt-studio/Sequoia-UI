@@ -39,7 +39,7 @@ impl View for HelpOverlay {
                     .fill_width()
                     .padding(Edges::xy(0.0, 4.0))
                     .border_bottom(1.0, colors::active().stroke_soft)
-                    .child(Text::new(k).size(11.0).color(Color::hex(0xC9C9C9)))
+                    .child(Text::new(k).size(12.0).color(Color::hex(0xC9C9C9)))
                     .child(Spacer::flex(1.0))
                     .child(
                         Container::new()
@@ -49,7 +49,7 @@ impl View for HelpOverlay {
                             .radius(4.0)
                             .child(
                                 Text::new(v)
-                                    .size(9.5)
+                                    .size(11.0)
                                     .font("IBM Plex Mono")
                                     .color(Color::hex(0xAEAEAE)),
                             ),
@@ -79,7 +79,7 @@ impl View for HelpOverlay {
                                 .gap(10.0)
                                 .child(
                                     Text::new("Keyboard shortcuts")
-                                        .size(14.0)
+                                        .size(13.0)
                                         .semibold()
                                         .color(Color::WHITE),
                                 )

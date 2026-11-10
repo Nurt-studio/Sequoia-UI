@@ -3,7 +3,7 @@
 mod layer_row;
 mod layer_tree;
 
-use self::layer_tree::layer_list;
+use self::layer_tree::{ROW_H, layer_list, tree_rows};
 
 use sequoia_ui::prelude::*;
 
@@ -40,7 +40,7 @@ impl View for EyeToggle {
             .on_click(move || st.show_hidden_layers.update(|v| *v = !*v))
             .child(
                 Icon::new(if filtering { "eye" } else { "lyr/eyeoff" })
-                    .size(12.0)
+                    .size(14.0)
                     .color(if filtering {
                         colors::active().icon_active
                     } else {
@@ -78,7 +78,7 @@ impl View for Sec {
                     )
                     .child(
                         Text::new(self.title)
-                            .size(13.0)
+                            .size(11.0)
                             .semibold()
                             .letter_spacing(0.6)
                             .color(colors::active().icon_inactive),
@@ -91,7 +91,7 @@ impl View for Sec {
                             .background(colors::active().bg_lighter)
                             .child(
                                 Text::with(move || format!("{}", cnt.get()))
-                                    .size(13.0)
+                                    .size(10.0)
                                     .font("IBM Plex Mono")
                                     .color(colors::active().icon_inactive),
                             ),
@@ -192,6 +192,71 @@ impl View for LeftPanel {
 
 pub(crate) fn panel_left(state: &EditorState) -> impl View + 'static {
     LeftPanel {
+        state: state.clone(),
+    }
+}
+
+/// Full-window drag layer: appears while a layer row is being dragged and
+/// resolves the drop from the pointer position. It does not rely on pointer
+/// capture on the tiny grip, so drag & drop behaves the same in the browser.
+#[derive(Clone)]
+struct DragOverlay {
+    state: EditorState,
+}
+
+impl View for DragOverlay {
+    fn body(&self) -> impl View + 'static {
+        if self.state.lyr_drag_id.get().is_none() {
+            return AnyView::new(Unit);
+        }
+        let st = self.state.clone();
+        AnyView::new(
+            Canvas::new()
+                .fill_size()
+                .focusable(false)
+                .capture(false)
+                .on_pointer(move |pos, ev, ctx| match ev {
+                    PointerEvent::Move { .. }
+                    | PointerEvent::PenMove { .. }
+                    | PointerEvent::TouchMove { .. } => {
+                        let Some(id) = st.lyr_drag_id.get_untracked() else {
+                            return;
+                        };
+                        let section = st.lyr_drag_section.get_untracked();
+                        let rows = tree_rows(&st, section);
+                        if rows.is_empty() {
+                            return;
+                        }
+                        let raw = st.lyr_drag_index.get_untracked() as f32
+                            + (pos.y - st.lyr_drag_start_y.get_untracked()) / ROW_H;
+                        let mark = self::layer_row::drop_mark(&st, &rows, id, raw);
+                        st.lyr_drop
+                            .set(mark.filter(|m| !self::layer_row::is_noop(&st, id, *m)));
+                        ctx.handled();
+                    }
+                    PointerEvent::Up { .. }
+                    | PointerEvent::PenUp { .. }
+                    | PointerEvent::TouchUp { .. } => {
+                        if let (Some(id), Some(mark)) =
+                            (st.lyr_drag_id.get_untracked(), st.lyr_drop.get_untracked())
+                        {
+                            self::layer_row::apply_drop(&st, id, mark);
+                        }
+                        self::layer_row::end_drag(&st);
+                        ctx.handled();
+                    }
+                    PointerEvent::Cancel => {
+                        self::layer_row::end_drag(&st);
+                        ctx.handled();
+                    }
+                    _ => {}
+                }),
+        )
+    }
+}
+
+pub(crate) fn drag_overlay(state: &EditorState) -> impl View + 'static {
+    DragOverlay {
         state: state.clone(),
     }
 }

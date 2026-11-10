@@ -26,7 +26,7 @@ pub(crate) fn menu_row(
     if let Some(hint) = hint {
         row = row.child(Spacer::flex(1.0)).child(
             Text::new(hint)
-                .size(10.0)
+                .size(11.0)
                 .color(Color::hex(0xE6E6E6).with_alpha(0.6)),
         );
     }
@@ -59,7 +59,7 @@ pub(crate) fn menu_row_env(
     if let Some(hint) = hint {
         row = row.child(Spacer::flex(1.0)).child(
             Text::new(hint)
-                .size(10.0)
+                .size(11.0)
                 .color(Color::hex(0xE6E6E6).with_alpha(0.6)),
         );
     }

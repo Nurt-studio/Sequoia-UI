@@ -18,6 +18,7 @@ pub(super) fn body_overrides(state: &EditorState) -> AnyView {
         return AnyView::new(
             Text::new("Master component not found for this instance")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     };
@@ -54,7 +55,7 @@ pub(super) fn body_overrides(state: &EditorState) -> AnyView {
                 )
                 .child_flex(
                     TextField::new(sig)
-                        .font_size(12.0)
+                        .font_size(13.0)
                         .text_color(Color::hex(0xE8E8E8))
                         .background(colors::active().bg_lighter)
                         .border(1.0, colors::active().stroke_soft)
@@ -78,13 +79,13 @@ pub(super) fn body_overrides(state: &EditorState) -> AnyView {
                 .align_items(Align::Center)
                 .child(
                     Text::new("Events")
-                        .size(9.5)
+                        .size(11.0)
                         .font("IBM Plex Mono")
                         .color(colors::active().icon_inactive),
                 )
                 .child(
                     Text::new(ctx.master.events.join("  ·  "))
-                        .size(10.5)
+                        .size(11.0)
                         .font("IBM Plex Mono")
                         .color(colors::active().icon_inactive),
                 ),
@@ -96,7 +97,7 @@ pub(super) fn body_overrides(state: &EditorState) -> AnyView {
     if !ctx.master.slots.is_empty() {
         col = col.child(
             Text::new("SLOTS")
-                .size(9.5)
+                .size(11.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().icon_inactive),
         );
@@ -138,7 +139,7 @@ fn instance_slot_row(
         .child(
             Container::new().width(64.0).child(
                 Text::new(s.name.clone())
-                    .size(11.0)
+                    .size(12.0)
                     .font("IBM Plex Mono")
                     .color(Color::hex(0xCFA6F5))
                     .truncate_fill(),
@@ -146,7 +147,7 @@ fn instance_slot_row(
         )
         .child(
             Text::new(status)
-                .size(9.5)
+                .size(11.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().icon_inactive),
         );
@@ -154,7 +155,7 @@ fn instance_slot_row(
     if fill_options.is_empty() {
         row = row.child(
             Text::new("no siblings to fill from")
-                .size(9.5)
+                .size(11.0)
                 .color(colors::active().icon_inactive),
         );
     } else {
@@ -190,7 +191,7 @@ fn instance_slot_row(
                 .border(1.0, colors::active().stroke_soft)
                 .hover(colors::active().bg_darker)
                 .on_click(move || st_clear.clear_slot_content(&slot_name))
-                .child(Text::new("Clear").size(10.0).color(colors::active().text)),
+                .child(Text::new("Clear").size(12.0).color(colors::active().text)),
         );
     }
 
@@ -203,6 +204,7 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
         return AnyView::new(
             Text::new("No interface defined — a component without props")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     };
@@ -212,7 +214,7 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
     if !it.props.is_empty() {
         col = col.child(
             Text::new("PROPS")
-                .size(9.5)
+                .size(11.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().icon_inactive),
         );
@@ -228,24 +230,24 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
                     .align_items(Align::Center)
                     .child(
                         Text::new("•")
-                            .size(10.0)
+                            .size(14.0)
                             .color(colors::active().icon_inactive),
                     )
                     .child(
                         Text::new(p.name)
-                            .size(11.0)
+                            .size(13.0)
                             .color(colors::active().text)
                             .truncate_fill(),
                     )
                     .child(
                         Text::new(kind)
-                            .size(9.5)
+                            .size(11.0)
                             .font("IBM Plex Mono")
                             .color(Color::hex(0xCFA6F5)),
                     )
                     .child(
                         Text::new(p.default)
-                            .size(10.5)
+                            .size(11.0)
                             .font("IBM Plex Mono")
                             .color(colors::active().icon_inactive)
                             .truncate_fill(),
@@ -257,7 +259,7 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
     if !it.events.is_empty() {
         col = col.child(
             Text::new("EVENTS")
-                .size(9.5)
+                .size(11.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().icon_inactive),
         );
@@ -275,7 +277,7 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
                     )
                     .child(
                         Text::new(ev)
-                            .size(11.0)
+                            .size(12.0)
                             .font("IBM Plex Mono")
                             .color(colors::active().text),
                     ),
@@ -286,7 +288,7 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
     if !it.slots.is_empty() {
         col = col.child(
             Text::new("SLOTS")
-                .size(9.5)
+                .size(11.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().icon_inactive),
         );
@@ -304,7 +306,7 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
                     )
                     .child(
                         Text::new(s.name)
-                            .size(11.0)
+                            .size(12.0)
                             .font("IBM Plex Mono")
                             .color(colors::active().text),
                     ),
@@ -327,7 +329,7 @@ pub(super) fn body_interface(state: &EditorState) -> AnyView {
             })
             .child(
                 Text::new("Interface & behavior ▸")
-                    .size(11.0)
+                    .size(12.0)
                     .semibold()
                     .color(Color::hex(0xCFA6F5)),
             ),
@@ -352,5 +354,6 @@ fn picker_btn(
         selected: selected.to_string(),
         on_pick: std::rc::Rc::new(on_pick),
         width,
+        menu_width: 190.0,
     }
 }

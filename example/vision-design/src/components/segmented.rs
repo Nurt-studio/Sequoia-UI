@@ -34,7 +34,7 @@ pub(crate) fn segment_icon(
         .background(segment_bg(active))
         .hover(segment_hover(active))
         .on_click(on_click)
-        .child(Text::new(icon).size(14.0).color(if active {
+        .child(Text::new(icon).size(14.0).semibold().color(if active {
             Color::WHITE
         } else {
             colors::active().icon_inactive
@@ -55,7 +55,7 @@ pub(crate) fn segment(
         .background(segment_bg(active))
         .hover(segment_hover(active))
         .on_click(on_click)
-        .child(Text::new(label).size(11.0).semibold().color(if active {
+        .child(Text::new(label).size(12.0).semibold().color(if active {
             Color::WHITE
         } else {
             colors::active().icon_inactive

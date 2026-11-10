@@ -28,7 +28,7 @@ fn toast_item(t: ToastEntry, state: &EditorState) -> impl View + 'static {
                         .radius(3.5)
                         .background(dot),
                 )
-                .child(Text::new(t.msg).size(11.0).color(Color::hex(0xF2F2F2))),
+                .child(Text::new(t.msg).size(12.0).color(Color::hex(0xF2F2F2))),
         )
         .shadow(ShadowSpec::new(Color::hexa(0x00000080), 30.0).offset(0.0, 10.0))
 }

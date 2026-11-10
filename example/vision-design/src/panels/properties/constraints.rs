@@ -33,7 +33,8 @@ pub(super) fn body_constraints(state: &EditorState) -> impl View + 'static {
     if !is_abs && parent_layout == "Z" {
         col = col.child(
             Text::new("Pin to edges (T+R / B+L = stretch)")
-                .size(10.0)
+                .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
         col = col.child(
@@ -65,13 +66,14 @@ pub(super) fn body_constraints(state: &EditorState) -> impl View + 'static {
     if is_abs {
         col = col.child(
             Text::new("Position from X / Y in the Position section")
-                .size(10.0)
+                .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     } else if parent_layout == "H" || parent_layout == "V" || parent_layout == "G" {
         col = col.child(
             Text::new("Participates in parent's flow")
-                .size(10.0)
+                .size(11.0)
                 .color(colors::active().icon_inactive),
         );
     }

@@ -59,6 +59,44 @@ pub(crate) const DAY: Palette = Palette {
     warn: Color::hex(0xFACC15),
 };
 
+/// 🌙 Light Night — soft light theme
+pub(crate) const LIGHT_NIGHT: Palette = Palette {
+    text: Color::hex(0x24292E),
+    surface: Color::hex(0xF6F8FA),
+    bg_lighter: Color::hex(0xE1E4E8),
+    bg_darker: Color::hex(0xEAEEF2),
+    icon_inactive: Color::hex(0x6A737D),
+    icon_active: Color::hex(0x24292E),
+    stroke: Color::hex(0xD1D5DA),
+    stroke_soft: Color::hex(0xE1E4E8),
+    accent: Color::hex(0x0366D6),
+    accent_soft: Color::hexa(0x0366D62E),
+    sel: Color::hex(0x0366D6),
+    sel_soft: Color::hexa(0x0366D629),
+    danger: Color::hex(0xD73A49),
+    ok: Color::hex(0x28A745),
+    warn: Color::hex(0xFFB800),
+};
+
+/// ☀️ Light Day — crisp bright white theme
+pub(crate) const LIGHT_DAY: Palette = Palette {
+    text: Color::hex(0x111111),
+    surface: Color::hex(0xFFFFFF),
+    bg_lighter: Color::hex(0xF0F0F0),
+    bg_darker: Color::hex(0xFAFAFA),
+    icon_inactive: Color::hex(0x767676),
+    icon_active: Color::hex(0x111111),
+    stroke: Color::hex(0xE0E0E0),
+    stroke_soft: Color::hex(0xEAEAEA),
+    accent: Color::hex(0x005FCC),
+    accent_soft: Color::hexa(0x005FCC2E),
+    sel: Color::hex(0x005FCC),
+    sel_soft: Color::hexa(0x005FCC29),
+    danger: Color::hex(0xCB2431),
+    ok: Color::hex(0x22863A),
+    warn: Color::hex(0xB08800),
+};
+
 thread_local! {
     static ACTIVE: Cell<Palette> = const { Cell::new(NIGHT) };
 }

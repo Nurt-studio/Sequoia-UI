@@ -27,7 +27,7 @@ fn theme_toggle(state: &EditorState) -> impl View + 'static {
         .on_click(move || st.is_night.update(|v| *v = !*v))
         .child(
             Icon::new(icon)
-                .size(15.0)
+                .size(14.0)
                 .color(colors::active().icon_active),
         )
 }
@@ -53,7 +53,7 @@ fn present_btn(state: &EditorState) -> impl View + 'static {
         .on_click(move || st.toggle_present())
         .child(
             Icon::new("tb/present")
-                .size(15.0)
+                .size(14.0)
                 .color(Color::hex(0x4ADE80)),
         )
 }
@@ -112,7 +112,7 @@ impl View for DocName {
             AnyView::new(
                 TextField::new(self.name.clone())
                     .width(200.0)
-                    .font_size(12.0)
+                    .font_size(13.0)
                     .text_color(Color::WHITE)
                     .background(colors::active().bg_darker)
                     .border(1.0, colors::active().sel)
@@ -132,7 +132,7 @@ impl View for DocName {
                     .on_click(move || editing.set(true))
                     .child(
                         Text::with(move || name.get())
-                            .size(12.0)
+                            .size(13.0)
                             .semibold()
                             .color(Color::hex(0xE8E8E8))
                             .letter_spacing(0.1),
@@ -172,7 +172,7 @@ impl View for ZoomGroup {
                     .on_click(move || reset.set(1.0))
                     .child(
                         Text::with(move || format!("{}%", (show.get() * 100.0).round() as i32))
-                            .size(11.0)
+                            .size(12.0)
                             .font("IBM Plex Mono")
                             .color(colors::active().text),
                     ),
@@ -191,7 +191,7 @@ fn share_btn() -> impl View + 'static {
                 .background(Color::hex(0xE8E8E8))
                 .hover(Color::hex(0xCFCFCF))
                 .text(Color::hex(0x111111))
-                .font_size(11.0)
+                .font_size(13.0)
                 .font_weight(600)
                 .radius(6.0)
                 .padding_xy(10.0, 5.0),

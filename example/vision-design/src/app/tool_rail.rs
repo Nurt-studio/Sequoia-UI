@@ -91,7 +91,7 @@ impl View for ToolBtn {
                 BoxStyle::new()
             })
             .on_click(move || current.set(key))
-            .child(Icon::new(self.def.icon).size(16.0).color(if on {
+            .child(Icon::new(self.def.icon).size(14.0).color(if on {
                 Color::WHITE
             } else {
                 colors::active().icon_inactive

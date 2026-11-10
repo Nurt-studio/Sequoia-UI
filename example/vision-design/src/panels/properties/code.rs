@@ -60,7 +60,7 @@ impl CodePanel {
                     .align_items(Align::Center)
                     .child(
                         Text::new("Svelte code")
-                            .size(13.0)
+                            .size(12.0)
                             .semibold()
                             .color(colors::active().text),
                     )
@@ -70,7 +70,7 @@ impl CodePanel {
             })
             .child(
                 Text::new("source of truth: the document tree")
-                    .size(10.0)
+                    .size(11.0)
                     .color(colors::active().icon_inactive),
             )
     }
@@ -147,7 +147,7 @@ impl CodePanel {
             .background(CODE_BG)
             .child(
                 TextArea::new(st.code_buffer.clone())
-                    .font_size(11.0)
+                    .font_size(13.0)
                     .color(Color::hex(0xE8E8E8))
                     .background(CODE_BG)
                     .border(0.0, Color::TRANSPARENT)
@@ -185,7 +185,7 @@ impl CodePanel {
                         .border_top(1.0, colors::active().danger)
                         .child(
                             Text::new(short_line(&err))
-                                .size(10.0)
+                                .size(11.0)
                                 .color(colors::active().danger),
                         ),
                 )
@@ -202,7 +202,7 @@ impl CodePanel {
                     } else {
                         "Code buffer preview. Switch to \"Edit\" to change the document as text."
                     })
-                    .size(10.0)
+                    .size(11.0)
                     .color(colors::active().icon_inactive),
                 ),
             )
@@ -238,7 +238,7 @@ fn status_label(st: &EditorState) -> impl View + 'static {
             "synchronized".to_string()
         }
     })
-    .size(10.0)
+    .size(11.0)
     .font("IBM Plex Mono")
     .color(colors::active().icon_inactive)
 }
@@ -252,7 +252,7 @@ fn small_btn(label: &'static str, bg: Color, on_click: impl Fn() + 'static) -> i
         .background(bg)
         .hover(Color::hex(0x3E3E40))
         .on_click(on_click)
-        .child(Text::new(label).size(11.0).semibold().color(Color::WHITE))
+        .child(Text::new(label).size(12.0).semibold().color(Color::WHITE))
 }
 
 /// "Copy" button — needs an environment for the system clipboard.
@@ -265,7 +265,7 @@ fn copy_btn(state: &EditorState) -> impl View + 'static {
         .background(Color::hex(0x2E2E30))
         .hover(Color::hex(0x3E3E40))
         .on_click_env(move |env: &Environment| st.copy_code_to_clipboard(env))
-        .child(Text::new("Copy").size(11.0).semibold().color(Color::WHITE))
+        .child(Text::new("Copy").size(12.0).semibold().color(Color::WHITE))
 }
 
 /// Small file button.
@@ -279,7 +279,7 @@ fn tiny_btn(label: &'static str, on_click: impl Fn() + 'static) -> impl View + '
         .on_click(on_click)
         .child(
             Text::new(label)
-                .size(10.0)
+                .size(11.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().icon_active),
         )

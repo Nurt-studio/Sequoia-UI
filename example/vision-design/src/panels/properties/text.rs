@@ -24,7 +24,7 @@ pub(super) fn body_text(state: &EditorState) -> impl View + 'static {
                 )
                 .child(
                     Text::new(format!("prop: {prop}"))
-                        .size(10.5)
+                        .size(11.0)
                         .font("IBM Plex Mono")
                         .color(Color::hex(0xCFA6F5)),
                 ),
@@ -33,7 +33,7 @@ pub(super) fn body_text(state: &EditorState) -> impl View + 'static {
     col.child(
         Container::new().child(
             TextField::new(state.sel_text.clone())
-                .font_size(12.0)
+                .font_size(13.0)
                 .text_color(Color::hex(0xE8E8E8))
                 .background(colors::active().bg_lighter)
                 .border(1.0, colors::active().stroke_soft)

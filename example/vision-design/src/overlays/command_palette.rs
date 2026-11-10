@@ -59,7 +59,7 @@ impl View for CommandPalette {
                             .background(Color::hex(0x2E2E30))
                             .child(
                                 Text::new(hint)
-                                    .size(9.5)
+                                    .size(11.0)
                                     .font("IBM Plex Mono")
                                     .color(Color::hex(0xAEAEAE)),
                             ),
@@ -151,7 +151,7 @@ impl View for CommandPalette {
             list_ui = list_ui.child(
                 Container::new().padding(Edges::xy(10.0, 10.0)).child(
                     Text::new("No results")
-                        .size(12.0)
+                        .size(11.0)
                         .color(colors::active().icon_inactive),
                 ),
             );

@@ -18,7 +18,7 @@ pub(crate) fn mono_label(text: &'static str) -> impl View + 'static {
 pub(crate) fn icon_label(icon: &'static str) -> impl View + 'static {
     Container::new().width(16.0).height(28.0).center().child(
         Icon::new(icon)
-            .size(13.0)
+            .size(14.0)
             .color(colors::active().icon_inactive),
     )
 }

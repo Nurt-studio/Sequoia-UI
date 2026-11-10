@@ -414,8 +414,9 @@ fn find_ci(chars: &[char], from: usize, pat: &str) -> Option<usize> {
 // ──────────────────────────────── widget ────────────────────────────────
 
 const FONT: &str = "IBM Plex Mono";
-const FONT_SIZE: f32 = 11.0;
-const GUTTER_W: f32 = 34.0;
+const FONT_SIZE: f32 = 13.0;
+const GUTTER_FONT_SIZE: f32 = 11.0;
+const GUTTER_W: f32 = 36.0;
 const PAD: f32 = 8.0;
 
 /// Read-only code preview with line numbers, scrolling and a scrollbar.
@@ -484,11 +485,13 @@ pub(crate) fn code_view(code: Signal<String>) -> impl View + 'static {
                 }
                 let y = PAD + li as f32 * line_h - sy;
                 let num = format!("{}", li + 1);
-                let num_w = p.text_width(&num, FONT_SIZE);
+                let num_w = p.text_width(&num, GUTTER_FONT_SIZE);
+                let gutter_metrics = p.text_metrics(GUTTER_FONT_SIZE);
+                let ny = y + (metrics.height - gutter_metrics.height) * 0.5;
                 p.text_tl(
                     &num,
-                    Point::new(GUTTER_W - num_w - 6.0, y),
-                    FONT_SIZE,
+                    Point::new(GUTTER_W - num_w - 6.0, ny),
+                    GUTTER_FONT_SIZE,
                     c(0x5A5A5E),
                 );
                 let mut x = GUTTER_W + PAD - sx;

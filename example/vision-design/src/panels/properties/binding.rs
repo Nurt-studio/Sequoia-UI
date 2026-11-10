@@ -19,6 +19,7 @@ pub(super) fn body_binding(state: &EditorState) -> AnyView {
         return AnyView::new(
             Text::new("Visibility of an instance is set on the page (see Code).")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     }
@@ -29,6 +30,7 @@ pub(super) fn body_binding(state: &EditorState) -> AnyView {
         col = col.child(
             Text::new("No variables in scope — add one in the Interact tab.")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
         return AnyView::new(col);
@@ -80,6 +82,7 @@ pub(super) fn body_binding(state: &EditorState) -> AnyView {
                         });
                     }),
                     width: 118.0,
+                    menu_width: 190.0,
                 },
                 1.0,
             ),
@@ -128,7 +131,7 @@ pub(super) fn body_binding(state: &EditorState) -> AnyView {
                 })
                 .child(
                     Text::new(label)
-                        .size(10.0)
+                        .size(11.0)
                         .font("IBM Plex Mono")
                         .color(if active {
                             Color::WHITE
@@ -156,7 +159,7 @@ pub(super) fn body_binding(state: &EditorState) -> AnyView {
                 )
                 .child_flex(
                     TextField::new(ms_sig)
-                        .font_size(11.0)
+                        .font_size(13.0)
                         .text_color(Color::hex(0xE8E8E8))
                         .background(colors::active().bg_lighter)
                         .border(1.0, colors::active().stroke_soft)
@@ -172,7 +175,7 @@ pub(super) fn body_binding(state: &EditorState) -> AnyView {
                 )
                 .child(
                     Text::new("ms")
-                        .size(10.0)
+                        .size(11.0)
                         .font("IBM Plex Mono")
                         .color(colors::active().icon_inactive),
                 ),
@@ -187,7 +190,7 @@ pub(super) fn body_binding(state: &EditorState) -> AnyView {
         };
         col = col.child(
             Text::new(preview)
-                .size(10.0)
+                .size(13.0)
                 .font("IBM Plex Mono")
                 .color(Color::hex(0xCFA6F5)),
         );
@@ -222,7 +225,7 @@ fn hex_field(
         )
         .child_flex(
             TextField::new(sig)
-                .font_size(11.0)
+                .font_size(13.0)
                 .text_color(Color::hex(0xE8E8E8))
                 .background(colors::active().bg_lighter)
                 .border(1.0, colors::active().stroke_soft)
@@ -252,7 +255,7 @@ pub(super) fn body_hover(state: &EditorState) -> AnyView {
     let mut col = Column::new().gap(6.0);
     col = col.child(
         Text::new("Pure CSS (`.class:hover`) — no JavaScript")
-            .size(10.0)
+            .size(11.0)
             .font("IBM Plex Mono")
             .color(colors::active().icon_inactive),
     );
@@ -280,7 +283,7 @@ pub(super) fn body_hover(state: &EditorState) -> AnyView {
             )
             .child_flex(
                 TextField::new(op_sig)
-                    .font_size(11.0)
+                    .font_size(13.0)
                     .text_color(Color::hex(0xE8E8E8))
                     .background(colors::active().bg_lighter)
                     .border(1.0, colors::active().stroke_soft)
@@ -298,7 +301,7 @@ pub(super) fn body_hover(state: &EditorState) -> AnyView {
             )
             .child(
                 Text::new("0…1")
-                    .size(10.0)
+                    .size(11.0)
                     .font("IBM Plex Mono")
                     .color(colors::active().icon_inactive),
             ),
@@ -318,7 +321,7 @@ pub(super) fn body_hover(state: &EditorState) -> AnyView {
         }
         col = col.child(
             Text::new(format!(":hover {{ {} }}", rules.join("; ")))
-                .size(10.0)
+                .size(13.0)
                 .font("IBM Plex Mono")
                 .color(Color::hex(0xCFA6F5)),
         );

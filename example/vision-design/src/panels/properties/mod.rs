@@ -10,6 +10,7 @@ use self::auto_layout::body_auto_layout;
 use self::binding::{binding_section, hover_section};
 use self::code::{code_body, is_code_tab};
 use self::constraints::body_constraints;
+use self::effects::body_effects;
 use self::export::body_export;
 use self::fill::body_fill;
 use self::inspect::empty_box;
@@ -28,6 +29,7 @@ mod binding;
 mod code;
 mod constraints;
 mod controls;
+mod effects;
 mod export;
 mod fill;
 mod inspect;
@@ -62,7 +64,7 @@ fn tab_button(
                     .fill_height()
                     .padding(Edges::xy(6.0, 0.0))
                     .center()
-                    .child(Text::new(label).size(12.0).semibold().color(text_color)),
+                    .child(Text::new(label).size(13.0).semibold().color(text_color)),
             )
             .child(
                 Container::new()
@@ -241,6 +243,11 @@ impl View for RightBody {
                 "Appearance",
                 self.state.sections.appearance.clone(),
                 body_appearance(&self.state),
+            ));
+            sections.push(section(
+                "Effects",
+                self.state.sections.effects.clone(),
+                body_effects(&self.state),
             ));
             if is_text {
                 sections.push(section(

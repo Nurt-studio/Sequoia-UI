@@ -28,6 +28,8 @@ impl View for ContextMenuView {
         let st_lk = st.clone();
         let st_vis = st.clone();
         let st_al = st.clone();
+        let st_grp = st.clone();
+        let st_ung = st.clone();
 
         let px = pos_x.get();
         let py = pos_y.get();
@@ -70,6 +72,21 @@ impl View for ContextMenuView {
             mrow("Auto layout", None, false, open.clone(), move || {
                 st_al.auto_layout_selection()
             }),
+            AnyView::new(msep()),
+            mrow(
+                "Group selection",
+                Some("Ctrl+G"),
+                false,
+                open.clone(),
+                move || st_grp.group_selection(),
+            ),
+            mrow(
+                "Ungroup",
+                Some("Ctrl+Shift+G"),
+                false,
+                open.clone(),
+                move || st_ung.ungroup_selection(),
+            ),
             AnyView::new(msep()),
             mrow("Lock / unlock", None, false, open.clone(), move || {
                 st_lk.toggle_lock()

@@ -56,7 +56,7 @@ impl View for PickerOverlay {
                             .child(Spacer::flex(1.0))
                             .child(
                                 Text::new(if selected { "✓" } else { "" })
-                                    .size(11.0)
+                                    .size(14.0)
                                     .color(Color::hex(0x4ADE80)),
                             ),
                     ),
@@ -81,7 +81,7 @@ impl View for PickerOverlay {
                 .child(
                     DismissableLayer::wrap(
                         Container::new()
-                            .width(190.0)
+                            .width(req.menu_width)
                             .padding(4.0)
                             .radius(8.0)
                             .background(Color::hex(0x2A2A2C))

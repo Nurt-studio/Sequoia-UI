@@ -25,6 +25,7 @@ pub(crate) fn editor_theme() -> Theme {
     t.border = colors::NIGHT.stroke_soft;
     t.accent = colors::NIGHT.sel;
     t.radius = 6.0;
+    t.font_size = 13.0;
     t
 }
 
@@ -44,6 +45,37 @@ pub(crate) fn root(state: EditorState) -> impl View + 'static {
 }
 
 fn root_body(state: EditorState) -> impl View + 'static {
+    let centered = state.resize_handles_centered.get();
+    let left_handle = ResizeHandle::new(state.left_panel_w.clone())
+        .min(180.0)
+        .max(440.0)
+        .hit_width(8.0)
+        .gutter(colors::active().surface)
+        .idle_width(1.0)
+        .idle_color(colors::active().stroke)
+        .active_width(2.0)
+        .active_color(colors::active().sel);
+    let left_handle = if centered {
+        left_handle.line_at_center()
+    } else {
+        left_handle.line_at_end()
+    };
+    let right_handle = ResizeHandle::new(state.right_panel_w.clone())
+        .min(200.0)
+        .max(480.0)
+        .hit_width(8.0)
+        .invert(true)
+        .gutter(colors::active().surface)
+        .idle_width(1.0)
+        .idle_color(colors::active().stroke)
+        .active_width(2.0)
+        .active_color(colors::active().sel);
+    let right_handle = if centered {
+        right_handle.line_at_center()
+    } else {
+        right_handle.line_at_start()
+    };
+
     Stack::new()
         .fill_size()
         .child(
@@ -62,33 +94,20 @@ fn root_body(state: EditorState) -> impl View + 'static {
                                     Row::new()
                                         .fill_size()
                                         .child(panels::panel_left(&state))
-                                        .child(
-                                            ResizeHandle::new(state.left_panel_w.clone())
-                                                .min(180.0)
-                                                .max(440.0)
-                                                .hit_width(6.0)
-                                                .idle_color(colors::active().stroke_soft)
-                                                .active_color(colors::active().sel),
-                                        )
+                                        .child(left_handle)
                                         .child(canvas::canvas(&state))
-                                        .child(
-                                            ResizeHandle::new(state.right_panel_w.clone())
-                                                .min(200.0)
-                                                .max(480.0)
-                                                .hit_width(6.0)
-                                                .invert(true)
-                                                .idle_color(colors::active().stroke_soft)
-                                                .active_color(colors::active().sel),
-                                        )
+                                        .child(right_handle)
                                         .child(panels::panel_right(&state)),
                                 ),
                         ),
                 ),
         )
+        .child(panels::layer_drag_overlay(&state))
         .child(menu_bar::menu_drops(&state))
         .child(overlays::context_menu(&state))
         .child(overlays::command_palette(&state))
         .child(overlays::help_overlay(&state))
+        .child(overlays::settings_overlay(&state))
         .child(overlays::color_picker(&state))
         .child(overlays::picker_menu(&state))
         .child(overlays::toasts(&state))
@@ -145,6 +164,39 @@ mod tests {
 
         h.pointer_move(500.0, 350.0);
         assert_eq!(h.cursor_icon(), CursorIcon::Default);
+    }
+
+    #[test]
+    fn resize_handle_line_switches_between_edge_and_center() {
+        let state = EditorState::demo();
+        let h = Harness::new(root(state.clone()));
+        h.layout(1000.0, 700.0);
+
+        let handles = resize_handles(&h);
+        let handle = h.rect(handles[0]).expect("left handle");
+        let line_color = colors::active().stroke;
+        let line_x = |h: &Harness| {
+            h.paint()
+                .quads()
+                .find(|q| {
+                    q.color == line_color
+                        && (q.rect.size.width - 1.0).abs() < 0.01
+                        && q.rect.left() >= handle.left()
+                        && q.rect.right() <= handle.right()
+                        && q.rect.size.height >= handle.size.height - 0.5
+                })
+                .map(|q| q.rect.left())
+                .expect("resize line")
+        };
+
+        let edge = line_x(&h);
+        assert!((edge - (handle.left() + 7.0)).abs() < 0.5);
+
+        state.resize_handles_centered.set(true);
+        h.tick();
+        h.layout(1000.0, 700.0);
+        let centered = line_x(&h);
+        assert!((centered - (handle.left() + 3.5)).abs() < 0.5);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Drawing layers, grid, selection and guides.
 
+use sequoia_ui::core::{BrushStop, GradientStops};
 use sequoia_ui::prelude::*;
 use sequoia_ui::view::{BrushStroke, Fill, Painter};
 
@@ -47,21 +48,42 @@ pub(crate) fn draw_layer(p: &mut Painter, l: &Layer) {
         return;
     }
     let rect = Rect::from_xywh(l.x, l.y, l.w, l.h);
-    let fill = with_alpha(l.fill, alpha);
+    let radius = if l.kind == "ELLIPSE" {
+        l.w.min(l.h) * 0.5
+    } else {
+        l.radius
+    };
+    if matches!(l.kind, "FRAME" | "RECTANGLE" | "ELLIPSE") {
+        draw_shadows(p, l, rect, radius, alpha);
+    }
+    let body = |p: &mut Painter| paint_body(p, l, rect, radius, alpha, l.font_size);
+    let filter_radius = if l.kind == "TEXT" { 0.0 } else { radius };
+    if l.blur > 0.0 {
+        p.filter(rect, filter_radius, l.blur, body);
+    } else {
+        body(p);
+    }
+}
+
+fn paint_body(p: &mut Painter, l: &Layer, rect: Rect, radius: f32, alpha: f32, font_size: f32) {
     let stroke = with_alpha(l.stroke, alpha);
     match l.kind {
         "FRAME" | "RECTANGLE" => {
-            p.rounded(rect, l.radius, Fill::solid(fill));
+            p.rounded(rect, radius, layer_fill(l, alpha));
             if l.stroke_width > 0.0 {
-                p.rect_outline(rect, l.radius, BrushStroke::new(l.stroke_width), stroke);
+                p.rect_outline(rect, radius, BrushStroke::new(l.stroke_width), stroke);
             }
         }
         "ELLIPSE" => {
-            let cx = l.x + l.w * 0.5;
-            let cy = l.y + l.h * 0.5;
-            let rx = l.w * 0.5;
-            let ry = l.h * 0.5;
-            p.ellipse(Point::new(cx, cy), rx, ry, fill);
+            let cx = rect.center().x;
+            let cy = rect.center().y;
+            let rx = rect.size.width * 0.5;
+            let ry = rect.size.height * 0.5;
+            if l.gradient.is_some() {
+                p.rounded(rect, radius, layer_fill(l, alpha));
+            } else {
+                p.ellipse(Point::new(cx, cy), rx, ry, with_alpha(l.fill, alpha));
+            }
             if l.stroke_width > 0.0 {
                 p.ellipse_outline(
                     Point::new(cx, cy),
@@ -73,9 +95,47 @@ pub(crate) fn draw_layer(p: &mut Painter, l: &Layer) {
             }
         }
         "TEXT" => {
-            p.text_tl(&l.text, Point::new(l.x, l.y), l.font_size, fill);
+            p.text_tl(
+                &l.text,
+                Point::new(rect.left(), rect.top()),
+                font_size,
+                with_alpha(l.fill, alpha),
+            );
         }
         _ => {}
+    }
+}
+
+/// Solid color or gradient for one layer, with the paint-time alpha folded in.
+fn layer_fill(l: &Layer, alpha: f32) -> Fill {
+    let Some(g) = &l.gradient else {
+        return Fill::solid(with_alpha(l.fill, alpha));
+    };
+    let stops: Vec<BrushStop> = g
+        .sorted_stops()
+        .iter()
+        .map(|s| BrushStop::new(s.at, with_alpha(s.color, alpha)))
+        .collect();
+    let stops = GradientStops::new(stops);
+    match g.kind {
+        crate::model::svelte_ast::GradientKind::Linear => Fill::linear(stops, g.angle),
+        crate::model::svelte_ast::GradientKind::Radial => Fill::radial(stops),
+    }
+}
+
+fn draw_shadows(p: &mut Painter, l: &Layer, rect: Rect, radius: f32, alpha: f32) {
+    for s in &l.effects {
+        if !s.enabled || s.color.a <= 0.0 {
+            continue;
+        }
+        p.shadow(
+            rect,
+            radius,
+            s.blur,
+            s.spread,
+            Vec2::new(s.x, s.y),
+            with_alpha(s.color, alpha),
+        );
     }
 }
 
@@ -100,38 +160,35 @@ pub(crate) fn draw_layer_fx(p: &mut Painter, l: &Layer, fx: &Fx) {
     let y = cy + (l.y - cy) * s + fx.dy;
     let w = (l.w * s).max(0.5);
     let h = (l.h * s).max(0.5);
-    let fill = with_alpha(l.fill, alpha);
-    let stroke = with_alpha(l.stroke, alpha);
-    match l.kind {
-        "FRAME" | "RECTANGLE" => {
-            p.rounded(Rect::from_xywh(x, y, w, h), l.radius * s, Fill::solid(fill));
-            if l.stroke_width > 0.0 {
-                p.rect_outline(
-                    Rect::from_xywh(x, y, w, h),
-                    l.radius * s,
-                    BrushStroke::new(l.stroke_width),
-                    stroke,
-                );
-            }
-        }
-        "ELLIPSE" => {
-            let ccx = x + w * 0.5;
-            let ccy = y + h * 0.5;
-            p.ellipse(Point::new(ccx, ccy), w * 0.5, h * 0.5, fill);
-            if l.stroke_width > 0.0 {
-                p.ellipse_outline(
-                    Point::new(ccx, ccy),
-                    w * 0.5,
-                    h * 0.5,
-                    BrushStroke::new(l.stroke_width),
-                    stroke,
-                );
-            }
-        }
-        "TEXT" => {
-            p.text_tl(&l.text, Point::new(x, y), l.font_size * s, fill);
-        }
-        _ => {}
+    let rect = Rect::from_xywh(x, y, w, h);
+    let mut scaled = l.clone();
+    scaled.effects = l
+        .effects
+        .iter()
+        .map(|e| {
+            let mut e = e.clone();
+            e.x *= s;
+            e.y *= s;
+            e.blur *= s;
+            e.spread *= s;
+            e
+        })
+        .collect();
+    scaled.blur = l.blur * s;
+    let radius = if l.kind == "ELLIPSE" {
+        w.min(h) * 0.5
+    } else {
+        l.radius * s
+    };
+    if matches!(l.kind, "FRAME" | "RECTANGLE" | "ELLIPSE") {
+        draw_shadows(p, &scaled, rect, radius, alpha);
+    }
+    let body = |p: &mut Painter| paint_body(p, l, rect, radius, alpha, l.font_size * s);
+    let filter_radius = if l.kind == "TEXT" { 0.0 } else { radius };
+    if scaled.blur > 0.0 {
+        p.filter(rect, filter_radius, scaled.blur, body);
+    } else {
+        body(p);
     }
 }
 

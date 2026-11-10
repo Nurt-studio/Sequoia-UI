@@ -53,6 +53,18 @@ pub(crate) fn install(app: App, state: &EditorState) -> App {
             let st = state.clone();
             move || st.auto_layout_selection()
         })
+        .accelerator(Key::from_char('g'), Modifiers::CONTROL, {
+            let st = state.clone();
+            move || st.group_selection()
+        })
+        .accelerator(
+            Key::from_char('g'),
+            Modifiers::CONTROL | Modifiers::SHIFT,
+            {
+                let st = state.clone();
+                move || st.ungroup_selection()
+            },
+        )
         .accelerator(Key::from_char('/'), Modifiers::SHIFT, {
             let st = state.clone();
             move || st.help_open.update(|v| *v = !*v)
@@ -61,7 +73,11 @@ pub(crate) fn install(app: App, state: &EditorState) -> App {
             let st = state.clone();
             move || {
                 if st.present.on.get_untracked() {
-                    st.stop_present(); // leave Present first
+                    // Esc closes an overlay / goes back a screen before it
+                    // leaves Present mode.
+                    if !st.present_back() {
+                        st.stop_present();
+                    }
                 } else if st.editing_text.get_untracked() {
                     st.end_text_edit(true); // keep what was typed
                 } else if st.editing_layer.get_untracked().is_some() {

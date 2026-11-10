@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use sequoia_ui::prelude::*;
+use sequoia_ui::view::Fill;
 
 use crate::canvas::interaction::CanvasSignals;
 use crate::canvas::paint::{
@@ -43,9 +44,14 @@ pub(crate) fn canvas(state: &EditorState) -> impl View + 'static {
             track_sig.state.editing_text.get();
             track_sig.state.sel_text.get();
             track_sig.state.text_caret.get();
-            // Present mode: badge + running transitions repaint the canvas.
+            // Present mode: badge, transitions and screen navigation repaint
+            // the canvas.
             track_sig.state.present.on.get();
             track_sig.state.present.anims.get();
+            track_sig.state.present.screen.get();
+            track_sig.state.present.prev_screen.get();
+            track_sig.state.present.overlays.get();
+            track_sig.state.present.nav_epoch.get();
         })
         .on_draw(move |p| {
             let size = p.size();
@@ -79,13 +85,35 @@ pub(crate) fn canvas(state: &EditorState) -> impl View + 'static {
                     } else {
                         HashMap::new()
                     };
+                    // Overlay frames paint above the screen, with a dimmed
+                    // backdrop in between (prototype "Open overlay").
+                    let overlay_ids: HashSet<u64> = if present_on {
+                        draw_sig.state.overlay_ids(layers)
+                    } else {
+                        HashSet::new()
+                    };
                     for l in layers {
-                        if l.x + l.w < wx0 || l.x > wx1 || l.y + l.h < wy0 || l.y > wy1 { continue; }
+                        if overlay_ids.contains(&l.id) {
+                            continue;
+                        }
+                        if l.x + l.w < wx0 || l.x > wx1 || l.y + l.h < wy0 || l.y > wy1 {
+                            continue;
+                        }
                         if present_on {
                             let fx = fx_map.get(&l.id).copied().unwrap_or_default();
                             draw_layer_fx(p, l, &fx);
                         } else {
                             draw_layer(p, l);
+                        }
+                    }
+                    if !overlay_ids.is_empty() {
+                        p.fill(
+                            Rect::from_xywh(wx0, wy0, wx1 - wx0, wy1 - wy0),
+                            Fill::solid(Color::hexa(0x00000073)),
+                        );
+                        for l in layers.iter().filter(|l| overlay_ids.contains(&l.id)) {
+                            let fx = fx_map.get(&l.id).copied().unwrap_or_default();
+                            draw_layer_fx(p, l, &fx);
                         }
                     }
 

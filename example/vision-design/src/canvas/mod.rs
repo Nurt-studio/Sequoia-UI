@@ -124,6 +124,7 @@ mod tests {
                 behavior: None,
                 binding: None,
                 hover: None,
+                prototype: None,
             })
         };
         let frame = SvelteNode::Element(crate::model::svelte_ast::Element {
@@ -149,6 +150,7 @@ mod tests {
             behavior: None,
             binding: None,
             hover: None,
+            prototype: None,
         });
 
         let state = EditorState::with_seed(Some(frame), None);
@@ -220,6 +222,7 @@ mod tests {
             behavior: None,
             binding: None,
             hover: None,
+            prototype: None,
         });
         let state = EditorState::with_seed(Some(frame), Some(2));
         let rt = Runtime::new();

@@ -8,6 +8,7 @@ use sequoia_ui::prelude::*;
 use crate::model::behavior::{
     Action, Rule, Severity, Trigger, Value, ValueExpr, Var, VarType, severity_mark,
 };
+use crate::model::svelte_ast::{ProtoAction, ProtoTransition, ProtoTrigger};
 use crate::state::{BehaviorCtx as Ctx, EditorState, PickerOption};
 use crate::theme::colors;
 
@@ -21,6 +22,7 @@ pub(super) fn body_interact(state: &EditorState) -> AnyView {
         return AnyView::new(
             Text::new("Select an element to edit its behavior")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     };
@@ -32,12 +34,18 @@ pub(super) fn body_interact(state: &EditorState) -> AnyView {
                  component. Select the master (◇) to edit its rules.",
             )
             .size(11.0)
+            .wrap()
             .color(colors::active().icon_inactive),
         );
     }
 
     let mut col = Column::new().gap(10.0);
     col = col
+        .child(section(
+            "Prototype",
+            state.sections.prototype.clone(),
+            body_prototype(state),
+        ))
         .child(section(
             "Interface",
             state.sections.interface.clone(),
@@ -62,11 +70,178 @@ pub(super) fn body_interact(state: &EditorState) -> AnyView {
     AnyView::new(col)
 }
 
+// ────────────────────────────────────────────────────── prototype
+
+fn proto_trigger_options() -> Vec<PickerOption> {
+    [("click", "On Click"), ("hover", "On Hover")]
+        .iter()
+        .map(|(v, l)| PickerOption {
+            label: l.to_string(),
+            value: v.to_string(),
+        })
+        .collect()
+}
+
+fn proto_action_options() -> Vec<PickerOption> {
+    [
+        ("navigate", "Navigate to"),
+        ("overlay", "Open overlay"),
+        ("back", "Back"),
+    ]
+    .iter()
+    .map(|(v, l)| PickerOption {
+        label: l.to_string(),
+        value: v.to_string(),
+    })
+    .collect()
+}
+
+fn proto_transition_options() -> Vec<PickerOption> {
+    [
+        ProtoTransition::Instant,
+        ProtoTransition::Dissolve,
+        ProtoTransition::SlideLeft,
+        ProtoTransition::SlideRight,
+        ProtoTransition::SlideUp,
+        ProtoTransition::SlideDown,
+    ]
+    .iter()
+    .map(|t| PickerOption {
+        label: t.label().to_string(),
+        value: t.as_str().to_string(),
+    })
+    .collect()
+}
+
+/// Prototype section of the Interact tab: one connection per element.
+fn body_prototype(state: &EditorState) -> AnyView {
+    let mut col = Column::new().gap(8.0);
+    let Some(link) = state.selected_prototype() else {
+        col = col.child(
+            Text::new(
+                "No prototype link. Add one to jump between screens or open \
+                 an overlay while presenting.",
+            )
+            .size(11.0)
+            .wrap()
+            .color(colors::active().icon_inactive),
+        );
+        let st = state.clone();
+        col = col.child(tiny_button("+ Add link", move || st.add_prototype_link()));
+        return AnyView::new(col);
+    };
+
+    // Trigger + action.
+    let st = state.clone();
+    let trigger = link.trigger;
+    let action = link.action;
+    let actions = state.clone();
+    col = col.child(
+        Row::new()
+            .gap(6.0)
+            .align_items(Align::Center)
+            .child_flex(
+                picker(
+                    state,
+                    trigger.label().to_string(),
+                    proto_trigger_options(),
+                    trigger.as_str(),
+                    100.0,
+                    move |v| {
+                        if let Some(t) = ProtoTrigger::from_str(v) {
+                            st.update_prototype(|l| l.trigger = t);
+                        }
+                    },
+                ),
+                1.0,
+            )
+            .child_flex(
+                picker(
+                    state,
+                    action.label().to_string(),
+                    proto_action_options(),
+                    action.as_str(),
+                    110.0,
+                    move |v| {
+                        if let Some(a) = ProtoAction::from_str(v) {
+                            actions.update_prototype(|l| l.action = a);
+                        }
+                    },
+                ),
+                1.0,
+            ),
+    );
+
+    // Target frame (not used by Back).
+    if link.action != ProtoAction::Back {
+        let targets = state.prototype_target_options();
+        let selected = link.target.map(|t| t.to_string()).unwrap_or_default();
+        let label = targets
+            .iter()
+            .find(|o| o.value == selected)
+            .map(|o| o.label.clone())
+            .unwrap_or_else(|| "Choose screen…".into());
+        let st = state.clone();
+        col = col.child(picker(state, label, targets, &selected, 150.0, move |v| {
+            if let Ok(id) = v.parse::<u64>() {
+                st.update_prototype(|l| l.target = Some(id));
+            }
+        }));
+    }
+
+    // Transition + duration.
+    let st = state.clone();
+    let transition = link.transition;
+    let duration = Signal::new(link.duration_ms.to_string());
+    let st_dur = state.clone();
+    col = col.child(
+        Row::new()
+            .gap(6.0)
+            .align_items(Align::Center)
+            .child_flex(
+                picker(
+                    state,
+                    transition.label().to_string(),
+                    proto_transition_options(),
+                    transition.as_str(),
+                    112.0,
+                    move |v| {
+                        if let Some(t) = ProtoTransition::from_str(v) {
+                            st.update_prototype(|l| l.transition = t);
+                        }
+                    },
+                ),
+                1.0,
+            )
+            .child(
+                Container::new()
+                    .width(52.0)
+                    .child(text_field(duration, move |text| {
+                        if let Ok(ms) = text.trim().parse::<u32>() {
+                            st_dur.update_prototype(|l| l.duration_ms = ms.min(10_000));
+                        }
+                    })),
+            )
+            .child(
+                Text::new("ms")
+                    .size(11.0)
+                    .font("IBM Plex Mono")
+                    .color(colors::active().icon_inactive),
+            ),
+    );
+
+    let st = state.clone();
+    col = col.child(tiny_button("Remove link", move || {
+        st.remove_prototype_link()
+    }));
+    AnyView::new(col)
+}
+
 // ──────────────────────────────────────────────────────── widgets
 
 fn caption(text: &str) -> impl View + 'static {
     Text::new(text.to_string())
-        .size(9.5)
+        .size(11.0)
         .font("IBM Plex Mono")
         .color(colors::active().icon_inactive)
 }
@@ -83,7 +258,7 @@ fn tiny_button(label: &str, on_click: impl Fn() + 'static) -> impl View + 'stati
         .on_click(on_click)
         .child(
             Text::new(label.to_string())
-                .size(10.5)
+                .size(11.0)
                 .color(Color::hex(0xE8E8E8)),
         )
 }
@@ -98,14 +273,14 @@ fn remove_button(on_click: impl Fn() + 'static) -> impl View + 'static {
         .on_click(on_click)
         .child(
             Text::new("✕")
-                .size(10.0)
+                .size(14.0)
                 .color(colors::active().icon_inactive),
         )
 }
 
 fn text_field(sig: Signal<String>, on_submit: impl Fn(String) + 'static) -> impl View + 'static {
     TextField::new(sig)
-        .font_size(11.0)
+        .font_size(13.0)
         .text_color(Color::hex(0xE8E8E8))
         .background(colors::active().bg_darker)
         .border(1.0, colors::active().stroke_soft)
@@ -130,6 +305,7 @@ fn picker(
         selected: selected.to_string(),
         on_pick: std::rc::Rc::new(on_pick),
         width,
+        menu_width: 190.0,
     }
 }
 
@@ -143,6 +319,7 @@ fn body_interface(state: &EditorState) -> AnyView {
         return AnyView::new(
             Text::new("Not a master — the contract belongs to the component (◇).")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     };
@@ -154,6 +331,7 @@ fn body_interface(state: &EditorState) -> AnyView {
         col = col.child(
             Text::new("No props — the component accepts nothing yet.")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     }
@@ -169,6 +347,7 @@ fn body_interface(state: &EditorState) -> AnyView {
         col = col.child(
             Text::new("No events — Emit has nothing to call yet.")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     }
@@ -184,6 +363,7 @@ fn body_interface(state: &EditorState) -> AnyView {
         col = col.child(
             Text::new("No slots — the parent cannot inject content yet.")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     }
@@ -202,7 +382,7 @@ fn slot_row(state: &EditorState, s: &crate::model::svelte_ast::SlotDef) -> AnyVi
     let mut row = Row::new().gap(6.0).align_items(Align::Center).child(
         Container::new().width(72.0).child(
             Text::new(s.name.clone())
-                .size(11.0)
+                .size(12.0)
                 .font("IBM Plex Mono")
                 .color(Color::hex(0xCFA6F5))
                 .truncate_fill(),
@@ -344,6 +524,7 @@ fn body_vars(state: &EditorState, ctx: &Ctx) -> AnyView {
         col = col.child(
             Text::new("No variables in scope. Add one — rules and bindings can use it.")
                 .size(11.0)
+                .wrap()
                 .color(colors::active().icon_inactive),
         );
     } else {
@@ -370,7 +551,7 @@ fn var_row(state: &EditorState, var: &Var, owner_is_self: bool) -> AnyView {
 
     let mut row = Row::new().gap(4.0).align_items(Align::Center).child_flex(
         TextField::new(name_sig)
-            .font_size(11.0)
+            .font_size(13.0)
             .text_color(Color::hex(0xE8E8E8))
             .background(colors::active().bg_darker)
             .border(1.0, colors::active().stroke_soft)
@@ -410,7 +591,7 @@ fn var_row(state: &EditorState, var: &Var, owner_is_self: bool) -> AnyView {
                 .on_click(move || st.set_var_type(&name, ty))
                 .child(
                     Text::new(label)
-                        .size(9.0)
+                        .size(12.0)
                         .font("IBM Plex Mono")
                         .color(if active {
                             Color::WHITE
@@ -452,7 +633,7 @@ fn var_row(state: &EditorState, var: &Var, owner_is_self: bool) -> AnyView {
                             colors::active().bg_lighter
                         })
                         .on_click(move || st.set_var_initial_bool(&name, val))
-                        .child(Text::new(label).size(10.0).font("IBM Plex Mono").color(
+                        .child(Text::new(label).size(12.0).font("IBM Plex Mono").color(
                             if active {
                                 Color::WHITE
                             } else {
@@ -579,6 +760,7 @@ fn body_rules(state: &EditorState, ctx: &Ctx) -> AnyView {
                  (click, hover, key…) and runs actions.",
             )
             .size(11.0)
+            .wrap()
             .color(colors::active().icon_inactive),
         );
     }
@@ -615,7 +797,7 @@ fn rule_card(state: &EditorState, ctx: &Ctx, ri: usize, rule: &Rule) -> AnyView 
         Row::new()
             .gap(6.0)
             .align_items(Align::Center)
-            .child(Text::new("⚡").size(11.0).color(Color::hex(0xF1C21B)))
+            .child(Text::new("⚡").size(14.0).color(Color::hex(0xF1C21B)))
             .child_flex(
                 picker(
                     state,
@@ -655,7 +837,7 @@ fn rule_card(state: &EditorState, ctx: &Ctx, ri: usize, rule: &Rule) -> AnyView 
     if rule.actions.is_empty() {
         card = card.child(
             Text::new("no actions — validation warns")
-                .size(10.0)
+                .size(11.0)
                 .color(colors::active().warn),
         );
     }
@@ -805,7 +987,7 @@ fn action_block(state: &EditorState, ctx: &Ctx, path: ActionPath, action: &Actio
             .align_items(Align::Center)
             .child(
                 Text::new("→")
-                    .size(11.0)
+                    .size(14.0)
                     .color(colors::active().icon_inactive),
             )
             .child_flex(row, 1.0)
@@ -849,7 +1031,7 @@ fn action_block(state: &EditorState, ctx: &Ctx, path: ActionPath, action: &Actio
                                     Action::SetVar(v.clone(), ValueExpr::Value(Value::Bool(val))),
                                 );
                             })
-                            .child(Text::new(label).size(10.0).font("IBM Plex Mono").color(
+                            .child(Text::new(label).size(12.0).font("IBM Plex Mono").color(
                                 if active {
                                     Color::WHITE
                                 } else {
@@ -923,12 +1105,12 @@ fn delay_block(
                     .align_items(Align::Center)
                     .child(
                         Text::new("→")
-                            .size(11.0)
+                            .size(14.0)
                             .color(colors::active().icon_inactive),
                     )
                     .child(
                         Text::new(format!("⏱ Delay {} ms (nested Delay — edit via JSON)", ms))
-                            .size(10.5)
+                            .size(11.0)
                             .color(colors::active().icon_inactive),
                     ),
             );
@@ -949,8 +1131,8 @@ fn delay_block(
         Row::new()
             .gap(6.0)
             .align_items(Align::Center)
-            .child(Text::new("⏱").size(11.0).color(Color::hex(0xF1C21B)))
-            .child(Text::new("Wait").size(11.0).color(colors::active().text))
+            .child(Text::new("⏱").size(14.0).color(Color::hex(0xF1C21B)))
+            .child(Text::new("Wait").size(12.0).color(colors::active().text))
             .child_flex(
                 text_field(sig, move |text: String| {
                     if let Ok(v) = text.trim().parse::<u32>() {
@@ -963,7 +1145,7 @@ fn delay_block(
             )
             .child(
                 Text::new("ms, then")
-                    .size(10.5)
+                    .size(11.0)
                     .color(colors::active().icon_inactive),
             )
             .child(remove_button({
@@ -976,10 +1158,11 @@ fn delay_block(
     if nested.is_empty() {
         card = card.child(
             Text::new("nothing after the timer yet")
-                .size(10.0)
+                .size(11.0)
                 .color(colors::active().icon_inactive),
         );
     }
+
     for (i, action) in nested.iter().enumerate() {
         // A nested Delay (JSON-authored) renders as a read-only row via
         // action_block's own branch.
@@ -1104,11 +1287,11 @@ fn body_issues(ctx: &Ctx) -> AnyView {
                         .center()
                         .radius(6.0)
                         .background(dot)
-                        .child(Text::new(mark).size(8.0).color(Color::hex(0x111111))),
+                        .child(Text::new(mark).size(11.0).color(Color::hex(0x111111))),
                 )
                 .child_flex(
                     Text::new(issue.message.clone())
-                        .size(10.5)
+                        .size(11.0)
                         .color(colors::active().text),
                     1.0,
                 ),
@@ -1130,7 +1313,7 @@ fn open_graph_button(state: &EditorState) -> impl View + 'static {
         .on_click_env(move |env| st.open_node_graph(env))
         .child(
             Text::new("Open in Node Graph ▸")
-                .size(11.0)
+                .size(12.0)
                 .semibold()
                 .color(Color::hex(0xCFA6F5)),
         )

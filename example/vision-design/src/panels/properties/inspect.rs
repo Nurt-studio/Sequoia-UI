@@ -23,12 +23,12 @@ pub(super) fn empty_box() -> impl View + 'static {
                 )
                 .child(
                     Text::new("Select a layer on the canvas,")
-                        .size(12.0)
+                        .size(11.0)
                         .color(colors::active().icon_inactive),
                 )
                 .child(
                     Text::new("to view and edit its properties.")
-                        .size(12.0)
+                        .size(11.0)
                         .color(colors::active().icon_inactive),
                 ),
         )

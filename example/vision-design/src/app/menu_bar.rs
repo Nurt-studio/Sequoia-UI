@@ -193,8 +193,8 @@ fn project_tab(state: &EditorState, tab: &ProjectTab, active: bool) -> AnyView {
         .child(
             Icon::new("close")
                 // The bundled glyph only fills ~52% of its 24-unit viewBox, so
-                // 15 renders an "×" of roughly 8 px next to 11 px text.
-                .size(15.0)
+                // 14 renders an "×" of roughly 7 px next to 13 px text.
+                .size(14.0)
                 .color(colors::active().icon_active),
         );
 
@@ -222,7 +222,7 @@ fn project_tab(state: &EditorState, tab: &ProjectTab, active: bool) -> AnyView {
                 .align_items(Align::Center)
                 .child(
                     Text::new(tab.name.clone())
-                        .size(11.0)
+                        .size(12.0)
                         .semibold()
                         .max_lines(1)
                         .color(if active {
@@ -257,7 +257,7 @@ fn add_project(state: &EditorState) -> impl View + 'static {
         .on_press(move || st.new_project())
         .child(
             Text::new("+")
-                .size(15.0)
+                .size(14.0)
                 .color(colors::active().icon_inactive),
         )
 }
@@ -281,7 +281,7 @@ fn window_button(
         })
         .child(
             Icon::new(icon)
-                .size(10.0)
+                .size(14.0)
                 .color(colors::active().icon_active),
         )
 }
@@ -438,7 +438,7 @@ pub(crate) fn title_bar(state: &EditorState) -> impl View + 'static {
                 .child(Spacer::flex(1.0))
                 .child(
                     Text::with(move || format!("{} layers", layers.get().len()))
-                        .size(10.0)
+                        .size(11.0)
                         .font("IBM Plex Mono")
                         .color(colors::active().icon_inactive),
                 )
@@ -552,12 +552,17 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_pst = st.clone();
                 let s_lk = st.clone();
                 let s_vis = st.clone();
+                let s_set = st.clone();
                 vec![
                     mrow("Undo", Some("Ctrl+Z"), false, o.clone(), move || {
                         s_undo.undo()
                     }),
                     mrow("Redo", Some("Ctrl+Shift+Z"), false, o.clone(), move || {
                         s_redo.redo()
+                    }),
+                    msep(),
+                    mrow("Settings...", Some("Ctrl+,"), false, o.clone(), move || {
+                        s_set.settings_open.set(true)
                     }),
                     msep(),
                     mrow("Cut", Some("Ctrl+X"), false, o.clone(), {
@@ -647,6 +652,8 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                 let s_ff = st.clone();
                 let s_bb = st.clone();
                 let s_lay = st.clone();
+                let s_grp = st.clone();
+                let s_ung = st.clone();
                 vec![
                     mrow("Bring to front", Some("]"), false, o.clone(), move || {
                         s_ff.bring_to_front()
@@ -670,6 +677,21 @@ pub(crate) fn menu_drops(state: &EditorState) -> impl View + 'static {
                             let s = s_lay.clone();
                             move || s.auto_layout_selection()
                         },
+                    ),
+                    msep(),
+                    mrow(
+                        "Group selection",
+                        Some("Ctrl+G"),
+                        false,
+                        o.clone(),
+                        move || s_grp.group_selection(),
+                    ),
+                    mrow(
+                        "Ungroup",
+                        Some("Ctrl+Shift+G"),
+                        false,
+                        o.clone(),
+                        move || s_ung.ungroup_selection(),
                     ),
                 ]
             }

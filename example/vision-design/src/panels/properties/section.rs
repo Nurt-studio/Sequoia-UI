@@ -28,12 +28,12 @@ impl View for Section {
                             .align_items(Align::Center)
                             .child(
                                 Text::new(chev)
-                                    .size(10.0)
+                                    .size(14.0)
                                     .color(colors::active().icon_inactive),
                             )
                             .child(
                                 Text::new(self.title)
-                                    .size(11.0)
+                                    .size(12.0)
                                     .semibold()
                                     .font("Inter")
                                     .color(Color::hex(0xA8A8AC)),

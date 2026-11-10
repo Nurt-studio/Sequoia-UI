@@ -23,7 +23,7 @@ pub(crate) fn icon_button(
         })
         .child(
             Icon::new(icon)
-                .size(15.0)
+                .size(14.0)
                 .color(colors::active().icon_inactive),
         );
     if disabled {
@@ -52,7 +52,7 @@ pub(crate) fn icon_button_env(
         })
         .child(
             Icon::new(icon)
-                .size(15.0)
+                .size(14.0)
                 .color(colors::active().icon_inactive),
         );
     if disabled {
@@ -76,7 +76,7 @@ pub(crate) fn small_icon_button(
         .on_click(on_click)
         .child(
             Icon::new(icon)
-                .size(12.0)
+                .size(14.0)
                 .color(colors::active().icon_inactive),
         )
 }
@@ -99,7 +99,7 @@ pub(crate) fn glyph_button(
         })
         .child(
             Text::new(label)
-                .size(11.0)
+                .size(14.0)
                 .font("IBM Plex Mono")
                 .color(colors::active().icon_inactive),
         );

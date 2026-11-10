@@ -18,6 +18,7 @@ pub(crate) struct PickerBtn {
     pub(crate) selected: String,
     pub(crate) on_pick: Rc<dyn Fn(&str)>,
     pub(crate) width: f32,
+    pub(crate) menu_width: f32,
 }
 
 impl Leaf for PickerBtn {
@@ -41,17 +42,17 @@ impl Leaf for PickerBtn {
             colors::active().bg_darker
         };
         ctx.quad(ctx.rect, bg, 6.0);
-        let m = ctx.text_metrics(11.0);
+        let m = ctx.text_metrics(12.0);
         let top = ctx.rect.top() + (ctx.rect.size.height - m.height) * 0.5;
         ctx.draw_text_tl(
             &self.label,
             (ctx.rect.left() + 8.0, top),
-            11.0,
+            12.0,
             Color::hex(0xE8E8E8),
         );
         // Chevron on the right.
         let chev_x = ctx.rect.left() + ctx.rect.size.width - 16.0;
-        ctx.draw_text_tl("▾", (chev_x, top), 10.0, colors::active().icon_inactive);
+        ctx.draw_text_tl("▾", (chev_x, top), 14.0, colors::active().icon_inactive);
     }
     fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
         if let Event::Pointer(PointerEvent::Down {
@@ -64,6 +65,7 @@ impl Leaf for PickerBtn {
                 ctx.element(),
                 self.options.clone(),
                 &self.selected,
+                self.menu_width,
                 move |value| on_pick(value),
             );
             ctx.handled();

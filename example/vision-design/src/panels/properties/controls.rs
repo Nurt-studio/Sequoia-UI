@@ -10,27 +10,6 @@ pub(super) use crate::components::segmented::{segment as mode_btn, segment_icon 
 
 // ---------------------------- tab strip ----------------------------
 
-pub(super) fn align_dot(active: bool, on_click: impl Fn() + 'static) -> impl View + 'static {
-    Container::new()
-        .width(24.0)
-        .height(24.0)
-        .center()
-        .radius(4.0)
-        .hover(Color::hex(0x2A2A2C))
-        .on_click(on_click)
-        .child(
-            Container::new()
-                .width(6.0)
-                .height(6.0)
-                .radius(1.5)
-                .background(if active {
-                    Color::hex(0x0D99FF)
-                } else {
-                    Color::hex(0x4A4A4D)
-                }),
-        )
-}
-
 pub(super) fn pin_toggle(sig: Signal<bool>) -> impl View + 'static {
     let on = sig.get();
     let s = sig.clone();
@@ -54,7 +33,7 @@ pub(super) fn pin_toggle(sig: Signal<bool>) -> impl View + 'static {
         })
         .on_click(move || s.update(|v| *v = !*v))
         .child(if on {
-            AnyView::new(Text::new("✓").size(10.0).semibold().color(Color::WHITE))
+            AnyView::new(Text::new("✓").size(14.0).semibold().color(Color::WHITE))
         } else {
             AnyView::new(Unit)
         })
@@ -120,7 +99,7 @@ pub(super) fn hex_field(
 ) -> impl View + 'static {
     let hex_set = hex.clone();
     TextField::new(hex)
-        .font_size(12.0)
+        .font_size(13.0)
         .text_color(Color::hex(0xE8E8E8))
         .background(Color::TRANSPARENT)
         .border(0.0, Color::TRANSPARENT)

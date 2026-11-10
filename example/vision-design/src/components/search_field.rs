@@ -50,7 +50,7 @@ fn pill(query: Signal<String>, cancellable: bool) -> impl View + 'static {
         .child_flex(
             TextField::new(query.clone())
                 .placeholder("Search...")
-                .font_size(11.0)
+                .font_size(12.0)
                 .text_color(colors::active().text)
                 .background(Color::TRANSPARENT)
                 .border(1.0, Color::TRANSPARENT),
@@ -70,7 +70,7 @@ fn pill(query: Signal<String>, cancellable: bool) -> impl View + 'static {
                     .on_click(move || q_clear.set(String::new()))
                     .child(
                         Text::new("✕")
-                            .size(9.0)
+                            .size(14.0)
                             .color(colors::active().icon_inactive),
                     ),
             );

@@ -289,7 +289,7 @@ fn picker_content(
                 )
                 .child_flex(
                     TextField::new(hex.clone())
-                        .font_size(12.0)
+                        .font_size(13.0)
                         .text_color(Color::WHITE)
                         .background(Color::hex(0x141416))
                         .border(1.0, colors::active().stroke_soft)
@@ -346,8 +346,8 @@ impl Leaf for PickerHeader {
             PickerTarget::Fill => "Fill Color",
             PickerTarget::Stroke => "Stroke Color",
         };
-        ctx.draw_text_tl(title, (l + 10.0, t + 8.0), 12.0, Color::hex(0xD0D0D0));
-        ctx.draw_text_tl("×", (l + w - 20.0, t + 4.0), 16.0, Color::hex(0xD0D0D0));
+        ctx.draw_text_tl(title, (l + 10.0, t + 6.0), 13.0, Color::hex(0xD0D0D0));
+        ctx.draw_text_tl("×", (l + w - 20.0, t + 4.0), 14.0, Color::hex(0xD0D0D0));
     }
 
     fn on_event(&self, event: &Event, ctx: &mut EventCtx) {
