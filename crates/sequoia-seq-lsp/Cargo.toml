@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "LSP server (stdio) dla języka deklaratywnego .seq (Sequoia)"
+description = "LSP server (stdio) for the declarative language .seq (Sequoia)"
 keywords.workspace = true
 categories.workspace = true
 

@@ -171,4 +171,3 @@ fn attr_expr_type_checking() {
     let app = parse("Main.seq", src_prop).unwrap();
     check("Main.seq", &app).unwrap();
 }
-

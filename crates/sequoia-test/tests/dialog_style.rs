@@ -9,10 +9,10 @@ use sequoia_ui::prelude::*;
 fn dialog_buttons_use_primary_and_outline_styles() {
     let h = Harness::new(
         Column::new().fill_size().child(
-            Dialog::new(Signal::new(true), "Zapisać zmiany?")
-                .content(Text::new("Treść"))
-                .action("Zapisz", || {})
-                .cancel("Anuluj"),
+            Dialog::new(Signal::new(true), "Save changes?")
+                .content(Text::new("Content"))
+                .action("Save", || {})
+                .cancel("Cancel"),
         ),
     );
     h.sync(600.0, 400.0);
@@ -40,7 +40,7 @@ fn dialog_buttons_use_primary_and_outline_styles() {
 
 #[test]
 fn dialog_scrim_blurs_the_backdrop() {
-    let dialog = Dialog::new(Signal::new(true), "T").cancel("Anuluj");
+    let dialog = Dialog::new(Signal::new(true), "T").cancel("Cancel");
     let h = Harness::new(
         Stack::new()
             .fill_size()

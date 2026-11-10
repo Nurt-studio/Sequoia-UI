@@ -1200,7 +1200,7 @@ impl<'a> Parser<'a> {
                         if self.eat(']') {
                             break;
                         }
-                        self.expect(',', "',' albo ']' na liście `[a, b]`")?;
+                        self.expect(',', "',' or ']' in list `[a, b]`")?;
                         self.skip_trivia();
                         if self.eat(']') {
                             break;
@@ -1212,7 +1212,7 @@ impl<'a> Parser<'a> {
                     kind: SeqExprKind::Array(items),
                 })
             }
-            Some('_') => Err(self.err(line, col, "`_` tylko jako wzorzec `match`")),
+            Some('_') => Err(self.err(line, col, "`_` only as `match` pattern")),
             _ => {
                 let (id, _, _) = self.ident()?;
                 Ok(SeqExpr {
@@ -1251,7 +1251,7 @@ impl<'a> Parser<'a> {
         }
         let line = self.line;
         let then = self.fn_expr()?;
-        self.expect(':', "':' w wyrażeniu warunkowym `warunek ? a : b`")?;
+        self.expect(':', "':' in conditional expression `condition ? a : b`")?;
         let els = self.fn_ternary()?;
         Ok(SeqExpr {
             line,

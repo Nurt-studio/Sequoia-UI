@@ -2336,7 +2336,7 @@ fn expr_ty(
                         ctx.file,
                         item.line,
                         1,
-                        "element krotki nic nie zwraca",
+                        "tuple element returns nothing",
                     ));
                 }
                 out.push(ty);
@@ -2347,7 +2347,7 @@ fn expr_ty(
             ctx.file,
             e.line,
             1,
-            "tablice są dozwolone tylko jako wartości atrybutów",
+            "arrays are only allowed as attribute values",
         )),
         SeqExprKind::Ternary { cond, then, els } => {
             let cond_ty = expr_ty(ctx, locals, cond)?;
@@ -2356,7 +2356,7 @@ fn expr_ty(
                     ctx.file,
                     cond.line,
                     1,
-                    format!("`?:` wymaga warunku Bool (jest {})", cond_ty.name()),
+                    format!("`?:` requires a Bool condition (is {})", cond_ty.name()),
                 ));
             }
             let then_ty = expr_ty(ctx, locals, then)?;
@@ -2377,7 +2377,7 @@ fn expr_ty(
                     e.line,
                     1,
                     format!(
-                        "gałęzie `?:` mają różne typy ({} i {})",
+                         "`?:` branches have different types ({} and {})",
                         then_ty.name(),
                         else_ty.name()
                     ),

@@ -2632,7 +2632,7 @@ mod tests {
         let mut device_first = WheelDedupe::default();
         let a = device_first.device(d, t0);
         let b = device_first.window(d, t0 + after);
-        assert_eq!((a.x, a.y), (-40.0, -40.0), "pierwsza droga liczy całość");
+        assert_eq!((a.x, a.y), (-40.0, -40.0), "first path counts total");
         assert_eq!((b.x, b.y), (0.0, 0.0), "kopia z okna odrzucona");
 
         let mut window_first = WheelDedupe::default();
@@ -2652,8 +2652,8 @@ mod tests {
             t0 + Duration::from_millis(2),
         );
         assert_eq!(vertical.y, -40.0);
-        assert_eq!(horizontal.x, -40.0, "poziom tylko z raw input ma przejść");
-        assert_eq!(horizontal.y, 0.0, "pion policzyło już okno");
+        assert_eq!(horizontal.x, -40.0, "horizontal only from raw input should pass");
+        assert_eq!(horizontal.y, 0.0, "vertical already counted by window");
     }
 
     #[test]
@@ -2668,7 +2668,7 @@ mod tests {
         assert_eq!(
             (a.y, b.y),
             (-40.0, -40.0),
-            "kolejne kroki tej samej drogi nie giną"
+            "subsequent steps of the same path are not lost"
         );
     }
 
@@ -2686,7 +2686,7 @@ mod tests {
         }
         assert!(
             applied >= 10,
-            "jedna ścieżka musi pozostać aktywna, a dotarło {applied} kroków"
+            "one path must remain active, and {applied} steps arrived"
         );
     }
 
@@ -2699,12 +2699,12 @@ mod tests {
         assert_eq!(
             dedupe.device(d, t0 + Duration::from_millis(10)).x,
             0.0,
-            "kopia tuż po zdarzeniu okna jest odrzucana"
+            "copy right after window event is rejected"
         );
         assert_eq!(
             dedupe.device(d, t0 + Duration::from_millis(80)).x,
             -40.0,
-            "po ciszy raw input przejmuje oś"
+            "after silence raw input takes over axis"
         );
     }
 

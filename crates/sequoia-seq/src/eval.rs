@@ -412,7 +412,7 @@ impl<'a> Eval<'a> {
                 Ok(Value::Tuple(Rc::new(out)))
             }
             SeqExprKind::Array(_) => {
-                Err(self.err(e.line, "tablice są dozwolone tylko jako wartości atrybutów"))
+                Err(self.err(e.line, "arrays are only allowed as attribute values"))
             }
             SeqExprKind::Ternary { cond, then, els } => {
                 if self.expr_bool(cond)? {
@@ -429,7 +429,7 @@ impl<'a> Eval<'a> {
                     (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                     (UnOp::Neg, _) => Err(self.err(
                         e.line,
-                        format!("`-` wymaga liczby (jest {})", v.type_name()),
+                        format!("`-` requires a number (is {})", v.type_name()),
                     )),
                     (UnOp::Not, _) => {
                         Err(self.err(e.line, format!("`!` wymaga Bool (jest {})", v.type_name())))
