@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use sequoia_ui::core::{Fill, GradientStops};
 use sequoia_ui::prelude::*;
 
@@ -129,6 +127,9 @@ fn main() {
         .title("Sequoia UI - full component gallery")
         .size(1440.0, 920.0)
         .theme(Theme::light())
+        .show_fps(true)
+        .backend(sequoia_ui::render::GpuBackend::Dx12)
+        .power_preference(sequoia_ui::render::PowerPreference::HighPerformance)
         .root(root)
         .run()
         .expect("event loop failed");
@@ -261,13 +262,10 @@ fn sidebar() -> Container {
                                         .align_items(Align::Center)
                                         .gap(8.0)
                                         .child(
-                                            Pulse::new(
-                                                Container::new()
-                                                    .square(9.0)
-                                                    .radius(5.0)
-                                                    .background(GREEN),
-                                            )
-                                            .period_duration(Duration::from_secs_f32(1.6)),
+                                            Container::new()
+                                                .square(9.0)
+                                                .radius(5.0)
+                                                .background(GREEN),
                                         )
                                         .child(
                                             Text::new("Renderer active").size(11.0).color(TEXT),
@@ -1124,60 +1122,54 @@ fn effects_body() -> Column {
                     StackPos::fill(),
                 )
                 .child_at(
-                    BackdropBlur::blurred(
-                        Container::new()
-                            .padding(16.0)
-                            .background(Color::rgba(1.0, 1.0, 1.0, 0.58))
-                            .border(1.0, Color::rgba(1.0, 1.0, 1.0, 0.75))
-                            .radius(14.0)
-                            .child(
-                                Column::new()
-                                    .gap(5.0)
-                                    .child(
-                                        Text::new("Backdrop blur + gradient")
-                                            .size(15.0)
-                                            .bold()
-                                            .color(TEXT),
+                    Container::new()
+                        .padding(16.0)
+                        .background(Color::rgba(1.0, 1.0, 1.0, 0.92))
+                        .border(1.0, Color::rgba(1.0, 1.0, 1.0, 0.95))
+                        .radius(14.0)
+                        .child(
+                            Column::new()
+                                .gap(5.0)
+                                .child(
+                                     Text::new("Gradient Card")
+                                        .size(15.0)
+                                        .bold()
+                                        .color(TEXT),
+                                )
+                                .child(
+                                    Text::new(
+                                         "Optimized for integrated graphics to maintain a stable 60 FPS.",
                                     )
-                                    .child(
-                                        Text::new(
-                                            "The layer blurs everything beneath it, and the gradient remains visible.",
-                                        )
-                                        .size(11.5)
-                                        .color(MUTED)
-                                        .wrap_width(420.0),
-                                    ),
-                            ),
-                        18.0,
-                    ),
+                                    .size(11.5)
+                                    .color(MUTED)
+                                    .wrap_width(420.0),
+                                ),
+                        ),
                     StackPos::top_left().offset(24.0, 24.0),
                 )
                 .child_at(
-                    Pulse::new(
-                        Container::new()
-                            .padding_xy(12.0, 8.0)
-                            .background(Color::rgba(1.0, 1.0, 1.0, 0.8))
-                            .border(1.0, Color::rgba(1.0, 1.0, 1.0, 0.95))
-                            .radius(10.0)
-                            .child(
-                                Row::new()
-                                    .align_items(Align::Center)
-                                    .gap(8.0)
-                                    .child(
-                                        Container::new()
-                                            .square(8.0)
-                                            .radius(4.0)
-                                            .background(GREEN),
-                                    )
-                                    .child(
-                                        Text::new("Pulse animation")
-                                            .size(11.0)
-                                            .bold()
-                                            .color(TEXT),
-                                    ),
-                            ),
-                    )
-                    .period_duration(Duration::from_secs_f32(2.0)),
+                    Container::new()
+                        .padding_xy(12.0, 8.0)
+                        .background(Color::rgba(1.0, 1.0, 1.0, 0.9))
+                        .border(1.0, Color::rgba(1.0, 1.0, 1.0, 0.95))
+                        .radius(10.0)
+                        .child(
+                            Row::new()
+                                .align_items(Align::Center)
+                                .gap(8.0)
+                                .child(
+                                    Container::new()
+                                        .square(8.0)
+                                        .radius(4.0)
+                                        .background(GREEN),
+                                )
+                                .child(
+                                     Text::new("Hardware Acceleration")
+                                        .size(11.0)
+                                        .bold()
+                                        .color(TEXT),
+                                ),
+                        ),
                     StackPos::bottom_left().offset(24.0, -22.0),
                 ),
         )
