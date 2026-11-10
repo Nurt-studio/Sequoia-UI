@@ -12,6 +12,7 @@ use crate::model::tree_ops;
 
 mod behavior;
 mod components;
+mod design_ops;
 mod document_ops;
 mod history;
 pub(crate) mod present;
@@ -30,8 +31,16 @@ pub(crate) use ui::{
     PickerTarget, Tab, ToastEntry, ToastKind,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppTheme {
+    Dark,
+    Light,
+}
+
 #[derive(Clone)]
 pub(crate) struct EditorState {
+    pub(crate) theme_mode: Signal<AppTheme>,
+    pub(crate) settings_open: Signal<bool>,
     pub(crate) is_night: Signal<bool>,
     pub(crate) doc_name: Signal<String>,
     /// Open projects (tabs). The live `root`/selection below mirror the
@@ -70,9 +79,19 @@ pub(crate) struct EditorState {
     /// Side panel widths, dragged with the resize handles around the canvas.
     pub(crate) left_panel_w: Signal<f32>,
     pub(crate) right_panel_w: Signal<f32>,
+    /// Draw the resize-handle line in the middle of the hit area instead of
+    /// flush with the panel edge facing the canvas.
+    pub(crate) resize_handles_centered: Signal<bool>,
     /// Layers-panel drag & drop: the dragged row and the current drop mark.
     pub(crate) lyr_drag_id: Signal<Option<u64>>,
     pub(crate) lyr_drop: Signal<Option<LayerDrop>>,
+    /// Collapsed containers of the Layers tree (node ids).
+    pub(crate) collapsed_layers: Signal<Vec<u64>>,
+    /// Drag & drop session: row index, window Y of the press and the section
+    /// (the full-window overlay resolves the drop from these).
+    pub(crate) lyr_drag_index: Signal<usize>,
+    pub(crate) lyr_drag_start_y: Signal<f32>,
+    pub(crate) lyr_drag_section: Signal<bool>,
     pub(crate) sec_page_open: Signal<bool>,
     pub(crate) sec_comp_open: Signal<bool>,
 
@@ -127,6 +146,12 @@ pub(crate) struct EditorState {
     pub(crate) sel_stroke_w: Signal<f32>,
     pub(crate) sel_text: Signal<String>,
     pub(crate) sel_font_size: Signal<f32>,
+    /// Gradient fill of the selection (painted instead of `sel_fill`).
+    pub(crate) sel_gradient: Signal<Option<crate::model::svelte_ast::GradientDef>>,
+    /// Drop-shadow effects of the selection.
+    pub(crate) sel_effects: Signal<Vec<crate::model::svelte_ast::ShadowEffect>>,
+    /// Layer blur radius in px.
+    pub(crate) sel_blur: Signal<f32>,
 
     pub(crate) sel_layout: Signal<String>,
     pub(crate) sel_gap: Signal<f32>,
@@ -134,6 +159,12 @@ pub(crate) struct EditorState {
     pub(crate) sel_pad_v: Signal<f32>,
     pub(crate) sel_align_h: Signal<String>,
     pub(crate) sel_align_v: Signal<String>,
+    /// Number of explicit grid columns (only meaningful for `Display::Grid`).
+    pub(crate) sel_grid_cols: Signal<f32>,
+    /// Number of explicit grid rows; `0` means automatic.
+    pub(crate) sel_grid_rows: Signal<f32>,
+    /// Per-item cross-axis override for the selected layer (`auto` = inherit).
+    pub(crate) sel_align_self: Signal<String>,
     /// Alignment of wrapped lines (`align-content`).
     pub(crate) sel_align_content: Signal<String>,
     pub(crate) sel_wrap: Signal<bool>,
@@ -200,14 +231,21 @@ impl EditorState {
                 "Landing Page",
                 Some(crate::document::demo::landing_tree()),
             ),
+            ProjectTab::new(
+                3,
+                "Prototype",
+                Some(crate::document::demo::prototype_tree()),
+            ),
         ];
 
         let state = Self {
+            theme_mode: Signal::new(AppTheme::Dark),
+            settings_open: Signal::new(false),
             is_night: Signal::new(true),
             doc_name: Signal::new(initial_name),
             projects: Signal::new(initial_projects),
             active_project: Signal::new(1),
-            next_project_id: Rc::new(Cell::new(3)),
+            next_project_id: Rc::new(Cell::new(4)),
             zoom: Signal::new(1.0),
             status: Signal::new(String::new()),
             menus: Menus::new(),
@@ -234,8 +272,13 @@ impl EditorState {
             show_hidden_layers: Signal::new(false),
             left_panel_w: Signal::new(228.0),
             right_panel_w: Signal::new(238.0),
+            resize_handles_centered: Signal::new(false),
             lyr_drag_id: Signal::new(None),
             lyr_drop: Signal::new(None),
+            collapsed_layers: Signal::new(Vec::new()),
+            lyr_drag_index: Signal::new(0),
+            lyr_drag_start_y: Signal::new(0.0),
+            lyr_drag_section: Signal::new(false),
             sec_page_open: Signal::new(true),
             sec_comp_open: Signal::new(true),
 
@@ -280,12 +323,18 @@ impl EditorState {
             sel_stroke_w: Signal::new(0.0),
             sel_text: Signal::new(String::new()),
             sel_font_size: Signal::new(14.0),
+            sel_gradient: Signal::new(None),
+            sel_effects: Signal::new(Vec::new()),
+            sel_blur: Signal::new(0.0),
             sel_layout: Signal::new("NONE".to_string()),
             sel_gap: Signal::new(0.0),
             sel_pad_h: Signal::new(0.0),
             sel_pad_v: Signal::new(0.0),
             sel_align_h: Signal::new("start".to_string()),
             sel_align_v: Signal::new("start".to_string()),
+            sel_grid_cols: Signal::new(2.0),
+            sel_grid_rows: Signal::new(0.0),
+            sel_align_self: Signal::new("auto".to_string()),
             sel_align_content: Signal::new("start".to_string()),
             sel_wrap: Signal::new(false),
             sel_gap_row: Signal::new(0.0),
@@ -330,6 +379,9 @@ impl EditorState {
                 let present_on = state.present.on.clone();
                 let present_vars = state.present.vars.clone();
                 let present_anims = state.present.anims.clone();
+                let present_screen = state.present.screen.clone();
+                let present_prev = state.present.prev_screen.clone();
+                let present_overlays = state.present.overlays.clone();
                 state.bindings.borrow_mut().push(effect(move || {
                     let _ = root2.get();
                     let _ = present_on.get();
@@ -338,6 +390,9 @@ impl EditorState {
                     let runtime = crate::model::layout_engine::PresentRuntime {
                         vars,
                         keep_visible: crate::state::present::leaving_targets(&anims),
+                        focus: present_screen.get(),
+                        overlays: present_overlays.get(),
+                        leaving: present_prev.get(),
                     };
                     let nodes = crate::model::layout_engine::compute_layout_with_runtime(
                         &root2.get_untracked(),
@@ -369,6 +424,9 @@ impl EditorState {
             let pad_v = state.sel_pad_v.clone();
             let align_h = state.sel_align_h.clone();
             let align_v = state.sel_align_v.clone();
+            let grid_cols = state.sel_grid_cols.clone();
+            let grid_rows = state.sel_grid_rows.clone();
+            let align_self = state.sel_align_self.clone();
             let align_content = state.sel_align_content.clone();
             let wrap = state.sel_wrap.clone();
             let gap_row = state.sel_gap_row.clone();
@@ -387,6 +445,9 @@ impl EditorState {
             let is_component = state.sel_is_component.clone();
             let is_instance = state.sel_is_instance.clone();
             let prop_chip = state.sel_prop_chip.clone();
+            let gradient_sig = state.sel_gradient.clone();
+            let effects_sig = state.sel_effects.clone();
+            let blur_sig = state.sel_blur.clone();
 
             state.bindings.borrow_mut().push(effect(move || {
                 let sel = selected.get();
@@ -433,6 +494,11 @@ impl EditorState {
                     is_component.set(false);
                     is_instance.set(false);
                     prop_chip.set(None);
+                    gradient_sig.set(None);
+                    effects_sig.set(Vec::new());
+                    blur_sig.set(0.0);
+                    grid_rows.set(0.0);
+                    align_self.set("auto".into());
                     return;
                 };
                 let Some(node) = rv.as_ref().and_then(|r| tree_ops::find(r, id)) else {
@@ -456,6 +522,9 @@ impl EditorState {
                             f.set(c);
                             fh.set(e.style.fill_hex.clone());
                         }
+                        gradient_sig.set(e.style.gradient.clone());
+                        effects_sig.set(e.style.effects.clone());
+                        blur_sig.set(e.style.blur);
                         if let Some(c) = e.style.stroke {
                             s.set(c);
                             sh.set(e.style.stroke_hex.clone());
@@ -479,6 +548,15 @@ impl EditorState {
                         );
                         gap.set(e.style.gap);
                         gap_row.set(e.style.row_gap);
+                        grid_cols.set(e.style.grid_cols.unwrap_or(2) as f32);
+                        grid_rows.set(e.style.grid_rows.unwrap_or(0) as f32);
+                        align_self.set(
+                            e.style
+                                .align_self
+                                .map(ui_align)
+                                .unwrap_or("auto")
+                                .to_string(),
+                        );
                         pad_h.set(e.style.padding.left);
                         pad_v.set(e.style.padding.top);
                         wrap.set(e.style.flex_wrap == crate::model::svelte_ast::Wrap::Wrap);
@@ -553,6 +631,9 @@ impl EditorState {
                         sw.set(0.0);
                         text.set(t.content.clone());
                         fsize.set(t.style.font_size);
+                        gradient_sig.set(None);
+                        effects_sig.set(Vec::new());
+                        blur_sig.set(0.0);
                         layout.set("NONE".into());
                         gap.set(0.0);
                         pad_h.set(0.0);
@@ -562,6 +643,8 @@ impl EditorState {
                         align_content.set("start".into());
                         wrap.set(false);
                         gap_row.set(0.0);
+                        grid_rows.set(0.0);
+                        align_self.set("auto".into());
                         size_w.set(if t.width.is_some() { "FIXED" } else { "HUG" }.into());
                         size_h.set(if t.height.is_some() { "FIXED" } else { "HUG" }.into());
                         pos_mode.set(if t.absolute { "ABSOLUTE" } else { "RELATIVE" }.into());
@@ -697,6 +780,184 @@ impl EditorState {
             }));
         }
 
+        // ── EFFECT 2b: gradient / effects / blur → node ──
+        //
+        // Paints and effects are edited through their own signals (the panel
+        // mutates them in bulk: a stop list, an effect list), so they bypass
+        // the per-field props pipeline above.
+        {
+            let sel = state.selected_layer.clone();
+            let root = state.root.clone();
+            let grad = state.sel_gradient.clone();
+            let eff = state.sel_effects.clone();
+            let blur = state.sel_blur.clone();
+            let st = state.clone();
+            let last_push: Rc<RefCell<Instant>> =
+                Rc::new(RefCell::new(Instant::now() - Duration::from_secs(60)));
+
+            state.bindings.borrow_mut().push(effect(move || {
+                let gradv = grad.get();
+                let effv = eff.get();
+                let blurv = blur.get();
+                let Some(id) = sel.get_untracked() else {
+                    return;
+                };
+                let root_now = root.get_untracked();
+                let Some(node) = root_now.as_ref().and_then(|r| tree_ops::find(r, id)) else {
+                    return;
+                };
+                let (cur_grad, cur_eff, cur_blur) = match node {
+                    SvelteNode::Element(e) => (
+                        e.style.gradient.clone(),
+                        e.style.effects.clone(),
+                        e.style.blur,
+                    ),
+                    SvelteNode::Text(_) => (None, Vec::new(), 0.0),
+                };
+                if cur_grad == gradv && cur_eff == effv && (cur_blur - blurv).abs() < 0.001 {
+                    return;
+                }
+                let now = Instant::now();
+                if now.duration_since(*last_push.borrow()) > Duration::from_millis(400) {
+                    *last_push.borrow_mut() = now;
+                    st.push_history();
+                }
+                root.update(|r| {
+                    if let Some(SvelteNode::Element(e)) =
+                        r.as_mut().and_then(|rr| tree_ops::find_mut(rr, id))
+                    {
+                        e.style.gradient = gradv.clone();
+                        e.style.effects = effv.clone();
+                        e.style.blur = blurv.max(0.0);
+                    }
+                });
+            }));
+        }
+
+        // ── EFFECT 2c: grid column count → selected frame ──
+        {
+            let sel = state.selected_layer.clone();
+            let root = state.root.clone();
+            let cols = state.sel_grid_cols.clone();
+            let st = state.clone();
+            let last_push: Rc<RefCell<Instant>> =
+                Rc::new(RefCell::new(Instant::now() - Duration::from_secs(60)));
+
+            state.bindings.borrow_mut().push(effect(move || {
+                let value = cols.get().round().clamp(1.0, 24.0);
+                let Some(id) = sel.get_untracked() else {
+                    return;
+                };
+                let root_now = root.get_untracked();
+                let Some(SvelteNode::Element(e)) =
+                    root_now.as_ref().and_then(|r| tree_ops::find(r, id))
+                else {
+                    return;
+                };
+                if e.style.display != crate::model::svelte_ast::Display::Grid
+                    || e.style.grid_cols == Some(value as u16)
+                {
+                    return;
+                }
+                let now = Instant::now();
+                if now.duration_since(*last_push.borrow()) > Duration::from_millis(400) {
+                    *last_push.borrow_mut() = now;
+                    st.push_history();
+                }
+                root.update(|r| {
+                    if let Some(SvelteNode::Element(e)) =
+                        r.as_mut().and_then(|rr| tree_ops::find_mut(rr, id))
+                    {
+                        e.style.grid_cols = Some(value as u16);
+                    }
+                });
+            }));
+        }
+
+        // Grid row count: zero means automatic rows.
+        {
+            let sel = state.selected_layer.clone();
+            let root = state.root.clone();
+            let rows = state.sel_grid_rows.clone();
+            let st = state.clone();
+            let last_push: Rc<RefCell<Instant>> =
+                Rc::new(RefCell::new(Instant::now() - Duration::from_secs(60)));
+
+            state.bindings.borrow_mut().push(effect(move || {
+                let value = rows.get().round().clamp(0.0, 24.0) as u16;
+                let desired = (value > 0).then_some(value);
+                let Some(id) = sel.get_untracked() else {
+                    return;
+                };
+                let root_now = root.get_untracked();
+                let Some(SvelteNode::Element(e)) =
+                    root_now.as_ref().and_then(|r| tree_ops::find(r, id))
+                else {
+                    return;
+                };
+                if e.style.display != crate::model::svelte_ast::Display::Grid
+                    || e.style.grid_rows == desired
+                {
+                    return;
+                }
+                let now = Instant::now();
+                if now.duration_since(*last_push.borrow()) > Duration::from_millis(400) {
+                    *last_push.borrow_mut() = now;
+                    st.push_history();
+                }
+                root.update(|r| {
+                    if let Some(SvelteNode::Element(e)) =
+                        r.as_mut().and_then(|rr| tree_ops::find_mut(rr, id))
+                    {
+                        e.style.grid_rows = desired;
+                    }
+                });
+            }));
+        }
+
+        // Per-item cross-axis alignment override.
+        {
+            let sel = state.selected_layer.clone();
+            let root = state.root.clone();
+            let align = state.sel_align_self.clone();
+            let st = state.clone();
+            let last_push: Rc<RefCell<Instant>> =
+                Rc::new(RefCell::new(Instant::now() - Duration::from_secs(60)));
+
+            state.bindings.borrow_mut().push(effect(move || {
+                let value = align.get();
+                let desired = if value == "auto" {
+                    None
+                } else {
+                    Some(ui_to_align(&value))
+                };
+                let Some(id) = sel.get_untracked() else {
+                    return;
+                };
+                let root_now = root.get_untracked();
+                let Some(SvelteNode::Element(e)) =
+                    root_now.as_ref().and_then(|r| tree_ops::find(r, id))
+                else {
+                    return;
+                };
+                if e.style.align_self == desired {
+                    return;
+                }
+                let now = Instant::now();
+                if now.duration_since(*last_push.borrow()) > Duration::from_millis(400) {
+                    *last_push.borrow_mut() = now;
+                    st.push_history();
+                }
+                root.update(|r| {
+                    if let Some(SvelteNode::Element(e)) =
+                        r.as_mut().and_then(|rr| tree_ops::find_mut(rr, id))
+                    {
+                        e.style.align_self = desired;
+                    }
+                });
+            }));
+        }
+
         // ── EFFECT 3: root → code_source ──
         {
             let root = state.root.clone();
@@ -778,10 +1039,13 @@ impl EditorState {
     }
 
     pub(crate) fn palette(&self) -> crate::theme::colors::Palette {
-        if self.is_night.get() {
-            crate::theme::colors::NIGHT
-        } else {
-            crate::theme::colors::DAY
+        let is_dark = matches!(self.theme_mode.get(), AppTheme::Dark);
+        let is_night = self.is_night.get();
+        match (is_dark, is_night) {
+            (true, true) => crate::theme::colors::NIGHT,
+            (true, false) => crate::theme::colors::DAY,
+            (false, true) => crate::theme::colors::LIGHT_NIGHT,
+            (false, false) => crate::theme::colors::LIGHT_DAY,
         }
     }
 
@@ -951,6 +1215,17 @@ fn layer_from_flat(f: &crate::model::layout_engine::FlatNode) -> Layer {
         } else {
             style.fill_hex.clone()
         },
+        gradient: if kind == "TEXT" {
+            None
+        } else {
+            style.gradient.clone()
+        },
+        effects: if kind == "TEXT" {
+            Vec::new()
+        } else {
+            style.effects.clone()
+        },
+        blur: if kind == "TEXT" { 0.0 } else { style.blur },
         stroke: style.stroke.unwrap_or(Color::TRANSPARENT),
         stroke_hex: style.stroke_hex.clone(),
         stroke_width: style.stroke_width,

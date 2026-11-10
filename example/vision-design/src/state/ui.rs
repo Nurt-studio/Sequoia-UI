@@ -98,13 +98,16 @@ pub(crate) enum Tab {
     Code,
 }
 
-/// Drop target of a layer drag inside the Layers panel:
-/// `Before(i)` inserts at position `i` of the (filtered) list — the dragged
-/// layer becomes the sibling of the row that was there — and `Into(id)`
-/// reparents it into that frame row.
+/// Drop target of a layer drag inside the Layers tree. Every variant carries
+/// node ids instead of list indexes, so collapsing, filtering or scrolling
+/// during a drag cannot retarget the drop.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum LayerDrop {
-    Before(usize),
+    /// Insert before this row (`None` = at the document root).
+    Before(Option<u64>),
+    /// Insert right after this row, as its sibling.
+    After(u64),
+    /// Reparent into this container row (appended last).
     Into(u64),
 }
 
@@ -118,6 +121,10 @@ pub(crate) struct PanelSections {
     pub(crate) constraints: Signal<bool>,
     pub(crate) fill: Signal<bool>,
     pub(crate) stroke: Signal<bool>,
+    /// Drop shadows, blur and gradient paints.
+    pub(crate) effects: Signal<bool>,
+    /// Prototype connections (Interact tab).
+    pub(crate) prototype: Signal<bool>,
     pub(crate) export: Signal<bool>,
     /// Overrides of an instance (Design tab).
     pub(crate) overrides: Signal<bool>,
@@ -144,6 +151,8 @@ impl PanelSections {
             constraints: Signal::new(true),
             fill: Signal::new(true),
             stroke: Signal::new(false),
+            effects: Signal::new(true),
+            prototype: Signal::new(true),
             export: Signal::new(false),
             overrides: Signal::new(true),
             interface: Signal::new(true),
@@ -169,6 +178,7 @@ pub(crate) struct PickerRequest {
     pub(crate) options: Vec<PickerOption>,
     /// Currently chosen value (highlighted in the list).
     pub(crate) selected: String,
+    pub(crate) menu_width: f32,
     pub(crate) on_pick: Rc<dyn Fn(&str)>,
 }
 
@@ -203,11 +213,13 @@ impl PickerMenu {
         anchor: ElementId,
         options: Vec<PickerOption>,
         selected: &str,
+        menu_width: f32,
         on_pick: impl Fn(&str) + 'static,
     ) {
         *self.request.borrow_mut() = Some(PickerRequest {
             options,
             selected: selected.to_string(),
+            menu_width,
             on_pick: Rc::new(on_pick),
         });
         self.anchor.set(Some(anchor));

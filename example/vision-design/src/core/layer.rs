@@ -2,6 +2,8 @@
 
 use sequoia_ui::prelude::*;
 
+use crate::model::svelte_ast::{GradientDef, ShadowEffect};
+
 pub(crate) fn next_id(layers: &[Layer]) -> u64 {
     layers.iter().map(|l| l.id).max().unwrap_or(0) + 1
 }
@@ -38,6 +40,9 @@ pub(crate) struct Layer {
     pub(crate) radius: f32,
     pub(crate) fill: Color,
     pub(crate) fill_hex: String,
+    pub(crate) gradient: Option<GradientDef>,
+    pub(crate) effects: Vec<ShadowEffect>,
+    pub(crate) blur: f32,
     pub(crate) stroke: Color,
     pub(crate) stroke_hex: String,
     pub(crate) stroke_width: f32,

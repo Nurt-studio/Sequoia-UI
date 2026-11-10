@@ -10,7 +10,7 @@ use sequoia_ui::prelude::{Color, Rect};
 use super::behavior::Value;
 use super::component_ops::{inject_slots, slot_container_names};
 use super::svelte_ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlatNode {
@@ -90,6 +90,13 @@ pub type PresentVars = HashMap<(u64, String), Value>;
 pub struct PresentRuntime {
     pub vars: PresentVars,
     pub keep_visible: std::collections::HashSet<u64>,
+    /// Screen the presenter navigated to. Its ancestors and subtree are the
+    /// only layers that stay rendered; `None` shows the whole document.
+    pub focus: Option<u64>,
+    /// Overlay frames shown above the focused screen.
+    pub overlays: Vec<u64>,
+    /// Screen animating out — kept rendered until its transition finishes.
+    pub leaving: Option<u64>,
 }
 
 impl Default for PresentRuntime {
@@ -97,6 +104,9 @@ impl Default for PresentRuntime {
         Self {
             vars: PresentVars::new(),
             keep_visible: std::collections::HashSet::new(),
+            focus: None,
+            overlays: Vec::new(),
+            leaving: None,
         }
     }
 }
@@ -120,7 +130,8 @@ pub fn compute_layout_with_runtime(
     // per binding, and a hidden element hides its whole subtree (like `{#if}`).
     let mut tree = inject_slots(r);
     let mut stack: Vec<u64> = Vec::new();
-    apply_runtime_visibility(&mut tree, &mut stack, runtime);
+    let keep = focus_keep(&tree, runtime);
+    apply_runtime_visibility(&mut tree, &mut stack, runtime, keep.as_ref());
     let slots = slot_container_names(r);
     walk(&tree, 0.0, 0.0, 0, (0.0, 0.0), None, &mut out);
     // Mark the slot containers ("hole" overlay on the canvas).
@@ -137,16 +148,27 @@ pub fn compute_layout_with_runtime(
 /// Bakes visibility into the prepared copy: bindings evaluate against the
 /// runtime values, and `visible = false` cascades to the whole subtree.
 /// `stack` carries the ancestor element ids (outermost first).
-fn apply_runtime_visibility(node: &mut SvelteNode, stack: &mut Vec<u64>, runtime: &PresentRuntime) {
+fn apply_runtime_visibility(
+    node: &mut SvelteNode,
+    stack: &mut Vec<u64>,
+    runtime: &PresentRuntime,
+    keep: Option<&HashSet<u64>>,
+) {
     let forced = runtime.keep_visible.contains(&node.id());
+    let off_screen = keep.is_some_and(|keep| !keep.contains(&node.id()));
     let hidden = match node {
         SvelteNode::Element(e) if !e.visible => true,
         SvelteNode::Text(t) if !t.visible => true,
-        SvelteNode::Element(e) => match &e.binding {
-            Some(b) => !forced && !runtime_value_in_scope(stack, e, &b.var, &runtime.vars).truthy(),
-            None => false,
-        },
-        _ => false,
+        SvelteNode::Element(e) => {
+            off_screen
+                || match &e.binding {
+                    Some(b) => {
+                        !forced && !runtime_value_in_scope(stack, e, &b.var, &runtime.vars).truthy()
+                    }
+                    None => false,
+                }
+        }
+        _ => off_screen,
     };
     if hidden {
         hide_subtree(node);
@@ -155,17 +177,73 @@ fn apply_runtime_visibility(node: &mut SvelteNode, stack: &mut Vec<u64>, runtime
     stack.push(node.id());
     if let Some(children) = node.children_mut() {
         for c in children {
-            apply_runtime_visibility(c, stack, runtime);
+            apply_runtime_visibility(c, stack, runtime, keep);
         }
     }
     if let SvelteNode::Element(e) = node {
         for sc in &mut e.slot_content {
             for n in sc.nodes.iter_mut() {
-                apply_runtime_visibility(n, stack, runtime);
+                apply_runtime_visibility(n, stack, runtime, keep);
             }
         }
     }
     stack.pop();
+}
+
+/// Nodes that stay rendered while a screen is focused: the path from the
+/// root to each target, the target's subtree, and the same for overlays and
+/// the screen animating out.
+fn focus_keep(root: &SvelteNode, runtime: &PresentRuntime) -> Option<HashSet<u64>> {
+    let mut targets: Vec<u64> = Vec::new();
+    if let Some(id) = runtime.focus {
+        targets.push(id);
+    }
+    if let Some(id) = runtime.leaving
+        && runtime.focus != Some(id)
+    {
+        targets.push(id);
+    }
+    for id in &runtime.overlays {
+        if !targets.contains(id) {
+            targets.push(*id);
+        }
+    }
+    if targets.is_empty() {
+        return None;
+    }
+    let mut keep = HashSet::new();
+    for id in targets {
+        let mut path = Vec::new();
+        if !find_path(root, id, &mut path) {
+            continue;
+        }
+        keep.extend(path.iter().copied());
+        if let Some(node) = crate::model::tree_ops::find(root, id) {
+            mark_subtree(node, &mut keep);
+        }
+    }
+    (!keep.is_empty()).then_some(keep)
+}
+
+fn find_path(node: &SvelteNode, id: u64, out: &mut Vec<u64>) -> bool {
+    out.push(node.id());
+    if node.id() == id {
+        return true;
+    }
+    for c in node.children() {
+        if find_path(c, id, out) {
+            return true;
+        }
+    }
+    out.pop();
+    false
+}
+
+fn mark_subtree(node: &SvelteNode, out: &mut HashSet<u64>) {
+    out.insert(node.id());
+    for c in node.children() {
+        mark_subtree(c, out);
+    }
 }
 
 /// Runtime value of a binding variable: the innermost element on the path
@@ -268,6 +346,13 @@ fn cross_fills(n: &SvelteNode, row: bool) -> bool {
             }
         }
         SvelteNode::Text(_) => false,
+    }
+}
+
+fn align_self(n: &SvelteNode) -> Option<Align> {
+    match n {
+        SvelteNode::Element(e) => e.style.align_self,
+        SvelteNode::Text(_) => None,
     }
 }
 
@@ -560,13 +645,14 @@ fn layout_flex(
         };
 
         for (k, &i) in line.iter().enumerate() {
-            let stretches = fill_cross[i] || (!fixed_cross[i] && s.align_items == Align::Stretch);
+            let cross_align = align_self(items[i]).unwrap_or(s.align_items);
+            let stretches = fill_cross[i] || (!fixed_cross[i] && cross_align == Align::Stretch);
             let cross_size = if stretches {
                 line_cross[li]
             } else {
                 natural_cross[i]
             };
-            let cross_off = match s.align_items {
+            let cross_off = match cross_align {
                 Align::Center => (line_cross[li] - cross_size) * 0.5,
                 Align::End => line_cross[li] - cross_size,
                 _ => 0.0,
@@ -601,24 +687,86 @@ fn layout_grid(
     }
 
     let cols = s.grid_cols.unwrap_or(2).max(1) as usize;
+    let explicit_rows = s.grid_rows.unwrap_or(0) as usize;
     let gap = s.gap.max(0.0);
     let row_gap = if s.row_gap > 0.0 { s.row_gap } else { gap };
     let cell_w = ((iw - gap * (cols as f32 - 1.0)) / cols as f32).max(0.0);
-    let mut cx = ix;
+    let track_h = if explicit_rows > 0 && ih > 0.0 {
+        ((ih - row_gap * (explicit_rows as f32 - 1.0)) / explicit_rows as f32).max(0.0)
+    } else {
+        0.0
+    };
+    let items: Vec<&SvelteNode> = children.iter().filter(|c| !is_absolute(c)).collect();
     let mut cy = iy;
-    let mut row_h = 0.0f32;
-    let mut i = 0;
-    for c in children.iter().filter(|c| !is_absolute(c)) {
-        if i > 0 && i % cols == 0 {
-            cx = ix;
-            cy += row_h + row_gap;
-            row_h = 0.0;
+    for (ri, row) in items.chunks(cols).enumerate() {
+        let natural_h = row.iter().map(|c| base_height(c)).fold(0.0, f32::max);
+        let row_h = if explicit_rows > 0 && ri < explicit_rows && ih > 0.0 {
+            track_h
+        } else {
+            natural_h
+        };
+        for (i, c) in row.iter().enumerate() {
+            let v_align = align_self(c).unwrap_or(s.align_items);
+            let (cw, ch) = grid_child_size(c, cell_w, row_h, s, v_align);
+            let x_off = match s.justify_content {
+                Align::Center => (cell_w - cw) * 0.5,
+                Align::End => cell_w - cw,
+                _ => 0.0,
+            };
+            let y_off = match v_align {
+                Align::Center => (row_h - ch) * 0.5,
+                Align::End => row_h - ch,
+                _ => 0.0,
+            };
+            place(
+                c,
+                ix + i as f32 * (cell_w + gap) + x_off,
+                cy + y_off,
+                cw,
+                ch,
+                depth,
+                Some(parent_id),
+                out,
+            );
         }
-        let ch = base_height(c);
-        walk(c, cx, cy, depth, (cell_w, ch), Some(parent_id), out);
-        row_h = row_h.max(ch);
-        cx += cell_w + gap;
-        i += 1;
+        cy += row_h + row_gap;
+    }
+}
+
+/// Size of a grid item inside its cell. Fill takes the cell, stretch takes the
+/// track when the item has no explicit size, everything else stays intrinsic.
+fn grid_child_size(
+    n: &SvelteNode,
+    cell_w: f32,
+    row_h: f32,
+    s: &Style,
+    v_align: Align,
+) -> (f32, f32) {
+    let stretch_w = s.justify_content == Align::Stretch;
+    let stretch_h = v_align == Align::Stretch;
+    match n {
+        SvelteNode::Element(e) => {
+            let w = match e.style.width {
+                Dimension::Fixed(v) => v,
+                Dimension::Fill => cell_w,
+                Dimension::Auto if stretch_w => cell_w,
+                Dimension::Auto => intrinsic_width(e),
+            };
+            let h = match e.style.height {
+                Dimension::Fixed(v) => v,
+                Dimension::Fill => row_h,
+                Dimension::Auto if stretch_h => row_h,
+                Dimension::Auto => intrinsic_height(e),
+            };
+            (w, h)
+        }
+        SvelteNode::Text(t) => {
+            let (tw, th) = text_size(t);
+            (
+                t.width.unwrap_or(if stretch_w { cell_w } else { tw }),
+                t.height.unwrap_or(if stretch_h { row_h } else { th }),
+            )
+        }
     }
 }
 
@@ -692,6 +840,7 @@ mod tests {
             behavior: None,
             binding: None,
             hover: None,
+            prototype: None,
         }
     }
 
@@ -722,6 +871,31 @@ mod tests {
     }
 
     #[test]
+    fn present_focus_hides_the_other_screens() {
+        let mut a = frame(2, Some(100.0), Some(100.0), FlexDir::Col);
+        a.name = "Home".into();
+        let mut b = frame(3, Some(100.0), Some(100.0), FlexDir::Col);
+        b.name = "Details".into();
+        let mut root = frame(1, Some(300.0), Some(200.0), FlexDir::Row);
+        root.children = vec![SvelteNode::Element(a), SvelteNode::Element(b)];
+        let root = Some(SvelteNode::Element(root));
+
+        let runtime = PresentRuntime {
+            focus: Some(2),
+            ..Default::default()
+        };
+        let flat = compute_layout_with_runtime(&root, &runtime);
+        assert!(
+            flat.iter().any(|f| f.id == 2 && f.visible),
+            "focused screen is laid out"
+        );
+        assert!(
+            !flat.iter().any(|f| f.id == 3 && f.visible),
+            "sibling screens stay hidden while focused"
+        );
+    }
+
+    #[test]
     fn row_places_children_with_gap() {
         let mut f = frame(1, Some(400.0), Some(100.0), FlexDir::Row);
         f.style.gap = 10.0;
@@ -730,6 +904,86 @@ mod tests {
 
         assert_eq!(flat_rect(&root, 2).left(), 0.0);
         assert_eq!(flat_rect(&root, 3).left(), 110.0);
+    }
+
+    #[test]
+    fn grid_honors_columns_gaps_and_cell_alignment() {
+        let mut f = frame(1, Some(320.0), Some(200.0), FlexDir::Row);
+        f.style.display = Display::Grid;
+        f.style.grid_cols = Some(2);
+        f.style.gap = 10.0;
+        f.style.row_gap = 20.0;
+        f.style.justify_content = Align::End;
+        f.style.align_items = Align::End;
+        f.children = vec![
+            rect(2, 40.0, 30.0),
+            rect(3, 60.0, 50.0),
+            rect(4, 40.0, 30.0),
+        ];
+        let root = SvelteNode::Element(f);
+
+        let a = flat_rect(&root, 2);
+        let b = flat_rect(&root, 3);
+        let c = flat_rect(&root, 4);
+        assert_eq!((a.left(), a.top()), (115.0, 20.0), "cell 1, bottom right");
+        assert_eq!((b.left(), b.top()), (260.0, 0.0), "cell 2, top right");
+        assert_eq!((c.left(), c.top()), (115.0, 70.0), "second row");
+    }
+
+    #[test]
+    fn grid_rows_distribute_the_container_height() {
+        let mut f = frame(1, Some(320.0), Some(240.0), FlexDir::Row);
+        f.style.display = Display::Grid;
+        f.style.grid_cols = Some(2);
+        f.style.grid_rows = Some(2);
+        f.style.gap = 10.0;
+        f.style.row_gap = 20.0;
+        f.children = vec![
+            rect(2, 40.0, 30.0),
+            rect(3, 60.0, 50.0),
+            rect(4, 40.0, 30.0),
+        ];
+        let root = SvelteNode::Element(f);
+
+        assert_eq!(flat_rect(&root, 2).top(), 0.0);
+        assert_eq!(flat_rect(&root, 3).top(), 0.0);
+        assert_eq!(
+            flat_rect(&root, 4).top(),
+            130.0,
+            "second track is 110px plus a 20px gap"
+        );
+    }
+
+    #[test]
+    fn align_self_overrides_cross_alignment_per_item() {
+        let mut f = frame(1, Some(400.0), Some(100.0), FlexDir::Row);
+        f.style.align_items = Align::Start;
+        let mut centered = rect(2, 100.0, 20.0);
+        if let SvelteNode::Element(e) = &mut centered {
+            e.style.align_self = Some(Align::Center);
+        }
+        f.children = vec![centered, rect(3, 100.0, 20.0)];
+        let root = SvelteNode::Element(f);
+
+        assert_eq!(flat_rect(&root, 2).top(), 40.0);
+        assert_eq!(flat_rect(&root, 3).top(), 0.0);
+    }
+
+    #[test]
+    fn grid_align_self_overrides_row_alignment() {
+        let mut f = frame(1, Some(200.0), Some(200.0), FlexDir::Row);
+        f.style.display = Display::Grid;
+        f.style.grid_cols = Some(1);
+        f.style.grid_rows = Some(1);
+        f.style.align_items = Align::Start;
+        let mut end = rect(2, 40.0, 30.0);
+        if let SvelteNode::Element(e) = &mut end {
+            e.style.align_self = Some(Align::End);
+        }
+        f.children = vec![end];
+        let root = SvelteNode::Element(f);
+
+        assert_eq!(flat_rect(&root, 2).top(), 170.0);
     }
 
     #[test]

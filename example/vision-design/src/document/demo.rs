@@ -4,8 +4,9 @@ use crate::model::behavior::{
 };
 use crate::model::component_ops::instantiate;
 use crate::model::svelte_ast::{
-    Align, ComponentInterface, Dimension, Display, Element, Override, Position, PropDef, PropKind,
-    Style, SvelteNode, Tag, TextNode, TextStyle, new_frame, new_rect, new_text,
+    Align, ComponentInterface, Dimension, Display, Element, GradientDef, GradientKind,
+    GradientStopDef, Override, Position, PropDef, PropKind, PrototypeLink, ShadowEffect, Style,
+    SvelteNode, Tag, TextNode, TextStyle, new_frame, new_rect, new_text,
 };
 use sequoia_ui::prelude::Color;
 
@@ -76,6 +77,9 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
         radius,
         fill: Color::hex(u32::from_str_radix(&hex[1..], 16).unwrap()),
         fill_hex: hex.into(),
+        gradient: None,
+        effects: Vec::new(),
+        blur: 0.0,
         stroke: Color::TRANSPARENT,
         stroke_hex: "#00000000".into(),
         stroke_width: 0.0,
@@ -163,6 +167,9 @@ pub(crate) fn demo_layers() -> Vec<Layer> {
             radius: 0.0,
             fill: Color::hex(0xFFFFFF),
             fill_hex: "#FFFFFF".into(),
+            gradient: None,
+            effects: Vec::new(),
+            blur: 0.0,
             stroke: Color::TRANSPARENT,
             stroke_hex: "#00000000".into(),
             stroke_width: 0.0,
@@ -195,7 +202,7 @@ fn overlay_master() -> SvelteNode {
     let title_text = SvelteNode::Text(TextNode {
         id: 6,
         name: "Dialog title".into(),
-        content: "Okno dialogowe".into(),
+        content: "Dialog Window".into(),
         style: TextStyle {
             font_size: 15.0,
             font_weight: 600,
@@ -264,6 +271,7 @@ fn overlay_master() -> SvelteNode {
             }],
         }),
         binding: None,
+        prototype: None,
         hover: Some(HoverStyle {
             fill: Some("#FF6B72".into()),
             color: None,
@@ -274,7 +282,7 @@ fn overlay_master() -> SvelteNode {
     let cancel_label = SvelteNode::Text(TextNode {
         id: 11,
         name: "Cancel label".into(),
-        content: "Anuluj".into(),
+        content: "Cancel".into(),
         style: TextStyle {
             font_size: 13.0,
             font_weight: 600,
@@ -322,6 +330,7 @@ fn overlay_master() -> SvelteNode {
             }],
         }),
         binding: None,
+        prototype: None,
         hover: Some(HoverStyle {
             fill: Some("#4A4A4E".into()),
             color: None,
@@ -354,6 +363,7 @@ fn overlay_master() -> SvelteNode {
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     });
 
     SvelteNode::Element(Element {
@@ -374,6 +384,15 @@ fn overlay_master() -> SvelteNode {
             fill: Some(Color::hex(0x26262A)),
             fill_hex: "#26262A".into(),
             radius: 12.0,
+            effects: vec![ShadowEffect {
+                color: Color::hexa(0x00000080),
+                hex: "#00000080".into(),
+                x: 0.0,
+                y: 18.0,
+                blur: 48.0,
+                spread: -8.0,
+                enabled: true,
+            }],
             ..Default::default()
         },
         children: vec![title_text, actions_row],
@@ -385,7 +404,7 @@ fn overlay_master() -> SvelteNode {
             props: vec![
                 PropDef {
                     name: "title".into(),
-                    default: "Okno dialogowe".into(),
+                    default: "Dialog Window".into(),
                     target: 6,
                     kind: PropKind::Text,
                 },
@@ -397,7 +416,7 @@ fn overlay_master() -> SvelteNode {
                 },
                 PropDef {
                     name: "cancelTxt".into(),
-                    default: "Anuluj".into(),
+                    default: "Cancel".into(),
                     target: 11,
                     kind: PropKind::Text,
                 },
@@ -416,6 +435,7 @@ fn overlay_master() -> SvelteNode {
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     })
 }
 
@@ -432,11 +452,11 @@ fn overlay_instance() -> SvelteNode {
         vec![
             Override {
                 prop: "title".into(),
-                value: "Usunąć plik?".into(),
+                value: "Delete file?".into(),
             },
             Override {
                 prop: "confirmTxt".into(),
-                value: "Usuń".into(),
+                value: "Delete".into(),
             },
             Override {
                 prop: "accent".into(),
@@ -519,6 +539,7 @@ fn new_button_for_demo(id: u64, x: f32, y: f32, label: &str) -> SvelteNode {
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     })
 }
 
@@ -550,6 +571,7 @@ pub(crate) fn demo_tree() -> SvelteNode {
         }),
         binding: None,
         hover: None,
+        prototype: None,
         children: vec![
             SvelteNode::Element(Element {
                 id: 2,
@@ -578,6 +600,7 @@ pub(crate) fn demo_tree() -> SvelteNode {
                 behavior: None,
                 binding: None,
                 hover: None,
+                prototype: None,
             }),
             SvelteNode::Element(Element {
                 id: 3,
@@ -606,6 +629,7 @@ pub(crate) fn demo_tree() -> SvelteNode {
                 behavior: None,
                 binding: None,
                 hover: None,
+                prototype: None,
             }),
             SvelteNode::Text(TextNode {
                 id: 4,
@@ -639,6 +663,81 @@ pub(crate) fn demo_tree() -> SvelteNode {
         overrides: Vec::new(),
     };
     SvelteNode::Element(frame)
+}
+
+/// A two-screen starter document wired with prototype links, so Present mode
+/// demonstrates screen navigation (`Home ⇄ Details`).
+pub(crate) fn prototype_tree() -> SvelteNode {
+    fn screen(
+        id: u64,
+        name: &str,
+        fill: u32,
+        label: &str,
+        button: &str,
+        target: u64,
+    ) -> SvelteNode {
+        let mut title = new_text(id + 1, 40.0, 40.0, label);
+        if let SvelteNode::Text(t) = &mut title {
+            t.name = format!("{name} title");
+            t.style.font_size = 34.0;
+            t.style.font_weight = 600;
+            t.style.color = Color::WHITE;
+            t.style.color_hex = "#FFFFFF".into();
+            t.width = None;
+            t.height = None;
+            t.absolute = true;
+            t.x = 40.0;
+            t.y = 40.0;
+        }
+
+        let mut btn = crate::model::svelte_ast::new_button(id + 2, 40.0, 120.0);
+        if let SvelteNode::Element(e) = &mut btn {
+            e.name = format!("{name} button");
+            e.style.fill = Some(Color::hex(0x0D99FF));
+            e.style.fill_hex = "#0D99FF".into();
+            e.style.top = Some(120.0);
+            e.style.left = Some(40.0);
+            e.prototype = Some(PrototypeLink::new(Some(target)));
+            if let Some(SvelteNode::Text(t)) = e.children.first_mut() {
+                t.content = button.into();
+                t.width = None;
+                t.height = None;
+            }
+        }
+
+        let mut frame = new_frame(id, 0.0, 0.0, 800.0, 600.0);
+        if let SvelteNode::Element(e) = &mut frame {
+            e.name = name.into();
+            e.style.fill = Some(Color::hex(fill));
+            e.style.fill_hex = format!("#{fill:06X}");
+            e.children = vec![title, btn];
+        }
+        frame
+    }
+
+    let mut home = screen(1, "Home", 0x16161A, "Home", "Open details", 10);
+    if let SvelteNode::Element(e) = &mut home {
+        e.style.gradient = Some(GradientDef {
+            kind: GradientKind::Linear,
+            angle: 160.0,
+            stops: vec![
+                GradientStopDef::new(Color::hex(0x1B2A4A), "#1B2A4A", 0.0),
+                GradientStopDef::new(Color::hex(0x0D99FF), "#0D99FF", 1.0),
+            ],
+        });
+    }
+    let details = screen(10, "Details", 0x101018, "Details", "Back home", 1);
+
+    let mut root = new_frame(20, 0.0, 0.0, 800.0, 600.0);
+    if let SvelteNode::Element(e) = &mut root {
+        e.name = "Prototype".into();
+        // Invisible wrapper: one screen at a time is focused while presenting.
+        e.style.display = Display::None;
+        e.style.width = Dimension::Fixed(800.0);
+        e.style.height = Dimension::Fixed(600.0);
+        e.children = vec![home, details];
+    }
+    root
 }
 
 /// A second starter document, so the project tabs have something distinct to
@@ -682,7 +781,31 @@ pub(crate) fn landing_tree() -> SvelteNode {
         if let SvelteNode::Element(e) = card {
             e.name = name.into();
             e.style.radius = 14.0;
+            e.style.effects = vec![ShadowEffect::new()];
         }
+    }
+    // Showcase the fill + effect stack: gradient fill and a soft colored shadow.
+    if let SvelteNode::Element(e) = &mut card_a {
+        e.style.gradient = Some(GradientDef {
+            kind: GradientKind::Linear,
+            angle: 135.0,
+            stops: vec![
+                GradientStopDef::new(Color::hex(0x0D99FF), "#0D99FF", 0.0),
+                GradientStopDef::new(Color::hex(0x6E56CF), "#6E56CF", 1.0),
+            ],
+        });
+        e.style.effects = vec![ShadowEffect {
+            color: Color::hexa(0x0D99FF66),
+            hex: "#0D99FF66".into(),
+            x: 0.0,
+            y: 16.0,
+            blur: 36.0,
+            spread: -6.0,
+            enabled: true,
+        }];
+    }
+    if let SvelteNode::Element(e) = &mut card_c {
+        e.style.blur = 3.0;
     }
 
     let mut root = new_frame(1, 0.0, 0.0, 800.0, 600.0);

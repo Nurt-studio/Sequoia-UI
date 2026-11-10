@@ -27,7 +27,9 @@ use crate::core::hit_test::hit_layer;
 use crate::core::layer::Layer;
 use crate::model::behavior::{self, Action, Trigger, Value, ValueExpr};
 use crate::model::layout_engine::PresentVars;
-use crate::model::svelte_ast::SvelteNode;
+use crate::model::svelte_ast::{
+    ProtoAction, ProtoTransition, ProtoTrigger, PrototypeLink, SvelteNode,
+};
 use crate::model::tree_ops;
 
 /// One running transition. `entering == false` keeps the target rendered
@@ -44,6 +46,23 @@ pub(crate) struct Anim {
 impl Anim {
     /// 0..1 progress, clamped.
     pub(crate) fn progress(&self) -> f32 {
+        let el = self.start.elapsed().as_millis() as f32;
+        (el / self.ms.max(1) as f32).clamp(0.0, 1.0)
+    }
+}
+
+/// Screen-to-screen navigation running at paint time.
+#[derive(Clone, Debug)]
+pub(crate) struct NavAnim {
+    pub(crate) from: Option<u64>,
+    pub(crate) to: Option<u64>,
+    pub(crate) kind: ProtoTransition,
+    pub(crate) ms: u32,
+    pub(crate) start: Instant,
+}
+
+impl NavAnim {
+    fn progress(&self) -> f32 {
         let el = self.start.elapsed().as_millis() as f32;
         (el / self.ms.max(1) as f32).clamp(0.0, 1.0)
     }
@@ -82,6 +101,17 @@ pub(crate) struct PresentState {
     pub(crate) on: Signal<bool>,
     pub(crate) vars: Signal<PresentVars>,
     pub(crate) anims: Signal<Vec<Anim>>,
+    /// Focused screen frame (`None` = whole document).
+    pub(crate) screen: Signal<Option<u64>>,
+    /// Screen animating out while `screen` fades in.
+    pub(crate) prev_screen: Signal<Option<u64>>,
+    /// Overlay frames shown above the focused screen.
+    pub(crate) overlays: Signal<Vec<u64>>,
+    /// Bumped on every navigation so the canvas repaints.
+    pub(crate) nav_epoch: Signal<u64>,
+    nav: Rc<RefCell<Option<NavAnim>>>,
+    /// Screen history for `Back` links and Esc.
+    stack: Rc<RefCell<Vec<Option<u64>>>>,
     timers: Rc<RefCell<Vec<PendingTimer>>>,
     /// Element ids currently under the pointer (On Hover In/Out rules).
     pub(crate) hovered: Rc<RefCell<Vec<u64>>>,
@@ -93,6 +123,12 @@ impl PresentState {
             on: Signal::new(false),
             vars: Signal::new(PresentVars::new()),
             anims: Signal::new(Vec::new()),
+            screen: Signal::new(None),
+            prev_screen: Signal::new(None),
+            overlays: Signal::new(Vec::new()),
+            nav_epoch: Signal::new(0),
+            nav: Rc::new(RefCell::new(None)),
+            stack: Rc::new(RefCell::new(Vec::new())),
             timers: Rc::new(RefCell::new(Vec::new())),
             hovered: Rc::new(RefCell::new(Vec::new())),
         }
@@ -113,8 +149,18 @@ impl EditorState {
     /// Enters Present mode: every declared variable starts at its initial
     /// value, then `On Mount` rules run (design doc §7).
     pub(crate) fn start_present(&self) {
+        self.present.screen.set(None);
+        self.present.prev_screen.set(None);
+        self.present.overlays.set(Vec::new());
+        *self.present.nav.borrow_mut() = None;
+        self.present.stack.borrow_mut().clear();
         let mut vars = PresentVars::new();
         if let Some(r) = self.root.get_untracked() {
+            // Multi-screen documents start on their first screen instead of
+            // showing every screen stacked on the canvas.
+            if let Some(first) = initial_screen(&r) {
+                self.present.screen.set(Some(first));
+            }
             collect_initial_vars(&r, &mut vars);
             self.present.vars.set(vars);
             self.present.hovered.borrow_mut().clear();
@@ -137,16 +183,38 @@ impl EditorState {
         self.present.on.set(false);
         self.present.vars.set(PresentVars::new());
         self.present.anims.set(Vec::new());
+        self.present.screen.set(None);
+        self.present.prev_screen.set(None);
+        self.present.overlays.set(Vec::new());
+        *self.present.nav.borrow_mut() = None;
+        self.present.stack.borrow_mut().clear();
         self.present.timers.borrow_mut().clear();
         self.present.hovered.borrow_mut().clear();
     }
 
     // ───────────────────────────────────────────── input
 
+    /// Layers that can receive Present input: the focused screen's subtree
+    /// (plus overlays). Screens hidden by the focus must not win hit tests,
+    /// even before the canvas recomputes its layer snapshot.
+    fn present_hit_layers(&self) -> Vec<Layer> {
+        let mut layers = self.layers.get_untracked();
+        let focus = self.present.screen.get_untracked();
+        let Some(screen) = focus else {
+            return layers;
+        };
+        let mut ids = subtree_ids(&layers, screen);
+        for ov in self.present.overlays.get_untracked() {
+            ids.extend(subtree_ids(&layers, ov));
+        }
+        layers.retain(|l| ids.contains(&l.id));
+        layers
+    }
+
     /// A left click on the canvas in Present mode: fire the `On Click` rules
     /// of the hit chain (topmost first, bubbling like in the DOM).
     pub(crate) fn present_click(&self, wx: f32, wy: f32) {
-        let layers = self.layers.get_untracked();
+        let layers = self.present_hit_layers();
         let Some(hit) = hit_layer(&layers, wx, wy) else {
             return;
         };
@@ -154,6 +222,19 @@ impl EditorState {
         let Some(r) = self.root.get_untracked() else {
             return;
         };
+        // Prototype connections win over behavior rules: a link is the
+        // presentation-level "go to this screen" gesture.
+        for id in &chain {
+            if let Some(SvelteNode::Element(e)) = tree_ops::find(&r, *id)
+                && let Some(link) = &e.prototype
+                && link.trigger == ProtoTrigger::Click
+            {
+                let link = link.clone();
+                self.fire_prototype(&link);
+                return;
+            }
+        }
+
         let mut fired: Vec<(u64, Vec<Action>)> = Vec::new();
         for id in chain {
             if let Some(SvelteNode::Element(e)) = tree_ops::find(&r, id)
@@ -173,7 +254,7 @@ impl EditorState {
 
     /// Tracks the hovered chain and fires `On Hover In` / `On Hover Out`.
     pub(crate) fn present_hover(&self, wx: f32, wy: f32) {
-        let layers = self.layers.get_untracked();
+        let layers = self.present_hit_layers();
         let now = hit_layer(&layers, wx, wy)
             .map(|h| ancestor_chain_ids(&layers, h))
             .unwrap_or_default();
@@ -202,7 +283,28 @@ impl EditorState {
                 }
             }
         }
-        *self.present.hovered.borrow_mut() = now;
+        *self.present.hovered.borrow_mut() = now.clone();
+
+        // Hover prototype links fire for newly entered elements.
+        let mut hover_link: Option<PrototypeLink> = None;
+        {
+            let prev = self.present.hovered.borrow();
+            for id in &now {
+                if prev.contains(id) {
+                    continue;
+                }
+                if let Some(SvelteNode::Element(e)) = tree_ops::find(&r, *id)
+                    && let Some(link) = &e.prototype
+                    && link.trigger == ProtoTrigger::Hover
+                {
+                    hover_link = Some(link.clone());
+                    break;
+                }
+            }
+        }
+        if let Some(link) = hover_link {
+            self.fire_prototype(&link);
+        }
 
         // Leave first (like CSS), then enter.
         for (id, actions) in left {
@@ -272,7 +374,18 @@ impl EditorState {
             anims.retain(|a| (a.start.elapsed().as_millis() as u32) < a.ms.saturating_add(50))
         });
         let anims_live = !self.present.anims.get_untracked().is_empty();
-        anims_live || !self.present.timers.borrow().is_empty()
+        // Navigation: drop the outgoing screen once its transition is done.
+        let nav_running = self
+            .present
+            .nav
+            .borrow()
+            .as_ref()
+            .is_some_and(|n| (n.start.elapsed().as_millis() as u32) < n.ms.max(1));
+        if !nav_running && self.present.nav.borrow().is_some() {
+            *self.present.nav.borrow_mut() = None;
+            self.present.prev_screen.set(None);
+        }
+        anims_live || nav_running || !self.present.timers.borrow().is_empty()
     }
 
     /// Composed paint effect per layer id (transitions of the layer and of
@@ -319,7 +432,152 @@ impl EditorState {
                 *entry = compose_child(&prev, &fx, child_center, target_center);
             }
         }
+        // Screen navigation: the outgoing screen leaves, the incoming one
+        // enters. Shared ancestors (the root) keep their effect.
+        let nav = self.present.nav.borrow().clone();
+        if let Some(nav) = nav {
+            let e = ease_out(nav.progress());
+            let from_ids = nav
+                .from
+                .map(|id| subtree_ids(layers, id))
+                .unwrap_or_default();
+            let to_ids = nav.to.map(|id| subtree_ids(layers, id)).unwrap_or_default();
+            for l in layers {
+                let in_from = from_ids.contains(&l.id);
+                let in_to = to_ids.contains(&l.id);
+                if in_from == in_to {
+                    continue;
+                }
+                let entering = in_to;
+                let (ox, oy) = nav_slide_offset(nav.kind, l.w, l.h);
+                let entry = out.entry(l.id).or_default();
+                if entering {
+                    entry.alpha *= e;
+                    entry.dx += ox * (1.0 - e);
+                    entry.dy += oy * (1.0 - e);
+                } else {
+                    entry.alpha *= 1.0 - e;
+                    entry.dx -= ox * e;
+                    entry.dy -= oy * e;
+                }
+            }
+        }
         out
+    }
+
+    /// Layers of the open overlay frames (the canvas dims the screen behind
+    /// them and paints these last).
+    pub(crate) fn overlay_ids(&self, layers: &[Layer]) -> HashSet<u64> {
+        let mut out = HashSet::new();
+        if !self.present.on.get_untracked() {
+            return out;
+        }
+        for id in self.present.overlays.get_untracked() {
+            out.extend(subtree_ids(layers, id));
+        }
+        out
+    }
+
+    /// Esc / Back links: close an overlay first, then walk the screen stack.
+    /// Returns `false` when there is nothing left to go back to (leave Present).
+    pub(crate) fn present_back(&self) -> bool {
+        if !self.present.on.get_untracked() {
+            return false;
+        }
+        {
+            let overlays = self.present.overlays.get_untracked();
+            if !overlays.is_empty() {
+                self.present.overlays.update(|v| {
+                    v.pop();
+                });
+                *self.present.nav.borrow_mut() = None;
+                self.present.prev_screen.set(None);
+                self.present.nav_epoch.update(|v| *v = v.wrapping_add(1));
+                return true;
+            }
+        }
+        let prev = self.present.stack.borrow_mut().pop();
+        match prev {
+            Some(to) => {
+                self.goto_screen(to, ProtoTransition::Dissolve, 200, false);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Runs one prototype connection.
+    pub(crate) fn fire_prototype(&self, link: &PrototypeLink) {
+        match link.action {
+            ProtoAction::Navigate => {
+                if let Some(target) = link.target {
+                    self.goto_screen(Some(target), link.transition, link.duration_ms, true);
+                }
+            }
+            ProtoAction::Back => {
+                self.present_back();
+            }
+            ProtoAction::OpenOverlay => {
+                if let Some(target) = link.target {
+                    self.open_overlay(target, link.transition, link.duration_ms);
+                }
+            }
+        }
+    }
+
+    /// Focuses `to` (a screen frame) with a transition.
+    pub(crate) fn goto_screen(
+        &self,
+        to: Option<u64>,
+        kind: ProtoTransition,
+        ms: u32,
+        remember: bool,
+    ) {
+        let from = self.present.screen.get_untracked();
+        if to == from && self.present.overlays.get_untracked().is_empty() {
+            return;
+        }
+        if remember {
+            self.present.stack.borrow_mut().push(from);
+        }
+        self.present.overlays.set(Vec::new());
+        if kind == ProtoTransition::Instant {
+            *self.present.nav.borrow_mut() = None;
+            self.present.prev_screen.set(None);
+        } else {
+            *self.present.nav.borrow_mut() = Some(NavAnim {
+                from,
+                to,
+                kind,
+                ms,
+                start: Instant::now(),
+            });
+            self.present.prev_screen.set(from);
+        }
+        self.present.screen.set(to);
+        self.present.nav_epoch.update(|v| *v = v.wrapping_add(1));
+    }
+
+    /// Shows `target` above the current screen.
+    pub(crate) fn open_overlay(&self, target: u64, kind: ProtoTransition, ms: u32) {
+        if self.present.overlays.get_untracked().contains(&target) {
+            return;
+        }
+        self.present.overlays.update(|v| v.push(target));
+        if kind == ProtoTransition::Instant {
+            *self.present.nav.borrow_mut() = None;
+        } else {
+            *self.present.nav.borrow_mut() = Some(NavAnim {
+                from: None,
+                to: Some(target),
+                kind,
+                ms,
+                start: Instant::now(),
+            });
+        }
+        self.present.prev_screen.set(None);
+        self.present.nav_epoch.update(|v| *v = v.wrapping_add(1));
+        self.toast("Overlay — Esc closes it");
     }
 
     // ───────────────────────────────────────────── interpreter core
@@ -442,6 +700,23 @@ impl EditorState {
 }
 
 // ─────────────────────────────────────────────────────── helpers
+
+/// First screen of a document whose root is an invisible wrapper around
+/// several screen frames (the prototype starter document).
+fn initial_screen(root: &SvelteNode) -> Option<u64> {
+    match root {
+        SvelteNode::Element(e)
+            if e.style.display == crate::model::svelte_ast::Display::None
+                && e.children.len() > 1 =>
+        {
+            e.children
+                .iter()
+                .find(|c| matches!(c, SvelteNode::Element(_)))
+                .map(|c| c.id())
+        }
+        _ => None,
+    }
+}
 
 fn collect_initial_vars(node: &SvelteNode, out: &mut PresentVars) {
     if let SvelteNode::Element(e) = node
@@ -582,6 +857,44 @@ fn compose_self(prev: &Fx, next: &Fx) -> Fx {
     }
 }
 
+/// Smooth ease-out used by screen transitions.
+fn ease_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t) * (1.0 - t)
+}
+
+/// Start offset of an entering screen (the outgoing one moves the other way).
+fn nav_slide_offset(kind: ProtoTransition, w: f32, h: f32) -> (f32, f32) {
+    match kind {
+        ProtoTransition::SlideLeft => (w, 0.0),
+        ProtoTransition::SlideRight => (-w, 0.0),
+        ProtoTransition::SlideUp => (0.0, h),
+        ProtoTransition::SlideDown => (0.0, -h),
+        ProtoTransition::Instant | ProtoTransition::Dissolve => (0.0, 0.0),
+    }
+}
+
+/// Layer ids of `root` and all of its descendants.
+fn subtree_ids(layers: &[Layer], root: u64) -> HashSet<u64> {
+    let mut out = HashSet::new();
+    for l in layers {
+        let mut cur = Some(l.id);
+        let mut guard = 0;
+        while let Some(id) = cur {
+            if id == root {
+                out.insert(l.id);
+                break;
+            }
+            guard += 1;
+            if guard > 512 {
+                break;
+            }
+            cur = layers.iter().find(|p| p.id == id).and_then(|p| p.parent);
+        }
+    }
+    out
+}
+
 /// Ids of the elements that are animating OUT — the layout keeps them
 /// rendered so the leave transition has something to draw.
 pub(crate) fn leaving_targets(anims: &[Anim]) -> HashSet<u64> {
@@ -638,6 +951,29 @@ mod tests {
             e.children = vec![panel, btn];
         }
         EditorState::with_seed(Some(root), None)
+    }
+
+    #[test]
+    fn prototype_links_navigate_and_go_back() {
+        let state = EditorState::with_seed(Some(crate::document::demo::prototype_tree()), None);
+        state.start_present();
+        assert_eq!(
+            state.present.screen.get_untracked(),
+            Some(1),
+            "Present starts on the first screen"
+        );
+
+        // Home's "Open details" button links to screen 10.
+        state.present_click(60.0, 130.0);
+        assert_eq!(
+            state.present.screen.get_untracked(),
+            Some(10),
+            "clicking a link navigates to its target"
+        );
+
+        assert!(state.present_back(), "history has the previous screen");
+        assert_eq!(state.present.screen.get_untracked(), Some(1));
+        state.stop_present();
     }
 
     #[test]
@@ -829,6 +1165,7 @@ mod tests {
         let runtime = crate::model::layout_engine::PresentRuntime {
             vars: state.present.vars.get_untracked(),
             keep_visible: keep,
+            ..Default::default()
         };
         let flat = crate::model::layout_engine::compute_layout_with_runtime(
             &state.root.get_untracked(),

@@ -398,10 +398,250 @@ impl EditorState {
         self.move_node_into(id, target);
     }
 
+    /// Wraps the current selection in a plain `div` group. Every selected
+    /// layer must share a parent; the group is placed at the selection bounds
+    /// and the children are re-based to group-local coordinates, so grouping
+    /// never moves anything on screen. The group is an ordinary element, so
+    /// codegen emits a nested `<div>` for it in the Svelte output.
+    pub(crate) fn group_selection(&self) {
+        use crate::model::svelte_ast::{
+            Dimension, Display, Element, FlexDir, Position, Style, Tag,
+        };
+
+        let root = self.root.get_untracked();
+        let Some(r) = root.as_ref() else {
+            return;
+        };
+        let mut ids = self.selected_layers.get_untracked();
+        if ids.is_empty()
+            && let Some(id) = self.selected_layer.get_untracked()
+        {
+            ids.push(id);
+        }
+        ids.retain(|id| tree_ops::find(r, *id).is_some());
+        ids.sort_unstable();
+        ids.dedup();
+        if ids.is_empty() {
+            self.toast_warn("Select layers to group");
+            return;
+        }
+        let root_id = r.id();
+        let parent_id = |id: u64| {
+            tree_ops::parent_of(r, id)
+                .map(|p| p.id())
+                .unwrap_or(root_id)
+        };
+        let parent_of_all = parent_id(ids[0]);
+        if ids.iter().any(|id| parent_id(*id) != parent_of_all) {
+            self.toast_warn("Grouping needs layers with the same parent");
+            return;
+        }
+        if ids.contains(&root_id) {
+            return;
+        }
+
+        let flat = self.flat_snapshot();
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        for id in &ids {
+            if let Some(f) = flat.iter().find(|f| f.id == *id) {
+                min_x = min_x.min(f.rect.left());
+                min_y = min_y.min(f.rect.top());
+                max_x = max_x.max(f.rect.left() + f.rect.size.width);
+                max_y = max_y.max(f.rect.top() + f.rect.size.height);
+            }
+        }
+        if !min_x.is_finite() || !min_y.is_finite() {
+            self.toast_warn("Cannot group hidden layers");
+            return;
+        }
+        let (bx, by) = (min_x, min_y);
+        let (bw, bh) = ((max_x - min_x).max(1.0), (max_y - min_y).max(1.0));
+        let gid = self.next_node_id();
+
+        self.push_history();
+        self.root.update(|slot| {
+            let Some(rr) = slot.as_mut() else {
+                return;
+            };
+            let Some(parent) = tree_ops::find_mut(rr, parent_of_all) else {
+                return;
+            };
+            let Some(children) = parent.children_mut() else {
+                return;
+            };
+            let first = children
+                .iter()
+                .position(|c| ids.contains(&c.id()))
+                .unwrap_or(0);
+            let mut taken = Vec::new();
+            let mut i = 0;
+            while i < children.len() {
+                if ids.contains(&children[i].id()) {
+                    let nid = children[i].id();
+                    let mut node = children.remove(i);
+                    set_absolute_at(&mut node, local_pos(&flat, nid, (bx, by)));
+                    taken.push(node);
+                } else {
+                    i += 1;
+                }
+            }
+            if taken.is_empty() {
+                return;
+            }
+            let mut style = Style::default();
+            style.display = Display::Flex;
+            style.flex_dir = FlexDir::Col;
+            style.position = Position::Absolute;
+            style.left = Some(bx);
+            style.top = Some(by);
+            style.width = Dimension::Fixed(bw);
+            style.height = Dimension::Fixed(bh);
+            style.opacity = 100.0;
+            style.fill = None;
+            style.radius = 0.0;
+            let group = SvelteNode::Element(Element {
+                id: gid,
+                name: "Group".into(),
+                tag: Tag::Div,
+                style,
+                children: taken,
+                visible: true,
+                locked: false,
+                component: false,
+                instance: false,
+                interface: None,
+                overrides: Vec::new(),
+                slot_content: Vec::new(),
+                behavior: None,
+                binding: None,
+                hover: None,
+                prototype: None,
+            });
+            children.insert(first.min(children.len()), group);
+        });
+        self.selected_layer.set(Some(gid));
+        self.selected_layers.set(vec![gid]);
+        self.toast("Grouped");
+    }
+
+    /// Dissolves the selected group/frame: its children move up into the
+    /// parent at the group's slot, keeping their on-screen positions.
+    pub(crate) fn ungroup_selection(&self) {
+        let Some(id) = self.selected_layer.get_untracked() else {
+            self.toast_warn("Select a group to ungroup");
+            return;
+        };
+        let root = self.root.get_untracked();
+        let Some(r) = root.as_ref() else {
+            return;
+        };
+        if id == r.id() {
+            self.toast_warn("The page root cannot be ungrouped");
+            return;
+        }
+        let Some(parent_id) = tree_ops::parent_of(r, id).map(|p| p.id()) else {
+            return;
+        };
+        let Some(SvelteNode::Element(group)) = tree_ops::find(r, id) else {
+            return;
+        };
+        if group.children.is_empty() {
+            self.toast_warn("Nothing to ungroup");
+            return;
+        }
+        let flat = self.flat_snapshot();
+        let origin = flat
+            .iter()
+            .find(|f| f.id == parent_id)
+            .map(|f| (f.rect.left(), f.rect.top()))
+            .unwrap_or((0.0, 0.0));
+        // Prefer the flat rects (they account for auto layout); when the
+        // layout snapshot has not caught up with a group just created, fall
+        // back to the group's own offset plus the child's local position.
+        let group_rect = flat.iter().find(|f| f.id == id).map(|f| f.rect);
+        let group_pos = match (group.style.left, group.style.top) {
+            (Some(x), Some(y)) => (x, y),
+            _ => group_rect
+                .map(|r| (r.left() - origin.0, r.top() - origin.1))
+                .unwrap_or((0.0, 0.0)),
+        };
+        let child_positions: Vec<(u64, (f32, f32))> = group
+            .children
+            .iter()
+            .map(|c| {
+                let explicit = match c {
+                    SvelteNode::Element(e) => e.style.left.is_some() && e.style.top.is_some(),
+                    SvelteNode::Text(_) => true,
+                };
+                let local = match c {
+                    SvelteNode::Element(e) => {
+                        (e.style.left.unwrap_or(0.0), e.style.top.unwrap_or(0.0))
+                    }
+                    SvelteNode::Text(t) => (t.x, t.y),
+                };
+                let pos = if explicit {
+                    (group_pos.0 + local.0, group_pos.1 + local.1)
+                } else {
+                    local_pos(&flat, c.id(), origin)
+                };
+                (c.id(), pos)
+            })
+            .collect();
+        let first_child = group.children.first().map(|c| c.id());
+
+        self.push_history();
+        self.root.update(|slot| {
+            let Some(rr) = slot.as_mut() else {
+                return;
+            };
+            let Some(parent) = tree_ops::find_mut(rr, parent_id) else {
+                return;
+            };
+            let Some(index) = parent.children().iter().position(|c| c.id() == id) else {
+                return;
+            };
+            let Some(group) = tree_ops::take_child(parent, id) else {
+                return;
+            };
+            let SvelteNode::Element(group) = group else {
+                return;
+            };
+            for (i, mut child) in group.children.into_iter().enumerate() {
+                let pos = child_positions
+                    .iter()
+                    .find(|(cid, _)| *cid == child.id())
+                    .map(|(_, p)| *p)
+                    .unwrap_or((0.0, 0.0));
+                set_absolute_at(&mut child, pos);
+                tree_ops::insert_child_at(parent, index + i, child);
+            }
+        });
+        if let Some(fid) = first_child {
+            self.selected_layer.set(Some(fid));
+            self.selected_layers.set(vec![fid]);
+        }
+        self.toast("Ungrouped");
+    }
+
     /// Moves `id` into `new_parent` (appended last). Auto-layout parents
     /// position flow children themselves, so the node becomes relative;
     /// otherwise it stays absolute at its current world rectangle.
     pub(crate) fn move_node_into(&self, id: u64, new_parent: u64) {
+        if id == new_parent || self.is_descendant(id, new_parent) {
+            return;
+        }
+        if let Some(r) = self.root.get_untracked()
+            && tree_ops::parent_of(&r, id).map(|p| p.id()) == Some(new_parent)
+            && tree_ops::find(&r, new_parent)
+                .and_then(|p| p.children().last())
+                .map(|c| c.id())
+                == Some(id)
+        {
+            return;
+        }
         let world = self
             .flat_snapshot()
             .iter()
@@ -425,6 +665,32 @@ impl EditorState {
         if next_id == Some(id) {
             return;
         }
+        if let Some(r) = self.root.get_untracked() {
+            let parent = tree_ops::parent_of(&r, id)
+                .map(|p| p.id())
+                .unwrap_or(r.id());
+            let siblings = tree_ops::find(&r, parent)
+                .map(|p| p.children().to_vec())
+                .unwrap_or_default();
+            let pos = siblings.iter().position(|c| c.id() == id);
+            match next_id {
+                Some(nid) => {
+                    let same_parent = tree_ops::parent_of(&r, nid)
+                        .map(|p| p.id())
+                        .unwrap_or(r.id())
+                        == parent;
+                    let target = siblings.iter().position(|c| c.id() == nid);
+                    if same_parent && matches!((pos, target), (Some(p), Some(t)) if t == p + 1) {
+                        return;
+                    }
+                }
+                None => {
+                    if siblings.last().map(|c| c.id()) == Some(id) {
+                        return;
+                    }
+                }
+            }
+        }
         let world = self
             .flat_snapshot()
             .iter()
@@ -443,6 +709,194 @@ impl EditorState {
             }
             reparent_node(rr, id, ReparentPlace::Before(next_id), world);
         });
+    }
+
+    /// Aligns the current selection. `edge` is one of `left`, `center-h`,
+    /// `right`, `top`, `center-v` or `bottom`.
+    ///
+    /// A single flow child of an auto-layout frame changes that frame's
+    /// alignment, so it stays in the flow. Everything else (free-positioned
+    /// children and marquee selections) is moved to an absolute position
+    /// inside its parent, or to the selection's bounding box when several
+    /// layers are selected.
+    pub(crate) fn align_selection(&self, edge: &str) {
+        use crate::model::layout_engine::is_absolute;
+        use crate::model::svelte_ast::{Align, Display, FlexDir, Position};
+        use sequoia_ui::prelude::Rect;
+
+        let (horizontal, align) = match edge {
+            "left" => (true, Align::Start),
+            "center-h" => (true, Align::Center),
+            "right" => (true, Align::End),
+            "top" => (false, Align::Start),
+            "center-v" => (false, Align::Center),
+            "bottom" => (false, Align::End),
+            _ => return,
+        };
+
+        let mut ids = self.selected_layers.get_untracked();
+        if ids.is_empty()
+            && let Some(id) = self.selected_layer.get_untracked()
+        {
+            ids.push(id);
+        }
+        if ids.is_empty() {
+            self.toast_warn("Nothing selected");
+            return;
+        }
+        ids.sort_unstable();
+        ids.dedup();
+
+        let root = self.root.get_untracked();
+        let Some(r) = root.as_ref() else {
+            return;
+        };
+        let flat = self.flat_snapshot();
+        let mut items: Vec<(u64, Rect, Option<u64>)> = ids
+            .into_iter()
+            .filter_map(|id| {
+                let f = flat.iter().find(|f| f.id == id)?;
+                Some((id, f.rect, f.parent))
+            })
+            .collect();
+
+        // Root layers have no parent frame to align against.
+        items.retain(|(id, _, _)| tree_ops::parent_of(r, *id).is_some());
+        if items.is_empty() {
+            self.toast_warn("Root layer has no parent");
+            return;
+        }
+
+        // A single flow child is positioned by its auto-layout parent, so
+        // align the parent's items instead of taking the child out of flow.
+        if let [(id, _, Some(pid))] = items.as_slice() {
+            let child_absolute = tree_ops::find(r, *id).is_none_or(is_absolute);
+            if !child_absolute
+                && let Some(parent) = flat.iter().find(|f| f.id == *pid)
+                && let Some(ps) = parent.style()
+            {
+                let slot = match ps.display {
+                    Display::Flex => {
+                        let row = ps.flex_dir == FlexDir::Row;
+                        if horizontal == row {
+                            Some(true)
+                        } else {
+                            Some(false)
+                        }
+                    }
+                    Display::Grid => Some(horizontal),
+                    _ => None,
+                };
+                if let Some(justify) = slot {
+                    self.push_history();
+                    self.root.update(|slot| {
+                        if let Some(SvelteNode::Element(p)) =
+                            slot.as_mut().and_then(|rr| tree_ops::find_mut(rr, *pid))
+                        {
+                            if justify {
+                                p.style.justify_content = align;
+                            } else {
+                                p.style.align_items = align;
+                            }
+                        }
+                    });
+                    return;
+                }
+            }
+        }
+
+        let bounds = if let [(_, rect, Some(pid))] = items.as_slice() {
+            flat.iter()
+                .find(|f| f.id == *pid)
+                .map(flat_content_rect)
+                .unwrap_or(*rect)
+        } else {
+            let mut min_x = f32::MAX;
+            let mut min_y = f32::MAX;
+            let mut max_x = f32::MIN;
+            let mut max_y = f32::MIN;
+            for (_, rect, _) in &items {
+                min_x = min_x.min(rect.left());
+                min_y = min_y.min(rect.top());
+                max_x = max_x.max(rect.left() + rect.size.width);
+                max_y = max_y.max(rect.top() + rect.size.height);
+            }
+            Rect::from_xywh(min_x, min_y, max_x - min_x, max_y - min_y)
+        };
+
+        let mut changes = Vec::new();
+        for (id, rect, _) in &items {
+            let x = match edge {
+                "left" => bounds.left(),
+                "center-h" => bounds.left() + (bounds.size.width - rect.size.width) * 0.5,
+                "right" => bounds.left() + bounds.size.width - rect.size.width,
+                _ => rect.left(),
+            };
+            let y = match edge {
+                "top" => bounds.top(),
+                "center-v" => bounds.top() + (bounds.size.height - rect.size.height) * 0.5,
+                "bottom" => bounds.top() + bounds.size.height - rect.size.height,
+                _ => rect.top(),
+            };
+            if (x - rect.left()).abs() > 0.01 || (y - rect.top()).abs() > 0.01 {
+                changes.push((*id, x, y));
+            }
+        }
+        if changes.is_empty() {
+            return;
+        }
+
+        self.push_history();
+        self.root.update(|slot| {
+            let Some(rr) = slot else { return };
+            for (id, x, y) in changes {
+                let Some(node) = tree_ops::find_mut(rr, id) else {
+                    continue;
+                };
+                match node {
+                    SvelteNode::Element(e) => {
+                        e.style.position = Position::Absolute;
+                        e.style.left = Some(x);
+                        e.style.top = Some(y);
+                        e.style.right = None;
+                        e.style.bottom = None;
+                    }
+                    SvelteNode::Text(t) => {
+                        t.absolute = true;
+                        t.x = x;
+                        t.y = y;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Layers-panel drop: place `id` immediately after `prev_id` (as its
+    /// sibling, or at the end of `prev_id`'s parent).
+    pub(crate) fn move_layer_after(&self, id: u64, prev_id: u64) {
+        if id == prev_id {
+            return;
+        }
+        let root = self.root.get_untracked();
+        let Some(r) = root.as_ref() else {
+            return;
+        };
+        let Some(parent_id) = tree_ops::parent_of(r, prev_id).map(|p| p.id()) else {
+            return;
+        };
+        let Some(parent) = tree_ops::find(r, parent_id) else {
+            return;
+        };
+        let next = parent
+            .children()
+            .iter()
+            .skip_while(|c| c.id() != prev_id)
+            .nth(1)
+            .map(|c| c.id());
+        match next {
+            Some(next) => self.move_layer_before(id, Some(next)),
+            None => self.move_node_into(id, parent_id),
+        }
     }
 }
 
@@ -576,8 +1030,62 @@ fn reparent_node(root: &mut SvelteNode, id: u64, place: ReparentPlace, world: (f
     true
 }
 
+/// Rect of `id` in the flat snapshot, expressed relative to `origin`.
+fn local_pos(
+    flat: &[crate::model::layout_engine::FlatNode],
+    id: u64,
+    origin: (f32, f32),
+) -> (f32, f32) {
+    flat.iter()
+        .find(|f| f.id == id)
+        .map(|f| (f.rect.left() - origin.0, f.rect.top() - origin.1))
+        .unwrap_or((0.0, 0.0))
+}
+
+/// Pins a node at `pos` in its parent, leaving layout flow.
+fn set_absolute_at(node: &mut SvelteNode, pos: (f32, f32)) {
+    use crate::model::svelte_ast::Position;
+    match node {
+        SvelteNode::Element(e) => {
+            e.style.position = Position::Absolute;
+            e.style.left = Some(pos.0);
+            e.style.top = Some(pos.1);
+            e.style.right = None;
+            e.style.bottom = None;
+        }
+        SvelteNode::Text(t) => {
+            t.absolute = true;
+            t.x = pos.0;
+            t.y = pos.1;
+        }
+    }
+}
+
 /// True when `id` is a flow child of an auto-layout parent, i.e. the parent
 /// decides its position.
+/// Content box of a laid-out frame (its rectangle minus padding).
+fn flat_content_rect(f: &crate::model::layout_engine::FlatNode) -> sequoia_ui::prelude::Rect {
+    use sequoia_ui::prelude::Rect;
+
+    let s = f.style();
+    let (l, t, r, b) = s
+        .map(|s| {
+            (
+                s.padding.left,
+                s.padding.top,
+                s.padding.right,
+                s.padding.bottom,
+            )
+        })
+        .unwrap_or((0.0, 0.0, 0.0, 0.0));
+    Rect::from_xywh(
+        f.rect.left() + l,
+        f.rect.top() + t,
+        (f.rect.size.width - l - r).max(0.0),
+        (f.rect.size.height - t - b).max(0.0),
+    )
+}
+
 fn owns_child_positions(root: &SvelteNode, id: u64) -> bool {
     use crate::model::layout_engine::is_absolute;
     use crate::model::svelte_ast::Display;
@@ -647,6 +1155,7 @@ fn reid_map(
             behavior: e.behavior.clone(),
             binding: e.binding.clone(),
             hover: e.hover.clone(),
+            prototype: e.prototype.clone(),
         }),
         SvelteNode::Text(t) => SvelteNode::Text(crate::model::svelte_ast::TextNode {
             id,
@@ -698,6 +1207,7 @@ mod tests {
             behavior: None,
             binding: None,
             hover: None,
+            prototype: None,
         })
     }
 
@@ -821,5 +1331,210 @@ mod tests {
             "parent still places it"
         );
         assert_eq!(rect.size.width, 150.0);
+    }
+
+    #[test]
+    fn dropping_after_a_row_places_the_layer_next_to_it() {
+        let mut root = new_frame(1, 0.0, 0.0, 400.0, 300.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.children = vec![
+                new_rect(2, 10.0, 20.0, 50.0, 40.0, 0x0D99FF),
+                new_rect(3, 80.0, 20.0, 50.0, 40.0, 0x42BE65),
+                new_rect(4, 150.0, 20.0, 50.0, 40.0, 0xF1C21B),
+            ];
+        }
+        let state = EditorState::with_seed(Some(root), Some(2));
+        state.move_layer_after(2, 3);
+        let root = state.root.get_untracked().expect("root");
+        let order: Vec<u64> = root.children().iter().map(|c| c.id()).collect();
+        assert_eq!(order, vec![3, 2, 4], "dropped after row 3");
+    }
+
+    #[test]
+    fn grouping_wraps_siblings_and_ungrouping_restores_them() {
+        let mut root = new_frame(1, 0.0, 0.0, 400.0, 300.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.children = vec![
+                new_rect(2, 10.0, 20.0, 50.0, 40.0, 0x0D99FF),
+                new_rect(3, 80.0, 20.0, 50.0, 40.0, 0x42BE65),
+            ];
+        }
+        let state = EditorState::with_seed(Some(root), Some(2));
+        state.selected_layers.set(vec![2, 3]);
+        state.group_selection();
+
+        let root = state.root.get_untracked().expect("root");
+        let gid = state
+            .selected_layer
+            .get_untracked()
+            .expect("group selected");
+        match tree_ops::find(&root, gid).expect("group exists") {
+            SvelteNode::Element(g) => {
+                assert_eq!(g.name, "Group");
+                assert_eq!(g.tag, crate::model::svelte_ast::Tag::Div);
+                assert_eq!(g.children.len(), 2);
+                assert_eq!(g.style.left, Some(10.0));
+                assert_eq!(g.style.top, Some(20.0));
+                assert_eq!(g.style.width, Dimension::Fixed(120.0));
+                match &g.children[0] {
+                    SvelteNode::Element(c) => {
+                        assert_eq!(c.style.left, Some(0.0), "group-local x");
+                        assert_eq!(c.style.top, Some(0.0));
+                        assert_eq!(c.style.position, Position::Absolute);
+                    }
+                    _ => panic!("expected an element child"),
+                }
+            }
+            _ => panic!("expected an element group"),
+        }
+
+        state.ungroup_selection();
+        let root = state.root.get_untracked().expect("root after ungroup");
+        assert!(tree_ops::find(&root, gid).is_none(), "group removed");
+        match tree_ops::find(&root, 2).expect("child back") {
+            SvelteNode::Element(e) => {
+                assert_eq!(e.style.left, Some(10.0), "world position restored");
+                assert_eq!(e.style.top, Some(20.0));
+            }
+            _ => panic!("expected an element"),
+        }
+    }
+
+    #[test]
+    fn aligning_a_free_layer_uses_the_parent_content_box() {
+        let mut root = new_frame(1, 0.0, 0.0, 400.0, 300.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.style.display = Display::None;
+            e.style.padding = sequoia_ui::prelude::Edges::all(10.0);
+            e.children = vec![new_rect(2, 30.0, 40.0, 50.0, 40.0, 0x0D99FF)];
+        }
+        let state = EditorState::with_seed(Some(root), Some(2));
+
+        state.align_selection("right");
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 2).expect("child") {
+            SvelteNode::Element(e) => {
+                assert_eq!(e.style.left, Some(340.0), "400 - 10 - 50");
+                assert_eq!(e.style.top, Some(40.0));
+                assert_eq!(e.style.position, Position::Absolute);
+            }
+            _ => panic!("expected an element"),
+        }
+
+        state.align_selection("bottom");
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 2).expect("child") {
+            SvelteNode::Element(e) => {
+                assert_eq!(e.style.left, Some(340.0));
+                assert_eq!(e.style.top, Some(250.0), "300 - 10 - 40");
+            }
+            _ => panic!("expected an element"),
+        }
+    }
+
+    #[test]
+    fn aligning_a_flow_child_changes_the_parent_layout() {
+        use crate::model::svelte_ast::Align;
+
+        let state = EditorState::with_seed(Some(row_frame()), Some(2));
+        state.align_selection("center-v");
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 1).expect("parent") {
+            SvelteNode::Element(e) => assert_eq!(e.style.align_items, Align::Center),
+            _ => panic!("expected the row frame"),
+        }
+
+        state.align_selection("right");
+        let root = state.root.get_untracked().expect("root");
+        match tree_ops::find(&root, 1).expect("parent") {
+            SvelteNode::Element(e) => assert_eq!(e.style.justify_content, Align::End),
+            _ => panic!("expected the row frame"),
+        }
+        match tree_ops::find(&root, 2).expect("child") {
+            SvelteNode::Element(e) => {
+                assert_eq!(e.style.position, Position::Relative, "stays in the flow");
+            }
+            _ => panic!("expected an element"),
+        }
+    }
+
+    #[test]
+    fn grid_column_signal_updates_the_selected_frame() {
+        let mut root = new_frame(1, 0.0, 0.0, 300.0, 200.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.style.display = Display::Grid;
+            e.style.grid_cols = Some(3);
+            e.children = vec![new_rect(2, 0.0, 0.0, 40.0, 30.0, 0x0D99FF)];
+        }
+        let state = EditorState::with_seed(Some(root), Some(1));
+        assert_eq!(state.sel_grid_cols.get_untracked(), 3.0);
+
+        state.sel_grid_cols.set(4.0);
+
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 1).expect("frame") {
+            SvelteNode::Element(e) => assert_eq!(e.style.grid_cols, Some(4)),
+            _ => panic!("expected the grid frame"),
+        }
+    }
+
+    #[test]
+    fn grid_row_and_align_self_signals_update_the_selection() {
+        use crate::model::svelte_ast::Align;
+        let mut root = new_frame(1, 0.0, 0.0, 300.0, 200.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.style.display = Display::Grid;
+            e.style.grid_rows = Some(2);
+            e.children = vec![new_rect(2, 0.0, 0.0, 40.0, 30.0, 0x0D99FF)];
+        }
+        let state = EditorState::with_seed(Some(root), Some(1));
+        assert_eq!(state.sel_grid_rows.get_untracked(), 2.0);
+        state.sel_grid_rows.set(4.0);
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 1).expect("frame") {
+            SvelteNode::Element(e) => assert_eq!(e.style.grid_rows, Some(4)),
+            _ => panic!("expected the grid frame"),
+        }
+        state.sel_grid_rows.set(0.0);
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 1).expect("frame") {
+            SvelteNode::Element(e) => assert_eq!(e.style.grid_rows, None),
+            _ => panic!("expected the grid frame"),
+        }
+
+        state.selected_layer.set(Some(2));
+        assert_eq!(state.sel_align_self.get_untracked(), "auto");
+        state.sel_align_self.set("end".into());
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 2).expect("child") {
+            SvelteNode::Element(e) => assert_eq!(e.style.align_self, Some(Align::End)),
+            _ => panic!("expected the child"),
+        }
+        state.sel_align_self.set("auto".into());
+        match tree_ops::find(&state.root.get_untracked().expect("root"), 2).expect("child") {
+            SvelteNode::Element(e) => assert_eq!(e.style.align_self, None),
+            _ => panic!("expected the child"),
+        }
+    }
+
+    #[test]
+    fn aligning_a_marquee_selection_uses_its_bounding_box() {
+        let mut root = new_frame(1, 0.0, 0.0, 400.0, 300.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.style.display = Display::None;
+            e.children = vec![
+                new_rect(2, 10.0, 20.0, 50.0, 40.0, 0x0D99FF),
+                new_rect(3, 100.0, 80.0, 30.0, 20.0, 0x42BE65),
+            ];
+        }
+        let state = EditorState::with_seed(Some(root), Some(2));
+        state.selected_layers.set(vec![2, 3]);
+
+        state.align_selection("left");
+        state.align_selection("top");
+
+        let root = state.root.get_untracked().expect("root");
+        for id in [2, 3] {
+            match tree_ops::find(&root, id).expect("layer") {
+                SvelteNode::Element(e) => {
+                    assert_eq!(e.style.left, Some(10.0), "layer {id} left");
+                    assert_eq!(e.style.top, Some(20.0), "layer {id} top");
+                }
+                _ => panic!("expected an element"),
+            }
+        }
     }
 }

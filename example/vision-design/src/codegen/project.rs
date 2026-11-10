@@ -560,7 +560,7 @@ mod tests {
             "the instance renders as a tag:\n{app}"
         );
         assert!(
-            app.contains("title=\"Usunąć plik?\""),
+            app.contains("title=\"Delete file?\""),
             "text override becomes an attribute:\n{app}"
         );
         assert!(
@@ -568,13 +568,13 @@ mod tests {
             "color override becomes an attribute:\n{app}"
         );
         assert!(
-            !app.contains("Okno dialogowe"),
+            !app.contains("Dialog Window"),
             "master defaults live in the component file, not in App:\n{app}"
         );
 
         let overlay = find(&files, "components/Overlay.svelte");
         assert!(
-            overlay.contains("let { title = \"Okno dialogowe\""),
+            overlay.contains("let { title = \"Dialog Window\""),
             "props are declared with $props() (Svelte 5):\n{overlay}"
         );
         assert!(
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn master_names_are_sanitized_and_unique() {
-        assert_eq!(sanitize_name("Okno dialogowe!", '-'), "Okno-dialogowe");
+        assert_eq!(sanitize_name("Dialog Window!", '-'), "Dialog-Window");
         assert_eq!(sanitize_name("2Panel", '_'), "C2Panel");
         assert_eq!(sanitize_name("  ---  ", '-'), "Component");
 

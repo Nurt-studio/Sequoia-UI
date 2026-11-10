@@ -275,8 +275,31 @@ pub(crate) fn render_style(class: &str, s: &Style, parent: ParentBox) -> String 
             if let Some(n) = s.grid_cols {
                 rules.push(format!("grid-template-columns: repeat({n}, 1fr)"));
             }
-            if s.gap > 0.0 {
+            if let Some(n) = s.grid_rows {
+                rules.push(format!("grid-template-rows: repeat({n}, 1fr)"));
+            }
+            let row_gap = if s.row_gap > 0.0 { s.row_gap } else { s.gap };
+            if (row_gap - s.gap).abs() > 0.001 {
+                rules.push(format!("gap: {row_gap}px {}px", s.gap));
+            } else if s.gap > 0.0 {
                 rules.push(format!("gap: {}px", s.gap));
+            }
+            if s.align_items != Align::Start {
+                rules.push(format!(
+                    "align-items: {}",
+                    match s.align_items {
+                        Align::Center => "center",
+                        Align::End => "flex-end",
+                        Align::Stretch => "stretch",
+                        _ => "flex-start",
+                    }
+                ));
+            }
+            if s.justify_content != Align::Start {
+                rules.push(format!(
+                    "justify-content: {}",
+                    s.justify_content.css_content()
+                ));
             }
         }
         Display::None => {}
@@ -309,6 +332,8 @@ pub(crate) fn render_style(class: &str, s: &Style, parent: ParentBox) -> String 
     }
     if cross_fill {
         rules.push("align-self: stretch".into());
+    } else if let Some(a) = s.align_self {
+        rules.push(format!("align-self: {}", a.css_items()));
     }
     match s.width {
         Dimension::Fixed(v) => rules.push(format!("width: {}px", v)),
@@ -332,8 +357,19 @@ pub(crate) fn render_style(class: &str, s: &Style, parent: ParentBox) -> String 
         ));
     }
 
-    if let Some(f) = s.fill {
+    if let Some(g) = &s.gradient {
+        rules.push(format!("background: {}", g.css()));
+    } else if let Some(f) = s.fill {
         rules.push(format!("background: {}", fmt_color(f)));
+    }
+    if !s.effects.is_empty() {
+        let css = shadows_css(&s.effects);
+        if !css.is_empty() {
+            rules.push(format!("box-shadow: {css}"));
+        }
+    }
+    if s.blur > 0.0 {
+        rules.push(format!("filter: blur({}px)", s.blur));
     }
     if let (Some(sc), w) = (s.stroke, s.stroke_width) {
         if w > 0.0 {
@@ -723,6 +759,38 @@ mod tests {
     }
 
     #[test]
+    fn fills_effects_and_blur_reach_the_css() {
+        use crate::model::svelte_ast::*;
+
+        let mut card = new_rect(2, 0.0, 0.0, 120.0, 80.0, 0x0D99FF);
+        if let SvelteNode::Element(e) = &mut card {
+            e.name = "Card".into();
+            e.style.gradient = Some(GradientDef::new(GradientKind::Linear, 45.0));
+            e.style.effects = vec![ShadowEffect::new()];
+            e.style.blur = 2.5;
+        }
+        let mut root = new_frame(1, 0.0, 0.0, 300.0, 200.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.children = vec![card];
+        }
+        let root = Some(root);
+        let code = to_svelte(&root);
+        for needle in [
+            "linear-gradient(45deg, #0D99FF 0%, #6E56CF 100%)",
+            "box-shadow: 0px 8px 24px 0px rgba(0,0,0,0.600)",
+            "filter: blur(2.5px)",
+        ] {
+            assert!(code.contains(needle), "missing `{needle}` in:\n{code}");
+        }
+        let parsed = from_svelte(&code).expect("own output");
+        assert_eq!(
+            to_svelte(&parsed),
+            code,
+            "gradient, shadow and blur survive a round trip"
+        );
+    }
+
+    #[test]
     fn auto_layout_roundtrips() {
         use crate::model::svelte_ast::*;
         let mut inner = new_rect(2, 0.0, 0.0, 0.0, 40.0, 0x0D99FF);
@@ -768,6 +836,7 @@ mod tests {
             behavior: None,
             binding: None,
             hover: None,
+            prototype: None,
         });
         let root = Some(frame);
         let code = to_svelte(&root);
@@ -789,6 +858,60 @@ mod tests {
             code,
             "auto layout must survive a round trip"
         );
+    }
+
+    #[test]
+    fn grid_layout_roundtrips() {
+        use crate::model::svelte_ast::*;
+
+        let mut first = new_rect(2, 0.0, 0.0, 40.0, 30.0, 0x0D99FF);
+        let mut second = new_rect(3, 0.0, 0.0, 40.0, 30.0, 0x42BE65);
+        if let SvelteNode::Element(e) = &mut first {
+            e.style.position = Position::Relative;
+        }
+        if let SvelteNode::Element(e) = &mut second {
+            e.style.position = Position::Relative;
+            e.style.align_self = Some(Align::Center);
+        }
+        let mut frame = new_frame(1, 0.0, 0.0, 300.0, 200.0);
+        if let SvelteNode::Element(e) = &mut frame {
+            e.style.display = Display::Grid;
+            e.style.grid_cols = Some(3);
+            e.style.grid_rows = Some(2);
+            e.style.gap = 8.0;
+            e.style.row_gap = 16.0;
+            e.style.align_items = Align::Center;
+            e.style.justify_content = Align::End;
+            e.children = vec![first, second];
+        }
+        let root = Some(frame);
+        let code = to_svelte(&root);
+        for needle in [
+            "display: grid",
+            "grid-template-columns: repeat(3, 1fr)",
+            "grid-template-rows: repeat(2, 1fr)",
+            "gap: 16px 8px",
+            "align-items: center",
+            "align-self: center",
+            "justify-content: flex-end",
+        ] {
+            assert!(code.contains(needle), "missing `{needle}` in:\n{code}");
+        }
+
+        let parsed = from_svelte(&code).expect("parser accepts its own output");
+        let Some(SvelteNode::Element(e)) = parsed.as_ref() else {
+            panic!("expected the frame");
+        };
+        assert_eq!(e.style.grid_cols, Some(3));
+        assert_eq!(e.style.grid_rows, Some(2));
+        let Some(SvelteNode::Element(second)) = e.children.get(1) else {
+            panic!("expected the second child");
+        };
+        assert_eq!(second.style.align_self, Some(Align::Center));
+        assert_eq!((e.style.gap, e.style.row_gap), (8.0, 16.0));
+        assert_eq!(e.style.align_items, Align::Center);
+        assert_eq!(e.style.justify_content, Align::End);
+        assert_eq!(to_svelte(&parsed), code, "grid must survive a round trip");
     }
 
     #[test]

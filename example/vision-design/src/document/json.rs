@@ -229,6 +229,12 @@ fn write_node(node: &SvelteNode, pad: usize, out: &mut String) {
                     write_hover(h, out);
                 }
             }
+            if let Some(p) = &e.prototype {
+                out.push_str(",\n");
+                indent(pad + 1, out);
+                out.push_str("\"prototype\": ");
+                write_prototype(p, out);
+            }
             // style
             out.push_str(",\n");
             indent(pad + 1, out);
@@ -264,6 +270,14 @@ fn write_node(node: &SvelteNode, pad: usize, out: &mut String) {
                     out.push_str("\"grid_cols\": null");
                 }
             }
+            match s.grid_rows {
+                Some(n) => write_kv_num("grid_rows", n as f32, false, pad + 2, out),
+                None => {
+                    out.push_str(",\n");
+                    indent(pad + 2, out);
+                    out.push_str("\"grid_rows\": null");
+                }
+            }
             write_kv_num("gap", s.gap, false, pad + 2, out);
             write_kv_num("row_gap", s.row_gap, false, pad + 2, out);
             write_kv_str(
@@ -291,6 +305,14 @@ fn write_node(node: &SvelteNode, pad: usize, out: &mut String) {
                 pad + 2,
                 out,
             );
+            match s.align_self {
+                Some(a) => write_kv_str("align_self", align_name(a), false, pad + 2, out),
+                None => {
+                    out.push_str(",\n");
+                    indent(pad + 2, out);
+                    out.push_str("\"align_self\": null");
+                }
+            }
             write_kv_str(
                 "justify_content",
                 align_name(s.justify_content),
@@ -320,6 +342,27 @@ fn write_node(node: &SvelteNode, pad: usize, out: &mut String) {
             write_kv_num("stroke_width", s.stroke_width, false, pad + 2, out);
             write_kv_num("radius", s.radius, false, pad + 2, out);
             write_kv_num("opacity", s.opacity, false, pad + 2, out);
+            if let Some(g) = &s.gradient {
+                out.push_str(",\n");
+                indent(pad + 2, out);
+                out.push_str("\"gradient\": ");
+                write_gradient(g, out);
+            }
+            if !s.effects.is_empty() {
+                out.push_str(",\n");
+                indent(pad + 2, out);
+                out.push_str("\"effects\": [");
+                for (i, e) in s.effects.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_shadow(e, out);
+                }
+                out.push(']');
+            }
+            if s.blur > 0.0 {
+                write_kv_num("blur", s.blur, false, pad + 2, out);
+            }
             out.push_str("\n");
             indent(pad + 1, out);
             out.push('}');
@@ -386,6 +429,50 @@ fn write_node(node: &SvelteNode, pad: usize, out: &mut String) {
             out.push('}');
         }
     }
+}
+
+fn write_gradient(g: &GradientDef, out: &mut String) {
+    out.push_str(&format!(
+        "{{\"kind\":{},\"angle\":{},\"stops\":[",
+        json_str(g.kind.as_str()),
+        fmt_num(g.angle)
+    ));
+    for (i, s) in g.stops.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"color\":{},\"at\":{}}}",
+            json_str(&s.hex),
+            fmt_num(s.at)
+        ));
+    }
+    out.push_str("]}");
+}
+
+fn write_shadow(e: &ShadowEffect, out: &mut String) {
+    out.push_str(&format!(
+        "{{\"color\":{},\"x\":{},\"y\":{},\"blur\":{},\"spread\":{},\"enabled\":{}}}",
+        json_str(&e.hex),
+        fmt_num(e.x),
+        fmt_num(e.y),
+        fmt_num(e.blur),
+        fmt_num(e.spread),
+        e.enabled
+    ));
+}
+
+fn write_prototype(p: &PrototypeLink, out: &mut String) {
+    out.push_str(&format!(
+        "{{\"on\":{},\"action\":{},\"target\":{},\"transition\":{},\"ms\":{}}}",
+        json_str(p.trigger.as_str()),
+        json_str(p.action.as_str()),
+        p.target
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "null".into()),
+        json_str(p.transition.as_str()),
+        p.duration_ms
+    ));
 }
 
 fn align_name(a: Align) -> &'static str {
@@ -679,6 +766,11 @@ pub fn vd_payload(e: &Element) -> Option<String> {
             write_hover(h, &mut s);
             parts.push(format!("\"hover\":{}", s));
         }
+    }
+    if let Some(p) = &e.prototype {
+        let mut s = String::new();
+        write_prototype(p, &mut s);
+        parts.push(format!("\"prototype\":{}", s));
     }
     if parts.is_empty() {
         return None;
@@ -1098,6 +1190,7 @@ fn parse_node(v: &Json) -> Result<SvelteNode, String> {
                 behavior: v.get("behavior").and_then(parse_behavior),
                 binding: v.get("binding").and_then(parse_binding),
                 hover: v.get("hover").and_then(parse_hover),
+                prototype: v.get("prototype").and_then(parse_prototype),
             }))
         }
         Some(other) => Err(format!("Unknown node type: '{other}'")),
@@ -1176,11 +1269,15 @@ pub struct VdPayload {
     pub behavior: Option<Behavior>,
     pub binding: Option<Binding>,
     pub hover: Option<HoverStyle>,
+    pub prototype: Option<PrototypeLink>,
 }
 
 impl VdPayload {
     pub fn is_empty(&self) -> bool {
-        self.behavior.is_none() && self.binding.is_none() && self.hover.is_none()
+        self.behavior.is_none()
+            && self.binding.is_none()
+            && self.hover.is_none()
+            && self.prototype.is_none()
     }
 }
 
@@ -1191,6 +1288,7 @@ pub fn vd_payload_from_json(v: &Json) -> VdPayload {
         behavior: v.get("behavior").and_then(parse_behavior),
         binding: v.get("binding").and_then(parse_binding),
         hover: v.get("hover").and_then(parse_hover),
+        prototype: v.get("prototype").and_then(parse_prototype),
     }
 }
 
@@ -1398,6 +1496,10 @@ fn parse_style(v: &Json) -> Result<Style, String> {
             .get("grid_cols")
             .and_then(|x| x.as_num())
             .map(|n| n as u16),
+        grid_rows: v
+            .get("grid_rows")
+            .and_then(|x| x.as_num())
+            .map(|n| n as u16),
         gap: v.get("gap").and_then(|x| x.as_num()).unwrap_or(0.0),
         row_gap: v.get("row_gap").and_then(|x| x.as_num()).unwrap_or(0.0),
         flex_wrap: if v.get("flex_wrap").and_then(|x| x.as_str()) == Some("wrap") {
@@ -1416,6 +1518,10 @@ fn parse_style(v: &Json) -> Result<Style, String> {
             .and_then(|x| x.as_str())
             .map(align_from_name)
             .unwrap_or(Align::Start),
+        align_self: v
+            .get("align_self")
+            .and_then(|x| x.as_str())
+            .and_then(Align::from_self),
         justify_content: v
             .get("justify_content")
             .and_then(|x| x.as_str())
@@ -1442,6 +1548,58 @@ fn parse_style(v: &Json) -> Result<Style, String> {
             .unwrap_or(0.0),
         radius: v.get("radius").and_then(|x| x.as_num()).unwrap_or(0.0),
         opacity: v.get("opacity").and_then(|x| x.as_num()).unwrap_or(100.0),
+        gradient: v.get("gradient").and_then(parse_gradient),
+        effects: v
+            .get("effects")
+            .and_then(|x| x.as_arr())
+            .map(|arr| arr.iter().filter_map(parse_shadow).collect())
+            .unwrap_or_default(),
+        blur: v.get("blur").and_then(|x| x.as_num()).unwrap_or(0.0),
+    })
+}
+
+fn parse_gradient(v: &Json) -> Option<GradientDef> {
+    let kind = GradientKind::from_str(v.get("kind")?.as_str()?)?;
+    let angle = v.get("angle").and_then(|x| x.as_num()).unwrap_or(90.0);
+    let stops: Vec<GradientStopDef> = v
+        .get("stops")?
+        .as_arr()?
+        .iter()
+        .filter_map(|s| {
+            let hex = s.get("color")?.as_str()?.to_string();
+            Some(GradientStopDef {
+                color: Color::parse_hex(&hex)?,
+                hex,
+                at: s.get("at")?.as_num()?,
+            })
+        })
+        .collect();
+    if stops.len() < 2 {
+        return None;
+    }
+    Some(GradientDef { kind, angle, stops })
+}
+
+fn parse_shadow(v: &Json) -> Option<ShadowEffect> {
+    let hex = v.get("color")?.as_str()?.to_string();
+    Some(ShadowEffect {
+        color: Color::parse_hex(&hex)?,
+        hex,
+        x: v.get("x").and_then(|x| x.as_num()).unwrap_or(0.0),
+        y: v.get("y").and_then(|x| x.as_num()).unwrap_or(0.0),
+        blur: v.get("blur").and_then(|x| x.as_num()).unwrap_or(0.0),
+        spread: v.get("spread").and_then(|x| x.as_num()).unwrap_or(0.0),
+        enabled: v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(true),
+    })
+}
+
+fn parse_prototype(v: &Json) -> Option<PrototypeLink> {
+    Some(PrototypeLink {
+        trigger: ProtoTrigger::from_str(v.get("on")?.as_str()?)?,
+        action: ProtoAction::from_str(v.get("action")?.as_str()?)?,
+        target: v.get("target").and_then(|x| x.as_num()).map(|n| n as u64),
+        transition: ProtoTransition::from_str(v.get("transition")?.as_str()?)?,
+        duration_ms: v.get("ms").and_then(|x| x.as_num()).unwrap_or(240.0) as u32,
     })
 }
 
@@ -1456,6 +1614,42 @@ mod tests {
         let json = to_json(&root);
         let back = from_json(&json).expect("JSON parsing");
         assert_eq!(root, back, "AST must be identical after a JSON round trip");
+    }
+
+    #[test]
+    fn gradient_effects_and_prototype_roundtrip() {
+        use crate::model::svelte_ast::*;
+
+        let mut root = new_frame(1, 0.0, 0.0, 400.0, 300.0);
+        if let SvelteNode::Element(e) = &mut root {
+            e.style.gradient = Some(GradientDef {
+                kind: GradientKind::Linear,
+                angle: 135.0,
+                stops: vec![
+                    GradientStopDef::new(Color::hex(0x0D99FF), "#0D99FF", 0.0),
+                    GradientStopDef::new(Color::hexa(0x6E56CF80), "#6E56CF80", 1.0),
+                ],
+            });
+            e.style.effects = vec![ShadowEffect::new()];
+            e.style.blur = 3.0;
+            e.style.grid_cols = Some(3);
+            e.style.grid_rows = Some(4);
+            e.style.align_self = Some(Align::End);
+            e.prototype = Some(PrototypeLink {
+                trigger: ProtoTrigger::Hover,
+                action: ProtoAction::OpenOverlay,
+                target: Some(2),
+                transition: ProtoTransition::SlideUp,
+                duration_ms: 180,
+            });
+        }
+        let root = Some(root);
+        let json = to_json(&root);
+        assert!(json.contains("\"gradient\""), "gradient written");
+        assert!(json.contains("\"effects\""), "effects written");
+        assert!(json.contains("\"prototype\""), "prototype written");
+        let back = from_json(&json).expect("parse");
+        assert_eq!(root, back, "fills, effects and links survive JSON");
     }
 
     #[test]
@@ -1506,7 +1700,7 @@ mod tests {
             e.name = "Card".into();
             e.overrides = vec![Ov {
                 prop: "title".into(),
-                value: "Usunąć plik?".into(),
+                value: "Delete file?".into(),
             }];
         }
         // master + instance as siblings under a plain root

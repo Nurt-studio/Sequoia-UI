@@ -46,6 +46,7 @@ pub fn from_svelte(src: &str) -> Result<Option<SvelteNode>, String> {
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     })))
 }
 
@@ -187,7 +188,8 @@ fn style_from_css(rule: Option<&CssRule>, fill: &mut FillFlags) -> Style {
                 }
             }
             "align-self" => {
-                if v.trim() == "stretch" {
+                s.align_self = Align::from_self(v);
+                if s.align_self == Some(Align::Stretch) {
                     fill.cross = true;
                 }
             }
@@ -210,6 +212,8 @@ fn style_from_css(rule: Option<&CssRule>, fill: &mut FillFlags) -> Style {
             }
             "align-items" => s.align_items = Align::from_items(v),
             "justify-content" => s.justify_content = Align::from_content(v),
+            "grid-template-columns" => s.grid_cols = parse_grid_tracks(v),
+            "grid-template-rows" => s.grid_rows = parse_grid_tracks(v),
             "position" if v == "absolute" => s.position = Position::Absolute,
             "top" => s.top = parse_px(v),
             "right" => s.right = parse_px(v),
@@ -234,9 +238,17 @@ fn style_from_css(rule: Option<&CssRule>, fill: &mut FillFlags) -> Style {
                 }
             }
             "background" | "background-color" => {
-                if let Some(c) = parse_color(v) {
+                if let Some(g) = parse_gradient_css(v) {
+                    s.gradient = Some(g);
+                } else if let Some(c) = parse_color(v) {
                     s.fill = Some(c);
                     s.fill_hex = format!("#{:06X}", c.hex_rgb());
+                }
+            }
+            "box-shadow" => s.effects = parse_shadow_css(v),
+            "filter" => {
+                if let Some(px) = parse_blur_css(v) {
+                    s.blur = px;
                 }
             }
             "border-radius" => {
@@ -261,8 +273,34 @@ fn style_from_css(rule: Option<&CssRule>, fill: &mut FillFlags) -> Style {
             s.gap = row;
             s.row_gap = col;
         }
+    } else if s.display == Display::Grid {
+        let (row, col) = gap_pair
+            .or(gap_single.map(|g| (g, g)))
+            .unwrap_or((s.gap, s.row_gap));
+        s.gap = col;
+        s.row_gap = row;
     }
     s
+}
+
+/// `repeat(3, 1fr)` or a track list (`1fr 1fr`) → explicit track count.
+fn parse_grid_tracks(v: &str) -> Option<u16> {
+    let v = v.trim();
+    if v.is_empty() || v == "none" {
+        return None;
+    }
+    if let Some(inner) = v.strip_prefix("repeat(").and_then(|s| s.strip_suffix(')')) {
+        return inner
+            .split(',')
+            .next()
+            .and_then(|n| n.trim().parse::<u16>().ok())
+            .map(|n| n.max(1));
+    }
+    let n = v
+        .split_whitespace()
+        .filter(|t| *t != "none" && *t != "auto")
+        .count();
+    (n > 0).then_some(n as u16)
 }
 
 #[derive(Default, Clone, Copy)]
@@ -366,6 +404,113 @@ fn parse_opacity(v: &str) -> f32 {
     }
 }
 
+/// Splits a CSS value on top-level commas (gradient stops, shadow lists).
+fn split_top_level(src: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in src.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        if c == sep && depth == 0 {
+            out.push(cur.trim().to_string());
+            cur.clear();
+        } else {
+            cur.push(c);
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+fn parse_gradient_css(v: &str) -> Option<GradientDef> {
+    let v = v.trim();
+    let (kind, body) = if let Some(b) = v.strip_prefix("linear-gradient(") {
+        (GradientKind::Linear, b.strip_suffix(')')?)
+    } else if let Some(b) = v.strip_prefix("radial-gradient(") {
+        (GradientKind::Radial, b.strip_suffix(')')?)
+    } else {
+        return None;
+    };
+    let parts = split_top_level(body, ',');
+    let mut angle = 90.0;
+    let mut start = 0;
+    if kind == GradientKind::Linear
+        && let Some(deg) = parts
+            .first()
+            .and_then(|p| p.trim().strip_suffix("deg"))
+            .and_then(|n| n.trim().parse::<f32>().ok())
+    {
+        angle = deg;
+        start = 1;
+    }
+    let mut stops = Vec::new();
+    for part in &parts[start..] {
+        let p = part.trim();
+        if p.is_empty() || p.starts_with("circle") || p.starts_with("ellipse") {
+            continue;
+        }
+        let tokens: Vec<&str> = p.split_whitespace().collect();
+        let Some(color) = tokens.first().and_then(|t| parse_color(t)) else {
+            continue;
+        };
+        let at = tokens
+            .iter()
+            .skip(1)
+            .find_map(|t| t.strip_suffix('%'))
+            .and_then(|n| n.trim().parse::<f32>().ok())
+            .map(|p| (p / 100.0).clamp(0.0, 1.0))
+            .unwrap_or(if stops.is_empty() { 0.0 } else { 1.0 });
+        stops.push(GradientStopDef {
+            color,
+            hex: format!("#{:06X}", color.hex_rgb()),
+            at,
+        });
+    }
+    if stops.len() < 2 {
+        return None;
+    }
+    Some(GradientDef { kind, angle, stops })
+}
+
+fn parse_shadow_css(v: &str) -> Vec<ShadowEffect> {
+    split_top_level(v, ',')
+        .iter()
+        .filter_map(|part| {
+            let tokens: Vec<&str> = part.split_whitespace().collect();
+            let color = tokens.iter().rev().find_map(|t| parse_color(t))?;
+            let nums: Vec<f32> = tokens.iter().filter_map(|t| parse_px(t)).collect();
+            if nums.is_empty() {
+                return None;
+            }
+            Some(ShadowEffect {
+                color,
+                hex: format!("#{:06X}", color.hex_rgb()),
+                x: nums.first().copied().unwrap_or(0.0),
+                y: nums.get(1).copied().unwrap_or(0.0),
+                blur: nums.get(2).copied().unwrap_or(0.0),
+                spread: nums.get(3).copied().unwrap_or(0.0),
+                enabled: true,
+            })
+        })
+        .collect()
+}
+
+fn parse_blur_css(v: &str) -> Option<f32> {
+    v.trim()
+        .strip_prefix("blur(")?
+        .strip_suffix(')')?
+        .trim()
+        .trim_end_matches("px")
+        .parse::<f32>()
+        .ok()
+}
+
 fn parse_color(v: &str) -> Option<Color> {
     let v = v.trim();
     if let Some(h) = v.strip_prefix('#') {
@@ -383,7 +528,12 @@ fn parse_color(v: &str) -> Option<Color> {
             let r = parts[0].parse::<u8>().unwrap_or(0) as u32;
             let g = parts[1].parse::<u8>().unwrap_or(0) as u32;
             let b = parts[2].parse::<u8>().unwrap_or(0) as u32;
-            return Some(Color::hex((r << 16) | (g << 8) | b));
+            let a = parts
+                .get(3)
+                .and_then(|p| p.parse::<f32>().ok())
+                .map(|a| (a.clamp(0.0, 1.0) * 255.0).round() as u32)
+                .unwrap_or(255);
+            return Some(Color::hexa((r << 24) | (g << 16) | (b << 8) | a));
         }
     }
     None
@@ -507,7 +657,7 @@ impl<'a> BodyParser<'a> {
                 if fill.main || fill.cross {
                     self.pending_fill.insert(id, fill);
                 }
-                let (vb, vbd, vh) = split_vd(my_vd);
+                let (vb, vbd, vh, vp) = split_vd(my_vd);
                 return Ok(Some(SvelteNode::Element(Element {
                     id,
                     name: tag_str.clone(),
@@ -524,6 +674,7 @@ impl<'a> BodyParser<'a> {
                     behavior: vb,
                     binding: vbd,
                     hover: vh,
+                    prototype: vp,
                 })));
             }
             if self.consume(">") {
@@ -665,7 +816,7 @@ impl<'a> BodyParser<'a> {
             self.pending_fill.insert(id, fill);
         }
         resolve_child_fills(&style, &mut children, &mut self.pending_fill);
-        let (vb, vbd, vh) = split_vd(my_vd);
+        let (vb, vbd, vh, vp) = split_vd(my_vd);
         Ok(Some(SvelteNode::Element(Element {
             id,
             name: class.unwrap_or_else(|| format!("{}-{}", tag_str, id)),
@@ -682,6 +833,7 @@ impl<'a> BodyParser<'a> {
             behavior: vb,
             binding: vbd,
             hover: vh,
+            prototype: vp,
         })))
     }
 
@@ -753,9 +905,10 @@ fn split_vd(
     Option<crate::model::behavior::Behavior>,
     Option<crate::model::behavior::Binding>,
     Option<crate::model::behavior::HoverStyle>,
+    Option<PrototypeLink>,
 ) {
     let Some(p) = payload else {
-        return (None, None, None);
+        return (None, None, None, None);
     };
-    (p.behavior, p.binding, p.hover)
+    (p.behavior, p.binding, p.hover, p.prototype)
 }

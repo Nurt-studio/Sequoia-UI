@@ -157,7 +157,7 @@
             "props": [
               {
                 "name": "title",
-                "default": "Okno dialogowe",
+                "default": "Dialog Window",
                 "kind": "text",
                 "target": 6
               },
@@ -169,7 +169,7 @@
               },
               {
                 "name": "cancelTxt",
-                "default": "Anuluj",
+                "default": "Cancel",
                 "kind": "text",
                 "target": 11
               },
@@ -217,7 +217,7 @@
               "type": "text",
               "id": 6,
               "name": "Dialog title",
-              "content": "Okno dialogowe",
+              "content": "Dialog Window",
               "width": null,
               "height": null,
               "x": 500,
@@ -321,7 +321,7 @@
                       "type": "text",
                       "id": 11,
                       "name": "Cancel label",
-                      "content": "Anuluj",
+                      "content": "Cancel",
                       "width": null,
                       "height": null,
                       "x": 0,
@@ -421,11 +421,11 @@
           "overrides": [
             {
               "prop": "title",
-              "value": "Usunąć plik?"
+              "value": "Delete file?"
             },
             {
               "prop": "confirmTxt",
-              "value": "Usuń"
+              "value": "Delete"
             },
             {
               "prop": "accent",
@@ -467,7 +467,7 @@
               "type": "text",
               "id": 13,
               "name": "Dialog title",
-              "content": "Usunąć plik?",
+              "content": "Delete file?",
               "width": null,
               "height": null,
               "x": 0,
@@ -571,7 +571,7 @@
                       "type": "text",
                       "id": 16,
                       "name": "Cancel label",
-                      "content": "Anuluj",
+                      "content": "Cancel",
                       "width": null,
                       "height": null,
                       "x": 0,
@@ -638,7 +638,7 @@
                       "type": "text",
                       "id": 18,
                       "name": "Confirm label",
-                      "content": "Usuń",
+                      "content": "Delete",
                       "width": null,
                       "height": null,
                       "x": 0,

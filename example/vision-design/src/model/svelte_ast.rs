@@ -109,9 +109,19 @@ impl Align {
     pub fn from_items(s: &str) -> Self {
         match s {
             "center" => Align::Center,
-            "flex-end" | "end" => Align::End,
+            "flex-end" | "end" | "self-end" => Align::End,
             "stretch" => Align::Stretch,
             _ => Align::Start,
+        }
+    }
+    pub fn from_self(s: &str) -> Option<Self> {
+        match s {
+            "auto" | "" => None,
+            "center" => Some(Align::Center),
+            "flex-end" | "end" | "self-end" => Some(Align::End),
+            "stretch" => Some(Align::Stretch),
+            "flex-start" | "start" | "self-start" => Some(Align::Start),
+            _ => None,
         }
     }
     pub fn from_content(s: &str) -> Self {
@@ -151,11 +161,314 @@ impl Dimension {
     }
 }
 
+// ── paints & effects ───────────────────────────────────────────
+
+/// Gradient fill of an element (`background: linear-gradient(…)`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GradientKind {
+    Linear,
+    Radial,
+}
+
+impl GradientKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GradientKind::Linear => "linear",
+            GradientKind::Radial => "radial",
+        }
+    }
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "linear" => GradientKind::Linear,
+            "radial" => GradientKind::Radial,
+            _ => return None,
+        })
+    }
+}
+
+/// One color stop of a gradient. `at` is 0..1.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradientStopDef {
+    pub color: Color,
+    pub hex: String,
+    pub at: f32,
+}
+
+impl GradientStopDef {
+    pub fn new(color: Color, hex: impl Into<String>, at: f32) -> Self {
+        Self {
+            color,
+            hex: hex.into(),
+            at: at.clamp(0.0, 1.0),
+        }
+    }
+}
+
+/// A two-to-four stop gradient. The GPU path supports four stops; the
+/// editor caps the list so the canvas, code and export never disagree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradientDef {
+    pub kind: GradientKind,
+    /// Direction of a linear gradient in degrees (0 = left→right).
+    pub angle: f32,
+    pub stops: Vec<GradientStopDef>,
+}
+
+pub const MAX_GRADIENT_STOPS: usize = 4;
+
+impl GradientDef {
+    pub fn new(kind: GradientKind, angle: f32) -> Self {
+        Self {
+            kind,
+            angle,
+            stops: vec![
+                GradientStopDef::new(Color::hex(0x0D99FF), "#0D99FF", 0.0),
+                GradientStopDef::new(Color::hex(0x6E56CF), "#6E56CF", 1.0),
+            ],
+        }
+    }
+
+    /// Converts a solid fill into a gradient without changing its color.
+    pub fn from_solid(color: Color, hex: &str) -> Self {
+        Self {
+            kind: GradientKind::Linear,
+            angle: 90.0,
+            stops: vec![
+                GradientStopDef::new(color, hex, 0.0),
+                GradientStopDef::new(Color::hex(0x6E56CF), "#6E56CF", 1.0),
+            ],
+        }
+    }
+
+    pub fn sorted_stops(&self) -> Vec<GradientStopDef> {
+        let mut stops = self.stops.clone();
+        stops.sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+        stops
+    }
+
+    /// CSS `linear-gradient(...)` / `radial-gradient(...)` value.
+    pub fn css(&self) -> String {
+        let stops: Vec<String> = self
+            .sorted_stops()
+            .iter()
+            .map(|s| format!("{} {:.0}%", css_color(s.color), s.at * 100.0))
+            .collect();
+        match self.kind {
+            GradientKind::Linear => {
+                format!(
+                    "linear-gradient({:.0}deg, {})",
+                    self.angle,
+                    stops.join(", ")
+                )
+            }
+            GradientKind::Radial => format!("radial-gradient(circle, {})", stops.join(", ")),
+        }
+    }
+}
+
+/// A drop-shadow effect (`box-shadow: x y blur spread color`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShadowEffect {
+    pub color: Color,
+    pub hex: String,
+    pub x: f32,
+    pub y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub enabled: bool,
+}
+
+impl ShadowEffect {
+    pub fn new() -> Self {
+        Self {
+            color: Color::hexa(0x00000099),
+            hex: "#00000099".into(),
+            x: 0.0,
+            y: 8.0,
+            blur: 24.0,
+            spread: 0.0,
+            enabled: true,
+        }
+    }
+}
+
+impl Default for ShadowEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// CSS color literal that keeps alpha (`#RRGGBB` when opaque, otherwise
+/// `rgba()`), so generated code and the importer agree on translucency.
+pub fn css_color(c: Color) -> String {
+    let (r, g, b, a) = c.to_rgba8();
+    if a == 255 {
+        format!("#{r:02X}{g:02X}{b:02X}")
+    } else {
+        format!("rgba({r},{g},{b},{:.3})", a as f32 / 255.0)
+    }
+}
+
+/// CSS `box-shadow` value, or an empty string when no effect is enabled.
+pub fn shadows_css(effects: &[ShadowEffect]) -> String {
+    effects
+        .iter()
+        .filter(|s| s.enabled)
+        .map(|s| {
+            format!(
+                "{}px {}px {}px {}px {}",
+                s.x,
+                s.y,
+                s.blur,
+                s.spread,
+                css_color(s.color)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// ── prototyping ───────────────────────────────────────────────
+
+/// What starts a prototype connection while presenting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtoTrigger {
+    Click,
+    Hover,
+}
+
+impl ProtoTrigger {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProtoTrigger::Click => "click",
+            ProtoTrigger::Hover => "hover",
+        }
+    }
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "click" => ProtoTrigger::Click,
+            "hover" => ProtoTrigger::Hover,
+            _ => return None,
+        })
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            ProtoTrigger::Click => "On Click",
+            ProtoTrigger::Hover => "On Hover",
+        }
+    }
+}
+
+/// What a prototype connection does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtoAction {
+    /// Focus the target frame (a screen-to-screen navigation).
+    Navigate,
+    /// Return to the previously focused frame.
+    Back,
+    /// Show the target frame above the current screen.
+    OpenOverlay,
+}
+
+impl ProtoAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProtoAction::Navigate => "navigate",
+            ProtoAction::Back => "back",
+            ProtoAction::OpenOverlay => "overlay",
+        }
+    }
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "navigate" => ProtoAction::Navigate,
+            "back" => ProtoAction::Back,
+            "overlay" => ProtoAction::OpenOverlay,
+            _ => return None,
+        })
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            ProtoAction::Navigate => "Navigate to",
+            ProtoAction::Back => "Back",
+            ProtoAction::OpenOverlay => "Open overlay",
+        }
+    }
+}
+
+/// Screen-transition animation used by the Present runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtoTransition {
+    Instant,
+    Dissolve,
+    SlideLeft,
+    SlideRight,
+    SlideUp,
+    SlideDown,
+}
+
+impl ProtoTransition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProtoTransition::Instant => "instant",
+            ProtoTransition::Dissolve => "dissolve",
+            ProtoTransition::SlideLeft => "slide-left",
+            ProtoTransition::SlideRight => "slide-right",
+            ProtoTransition::SlideUp => "slide-up",
+            ProtoTransition::SlideDown => "slide-down",
+        }
+    }
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "instant" => ProtoTransition::Instant,
+            "dissolve" => ProtoTransition::Dissolve,
+            "slide-left" => ProtoTransition::SlideLeft,
+            "slide-right" => ProtoTransition::SlideRight,
+            "slide-up" => ProtoTransition::SlideUp,
+            "slide-down" => ProtoTransition::SlideDown,
+            _ => return None,
+        })
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            ProtoTransition::Instant => "Instant",
+            ProtoTransition::Dissolve => "Dissolve",
+            ProtoTransition::SlideLeft => "Slide left",
+            ProtoTransition::SlideRight => "Slide right",
+            ProtoTransition::SlideUp => "Slide up",
+            ProtoTransition::SlideDown => "Slide down",
+        }
+    }
+}
+
+/// One prototype connection stored on the element that is clicked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrototypeLink {
+    pub trigger: ProtoTrigger,
+    pub action: ProtoAction,
+    /// Frame the link points at (ignored by `Back`).
+    pub target: Option<u64>,
+    pub transition: ProtoTransition,
+    pub duration_ms: u32,
+}
+
+impl PrototypeLink {
+    pub fn new(target: Option<u64>) -> Self {
+        Self {
+            trigger: ProtoTrigger::Click,
+            action: ProtoAction::Navigate,
+            target,
+            transition: ProtoTransition::Dissolve,
+            duration_ms: 240,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Style {
     pub display: Display,
     pub flex_dir: FlexDir,
     pub grid_cols: Option<u16>,
+    pub grid_rows: Option<u16>,
     /// Spacing between items along the main axis (`gap` / item spacing).
     pub gap: f32,
     /// Spacing between wrapped lines (`gap` / row gap, cross axis).
@@ -164,6 +477,7 @@ pub struct Style {
     pub align_content: Align,
     pub padding: Edges,
     pub align_items: Align,
+    pub align_self: Option<Align>,
     pub justify_content: Align,
 
     pub position: Position,
@@ -182,6 +496,12 @@ pub struct Style {
     pub stroke_width: f32,
     pub radius: f32,
     pub opacity: f32,
+    /// Gradient painted instead of `fill` when set.
+    pub gradient: Option<GradientDef>,
+    /// Drop shadows, painted under the shape.
+    pub effects: Vec<ShadowEffect>,
+    /// Layer blur radius in px (`filter: blur(…)`).
+    pub blur: f32,
 }
 
 impl Default for Style {
@@ -190,12 +510,14 @@ impl Default for Style {
             display: Display::None,
             flex_dir: FlexDir::Row,
             grid_cols: None,
+            grid_rows: None,
             gap: 0.0,
             row_gap: 0.0,
             flex_wrap: Wrap::NoWrap,
             align_content: Align::Start,
             padding: Edges::all(0.0),
             align_items: Align::Start,
+            align_self: None,
             justify_content: Align::Start,
             position: Position::Relative,
             top: None,
@@ -211,6 +533,9 @@ impl Default for Style {
             stroke_width: 0.0,
             radius: 0.0,
             opacity: 100.0,
+            gradient: None,
+            effects: Vec::new(),
+            blur: 0.0,
         }
     }
 }
@@ -352,6 +677,8 @@ pub struct Element {
     pub binding: Option<crate::model::behavior::Binding>,
     /// Pure-CSS hover state (Phase 2, design doc §6.1).
     pub hover: Option<crate::model::behavior::HoverStyle>,
+    /// Prototype connection fired while presenting.
+    pub prototype: Option<PrototypeLink>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -482,6 +809,7 @@ pub fn new_frame(id: u64, x: f32, y: f32, w: f32, h: f32) -> SvelteNode {
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     })
 }
 
@@ -513,6 +841,7 @@ pub fn new_rect(id: u64, x: f32, y: f32, w: f32, h: f32, hex: u32) -> SvelteNode
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     })
 }
 
@@ -581,5 +910,6 @@ pub fn new_button(id: u64, x: f32, y: f32) -> SvelteNode {
         behavior: None,
         binding: None,
         hover: None,
+        prototype: None,
     })
 }
