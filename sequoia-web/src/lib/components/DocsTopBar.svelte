@@ -18,7 +18,7 @@
 			}}>Sequoia<span class="logo-ui">UI</span></a
 		>
 		<div class="top-bar-divider"></div>
-		<span class="top-bar-version">v0.1.4</span>
+		<span class="top-bar-version">v0.1.5</span>
 	</div>
 	<div class="top-bar-nav">
 		<a

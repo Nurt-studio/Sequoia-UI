@@ -1,6 +1,8 @@
 <script>
 	import DocsTopBar from '../components/DocsTopBar.svelte';
 	import DocsFooter from '../components/DocsFooter.svelte';
+	import { nav } from '../navigation.svelte.js';
+	import benchmarkSummary from '../../assets/benchmark-summary.png';
 
 	const BOOK = 'https://nurt-studio.github.io/Sequoia-UI/';
 
@@ -80,19 +82,45 @@
 		<div class="blog-featured-content">
 			<div class="meta">
 				<span class="blog-tag">Release</span>
-				<span class="blog-date">November 4, 2026</span>
+				<span class="blog-date">November 11, 2026</span>
 			</div>
-			<h2>SequoiaUI 0.1.4</h2>
+			<h2>SequoiaUI 0.1.5</h2>
 			<p>
-				Rendering, GPU-memory and text-input release: custom shaders with hot reload, production
-				text editing with IME, GPU memory budgets, and new form, todo, tabs and seq_hello examples.
-				Requires Rust 1.88 or newer.
+				Layout and performance release: cached layout, faster flex distribution, view culling,
+				stabilized text intrinsic sizing and frame hooks. Requires Rust 1.88 or newer.
 			</p>
 			<a
-				href="https://github.com/Nurt-studio/Sequoia-UI/releases/tag/0.1.4"
+				href="https://github.com/Nurt-studio/Sequoia-UI/releases/tag/0.1.5"
 				class="blog-read-more"
 				target="_blank"
 				rel="noreferrer">Read the release notes →</a
+			>
+		</div>
+	</div>
+	<div class="blog-featured-card">
+		<div class="blog-featured-img has-image">
+			<img
+				src={benchmarkSummary}
+				alt="Cross-framework benchmark: sequoia-ui holds 60 fps in both 3,000-node scenes"
+			/>
+		</div>
+		<div class="blog-featured-content">
+			<div class="meta">
+				<span class="blog-tag">Benchmark</span>
+				<span class="blog-date">November 11, 2026</span>
+			</div>
+			<h2>sequoia-ui vs gpui, gpui-fast and BUI</h2>
+			<p>
+				One machine, one session, identical scenes. sequoia-ui holds 60 fps in both 3,000-node
+				scenes at 2.26 ms of CPU per frame — 6.1× gpui-fast and 7.7× gpui on the row scene.
+			</p>
+			<a
+				href="/"
+				class="blog-read-more"
+				onclick={(e) => {
+					e.preventDefault();
+					nav.page = 'benchmarks';
+				}}>See the full benchmark →</a
 			>
 		</div>
 	</div>
@@ -167,6 +195,9 @@
 		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
 		transform: translateY(-2px);
 	}
+	.blog-featured-card + .blog-featured-card {
+		margin-top: var(--space-5);
+	}
 	.blog-featured-img {
 		background: linear-gradient(135deg, #e6391e 0%, #ff6b4a 50%, #ff9a76 100%);
 		min-height: 280px;
@@ -192,6 +223,17 @@
 		backdrop-filter: blur(8px);
 		padding: var(--space-2) var(--space-3);
 		border-radius: 20px;
+	}
+	.blog-featured-img.has-image {
+		padding: 0;
+		background: #fff;
+	}
+	.blog-featured-img.has-image img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: left center;
 	}
 	.blog-featured-content {
 		padding: var(--space-7);

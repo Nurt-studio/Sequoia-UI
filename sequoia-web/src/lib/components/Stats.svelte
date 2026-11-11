@@ -1,10 +1,32 @@
 <script>
-	const stats = [
-		{ number: '0.1.4', accent: '', label: 'Current crates.io release' },
+	let downloads = $state(/** @type {number | null} */ (null));
+
+	$effect(() => {
+		let cancelled = false;
+		fetch('https://crates.io/api/v1/crates/sequoia-ui')
+			.then((res) => (res.ok ? res.json() : null))
+			.then((data) => {
+				if (!cancelled && typeof data?.crate?.downloads === 'number') {
+					downloads = data.crate.downloads;
+				}
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	const stats = $derived([
+		{ number: '0.1.5', accent: '', label: 'Current crates.io release' },
 		{ number: '25', accent: '', label: 'Framework crates' },
-		{ number: '1', accent: '', label: 'Crate you add to Cargo.toml' },
+		{
+			number: downloads == null ? '—' : downloads.toLocaleString('en-US'),
+			accent: '',
+			label: 'Downloads on crates.io',
+			href: 'https://crates.io/crates/sequoia-ui'
+		},
 		{ number: 'MIT', accent: '', label: 'License' }
-	];
+	]);
 </script>
 
 <section class="section">
@@ -15,12 +37,21 @@
 	</div>
 	<div class="stats-grid">
 		{#each stats as stat}
-			<div class="stat-item">
-				<div class="stat-number">
-					{stat.number}<span class="accent">{stat.accent}</span>
+			{#if stat.href}
+				<a class="stat-item" href={stat.href} target="_blank" rel="noreferrer">
+					<div class="stat-number">
+						{stat.number}<span class="accent">{stat.accent}</span>
+					</div>
+					<div class="stat-label">{stat.label}</div>
+				</a>
+			{:else}
+				<div class="stat-item">
+					<div class="stat-number">
+						{stat.number}<span class="accent">{stat.accent}</span>
+					</div>
+					<div class="stat-label">{stat.label}</div>
 				</div>
-				<div class="stat-label">{stat.label}</div>
-			</div>
+			{/if}
 		{/each}
 	</div>
 	<p class="stats-note">
@@ -47,6 +78,16 @@
 
 	.stat-item {
 		text-align: left;
+	}
+
+	a.stat-item {
+		display: block;
+		color: inherit;
+		text-decoration: none;
+	}
+
+	a.stat-item:hover .stat-number {
+		color: var(--accent);
 	}
 
 	.stat-number {

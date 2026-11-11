@@ -60,7 +60,7 @@
 
 	const installHtml = `<span class="cm"># Cargo.toml</span>
 [dependencies]
-sequoia-ui = <span class="str">"0.1.4"</span>`;
+sequoia-ui = <span class="str">"0.1.5"</span>`;
 
 	const cargoHtml = `cargo new my-app
 <span class="kw">cd</span> my-app
