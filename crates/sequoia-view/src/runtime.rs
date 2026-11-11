@@ -3,6 +3,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::rc::{Rc, Weak};
+use std::time::Instant;
 
 use crate::dnd::{
     ActiveDrag, DragEnd, DragId, DragOptions, DragPayload, DragSession, DropPosition, PendingDrag,
@@ -173,6 +174,11 @@ impl Arena {
     }
 }
 
+/// Constraint variants kept per element. Layout probes children with both a
+/// bounded and an unbounded max size; a single entry would be overwritten by
+/// the second probe and force a full re-measure on every frame.
+const MAX_MEASURE_VARIANTS: usize = 4;
+
 #[derive(Clone)]
 struct MeasureEntry {
     constraints: Constraints,
@@ -215,7 +221,7 @@ struct Inner {
     queue: RefCell<Vec<ElementId>>,
     root: Cell<Option<ElementId>>,
     stats: Cell<Stats>,
-    measures: RefCell<HashMap<ElementId, MeasureEntry>>,
+    measures: RefCell<HashMap<ElementId, Vec<MeasureEntry>>>,
     interact: Cell<InteractState>,
     environment: RefCell<Environment>,
 
@@ -273,6 +279,11 @@ struct Inner {
 
     layout_dirty: Cell<bool>,
 
+    measure_calls: Cell<u64>,
+    measure_hits: Cell<u64>,
+    measure_ns: Cell<u64>,
+    arrange_ns: Cell<u64>,
+
     scoped_cancels: RefCell<HashMap<ElementId, Vec<Box<dyn FnOnce()>>>>,
 
     shader_ids: RefCell<HashMap<String, ShaderId>>,
@@ -283,7 +294,13 @@ struct Inner {
 impl Inner {
     fn schedule(&self, id: ElementId) {
         let view = self.arena.borrow().get(id).and_then(|e| e.view.clone());
+        if let Some(v) = &view {
+            // A tracked signal changed, so anything the view cached while
+            // building is stale. The rebuild below refills it.
+            v.invalidate_cache_erased();
+        }
         let dirty = view
+            .as_ref()
             .map(|v| v.signal_dirty_erased())
             .unwrap_or(Dirty::LAYOUT | Dirty::CHILDREN);
         self.mark(id, dirty);
@@ -395,6 +412,10 @@ impl Runtime {
                 states: RefCell::new(HashMap::new()),
                 layout_epoch: Cell::new(0),
                 layout_dirty: Cell::new(true),
+                measure_calls: Cell::new(0),
+                measure_hits: Cell::new(0),
+                measure_ns: Cell::new(0),
+                arrange_ns: Cell::new(0),
                 scoped_cancels: RefCell::new(HashMap::new()),
                 shader_ids: RefCell::new(HashMap::new()),
                 next_shader_id: Cell::new(0),
@@ -1145,6 +1166,30 @@ impl Runtime {
         self.inner.stats.get()
     }
 
+    /// Returns `(measure calls, cache hits)` since the last reset.
+    ///
+    /// A healthy incremental layout keeps calls close to hits: a cache miss
+    /// means the element was measured (and text shaped) again.
+    pub fn measure_cache_stats(&self) -> (u64, u64) {
+        (
+            self.inner.measure_calls.get(),
+            self.inner.measure_hits.get(),
+        )
+    }
+
+    /// Clears the [`Runtime::measure_cache_stats`] counters.
+    pub fn reset_measure_cache_stats(&self) {
+        self.inner.measure_calls.set(0);
+        self.inner.measure_hits.set(0);
+        self.inner.measure_ns.set(0);
+        self.inner.arrange_ns.set(0);
+    }
+
+    /// Returns `(measure, arrange)` duration in nanoseconds for the last layout.
+    pub fn layout_breakdown(&self) -> (u64, u64) {
+        (self.inner.measure_ns.get(), self.inner.arrange_ns.get())
+    }
+
     pub fn errors(&self) -> Vec<RuntimeError> {
         self.inner.errors.borrow().clone()
     }
@@ -1293,6 +1338,11 @@ impl Runtime {
         {
             return;
         }
+        // Apply reactive and structural updates before measuring. Otherwise
+        // the queue is still full when the first pass ends, `has_pending_layout`
+        // forces another pass, and the whole tree is laid out again after the
+        // rebuild. Settling first gives one rebuild plus one layout pass.
+        self.settle();
         for pass in 0..MAX_SETTLE_PASSES {
             self.inner.layout_dirty.set(false);
             self.layout_once(bounds, text);
@@ -1346,7 +1396,11 @@ impl Runtime {
             .font_size;
         let mut ctx = LayoutCtx::new(text, default_font_size);
         let c = Constraints::loose(Size::new(bounds.size.width, bounds.size.height));
+        let measure_start = Instant::now();
         let measured = self.measure(root, c, &mut ctx);
+        self.inner
+            .measure_ns
+            .set(measure_start.elapsed().as_nanos() as u64);
         let root_size = if self.inner.root_fill.get() {
             filled_root_size(self.child_layout_style(root), bounds.size, measured)
         } else {
@@ -1354,7 +1408,11 @@ impl Runtime {
         };
         self.warn_if_root_not_fill(root, bounds, root_size);
         let root_rect = Rect::new(bounds.origin, root_size);
+        let arrange_start = Instant::now();
         self.arrange(root, root_rect, &mut ctx);
+        self.inner
+            .arrange_ns
+            .set(arrange_start.elapsed().as_nanos() as u64);
 
         self.layout_overlays(bounds, &mut ctx);
     }
@@ -3037,14 +3095,20 @@ impl Runtime {
     }
 
     fn measure_inner(&self, el: ElementId, constraints: Constraints, ctx: &mut LayoutCtx) -> Size {
+        self.inner
+            .measure_calls
+            .set(self.inner.measure_calls.get().wrapping_add(1));
         {
             let arena = self.inner.arena.borrow();
             if arena.get(el).map(|e| e.dirty.is_empty()).unwrap_or(false) {
                 drop(arena);
                 let measures = self.inner.measures.borrow();
-                if let Some(e) = measures.get(&el)
-                    && e.constraints == constraints
+                if let Some(entries) = measures.get(&el)
+                    && let Some(e) = entries.iter().find(|e| e.constraints == constraints)
                 {
+                    self.inner
+                        .measure_hits
+                        .set(self.inner.measure_hits.get().wrapping_add(1));
                     return e.size;
                 }
             }
@@ -3077,17 +3141,22 @@ impl Runtime {
 
         {
             let measures = self.inner.measures.borrow();
-            if let Some(e) = measures.get(&el)
-                && e.constraints == constraints
-                && e.style == style
-                && e.container == container
-                && e.grid == grid
-                && e.placements == pre_placements
-                && e.dock == dock
-                && e.wrap == wrap
-                && e.masonry == masonry
-                && e.children_len == children_len
+            if let Some(entries) = measures.get(&el)
+                && let Some(e) = entries.iter().find(|e| {
+                    e.constraints == constraints
+                        && e.style == style
+                        && e.container == container
+                        && e.grid == grid
+                        && e.placements == pre_placements
+                        && e.dock == dock
+                        && e.wrap == wrap
+                        && e.masonry == masonry
+                        && e.children_len == children_len
+                })
             {
+                self.inner
+                    .measure_hits
+                    .set(self.inner.measure_hits.get().wrapping_add(1));
                 return e.size;
             }
         }
@@ -3315,9 +3384,8 @@ impl Runtime {
                 );
             }
         }
-        self.inner.measures.borrow_mut().insert(
-            el,
-            MeasureEntry {
+        {
+            let entry = MeasureEntry {
                 constraints,
                 style,
                 container,
@@ -3328,8 +3396,18 @@ impl Runtime {
                 masonry,
                 children_len: children.len(),
                 size,
-            },
-        );
+            };
+            let mut measures = self.inner.measures.borrow_mut();
+            let entries = measures.entry(el).or_default();
+            if let Some(slot) = entries.iter_mut().find(|e| e.constraints == constraints) {
+                *slot = entry;
+            } else {
+                if entries.len() >= MAX_MEASURE_VARIANTS {
+                    entries.remove(0);
+                }
+                entries.push(entry);
+            }
+        }
         size
     }
 

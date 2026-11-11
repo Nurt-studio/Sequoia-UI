@@ -60,6 +60,14 @@ pub trait View {
         Dirty::LAYOUT | Dirty::CHILDREN
     }
 
+    /// Drops any cached render output.
+    ///
+    /// The runtime calls this when a signal read while building the view
+    /// changes, so the next build re-evaluates the source closure. Views that
+    /// cache content between frames override this to clear that cache.
+    #[doc(hidden)]
+    fn invalidate_cache(&self) {}
+
     #[doc(hidden)]
     fn has_visual_state(&self) -> bool {
         false

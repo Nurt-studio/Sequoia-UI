@@ -24,6 +24,7 @@ pub(crate) trait ErasedView: 'static {
     fn layout_style_erased(&self) -> LayoutStyle;
     fn layout_style_ctx_erased(&self, rt: &Runtime, el: ElementId) -> LayoutStyle;
     fn signal_dirty_erased(&self) -> Dirty;
+    fn invalidate_cache_erased(&self);
     fn container(&self) -> Option<ContainerStyle>;
     fn grid(&self) -> Option<GridStyle>;
     fn dock(&self) -> Option<DockStyle>;
@@ -112,6 +113,9 @@ impl<V: View + 'static> ErasedView for V {
     }
     fn signal_dirty_erased(&self) -> Dirty {
         View::signal_dirty(self)
+    }
+    fn invalidate_cache_erased(&self) {
+        View::invalidate_cache(self)
     }
     fn container(&self) -> Option<ContainerStyle> {
         View::container(self)

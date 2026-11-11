@@ -857,7 +857,6 @@ fn gui_run_draws_batches_consecutive_atlas_images() {
 fn a_large_scene_loses_nothing() {
     use sequoia_core::Quad;
     use sequoia_core::{GlyphQuad, TextDraw};
-    let start = std::time::Instant::now();
     let mut items = Vec::new();
 
     for i in 0..100_000u32 {

@@ -102,6 +102,7 @@ pub fn distribute_flex(items: &[FlexItem], sizes: &mut [f32], gaps: f32, avail_m
             }
         } else {
             let mut deficit = -free;
+            let mut changed = false;
             for pass in [true, false] {
                 if deficit <= EPS {
                     break;
@@ -133,7 +134,9 @@ pub fn distribute_flex(items: &[FlexItem], sizes: &mut [f32], gaps: f32, avail_m
                     if is_flex == pass && *size > item.min + EPS {
                         let w = item.shrink * *size;
                         let cut = take * w / pool;
+                        let before = *size;
                         *size = item.clamp(*size - cut);
+                        changed |= (*size - before).abs() > f32::EPSILON;
                     }
                 }
                 let used2: f32 = sizes.iter().sum::<f32>() + gaps;
@@ -141,6 +144,13 @@ pub fn distribute_flex(items: &[FlexItem], sizes: &mut [f32], gaps: f32, avail_m
             }
             // A clamped item changed the pool, so the next outer pass can still
             // absorb a remaining deficit on siblings that are above their min.
+            // Without this break, a container whose children are already at
+            // their minimum (for example 3000 fixed text rows that do not fit)
+            // keeps re-scanning every child until `items.len() + 1` passes,
+            // which turns one layout pass into O(n^2).
+            if !changed {
+                break;
+            }
         }
     }
 }

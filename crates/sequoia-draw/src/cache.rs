@@ -179,7 +179,7 @@ pub const DEFAULT_CAPACITY: usize = 256;
 /// Upper bound for the default cache. A scene whose *live* working set is
 /// bigger than [`DEFAULT_CAPACITY`] grows up to this size instead of
 /// re-tessellating the same outlines every frame (see [`ShapeCache::growing`]).
-pub const MAX_CAPACITY: usize = 2048;
+pub(crate) const MAX_CAPACITY: usize = 2048;
 
 #[derive(Debug)]
 pub struct ShapeCache {

@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn window_edges_are_resizable() {
-        let mut env = Environment::new();
+        let env = Environment::new();
         env.provide(Windows::new());
         let h = Harness::new(root(EditorState::demo()));
         h.set_environment(env);
@@ -235,5 +235,29 @@ mod tests {
             (right_after - (right_before - 40.0)).abs() < 0.5,
             "right panel grows leftwards: {right_before} -> {right_after}"
         );
+    }
+
+    #[test]
+    fn debug_settings_buttons() {
+        let state = EditorState::demo();
+        state.settings_open.set(true);
+        let h = Harness::new(root(state.clone()));
+        h.layout(1000.0, 700.0);
+        let list = h.paint();
+        let active = colors::active().sel;
+        let inactive = colors::active().bg_lighter;
+        for q in list.quads() {
+            if q.color == active || q.color == inactive {
+                println!(
+                    "color={:?} l={:.1} t={:.1} w={:.1} h={:.1} r={:.1}",
+                    q.color,
+                    q.rect.left(),
+                    q.rect.top(),
+                    q.rect.size.width,
+                    q.rect.size.height,
+                    q.radius
+                );
+            }
+        }
     }
 }

@@ -225,6 +225,18 @@ impl Bench {
     }
 }
 
+/// Per-frame callbacks run on the UI thread.
+///
+/// Signals are `!Send`, so state cannot be mutated from a worker thread.
+/// These hooks are the supported place to drive reactive state from the frame
+/// loop (for example to animate, poll, or benchmark updates).
+#[derive(Clone, Default)]
+struct FrameHooks {
+    start: Option<Rc<dyn Fn()>>,
+    update: Option<Rc<dyn Fn()>>,
+    end: Option<Rc<dyn Fn()>>,
+}
+
 pub struct App {
     windows: Vec<WindowSpec>,
     theme: Theme,
@@ -237,6 +249,7 @@ pub struct App {
     shaders: Vec<(String, String)>,
     shader_watch: Option<std::path::PathBuf>,
     bench_frames: Option<u32>,
+    hooks: FrameHooks,
 }
 
 impl Default for App {
@@ -256,6 +269,7 @@ impl Default for App {
                 .collect(),
             shader_watch: None,
             bench_frames: None,
+            hooks: FrameHooks::default(),
         }
     }
 }
@@ -641,6 +655,35 @@ impl App {
         self
     }
 
+    /// Runs `f` on the UI thread at the start of every frame, before
+    /// [`App::on_update`] and before pending reactive updates are applied.
+    pub fn on_frame_start(mut self, f: impl Fn() + 'static) -> Self {
+        self.hooks.start = Some(Rc::new(f));
+        self
+    }
+
+    /// Runs `f` on the UI thread at the start of every frame.
+    ///
+    /// Mutate [`Signal`](sequoia_reactive::Signal)s here. Signals are `!Send`,
+    /// so a worker thread cannot write them; this hook runs before the frame's
+    /// `tick` and layout, so the change is rendered in the same frame.
+    pub fn on_update(mut self, f: impl Fn() + 'static) -> Self {
+        self.hooks.update = Some(Rc::new(f));
+        self
+    }
+
+    /// Alias for [`App::on_update`].
+    pub fn on_frame(self, f: impl Fn() + 'static) -> Self {
+        self.on_update(f)
+    }
+
+    /// Runs `f` on the UI thread after the frame has been ticked, laid out,
+    /// painted and submitted to the GPU.
+    pub fn on_frame_end(mut self, f: impl Fn() + 'static) -> Self {
+        self.hooks.end = Some(Rc::new(f));
+        self
+    }
+
     pub fn scale_factor(mut self, scale: f64) -> Self {
         self.primary_mut().settings.scale_override = Some(scale);
         self
@@ -711,6 +754,7 @@ impl App {
             theme: self.theme,
             backend: self.backend,
             bench: bench.clone(),
+            hooks: self.hooks,
             redraw_mode: self.redraw_mode,
             assets: self.assets,
             accelerators: self.accelerators,
@@ -952,6 +996,8 @@ struct WindowState {
     list: RenderList,
 
     bench: Option<Rc<RefCell<Bench>>>,
+
+    hooks: FrameHooks,
 }
 
 impl WindowState {
@@ -974,6 +1020,12 @@ impl WindowState {
     }
 
     fn draw_frame(&mut self, wid: WinitWindowId) {
+        if let Some(f) = &self.hooks.start {
+            f();
+        }
+        if let Some(f) = &self.hooks.update {
+            f();
+        }
         let superseded = self.gate.borrow_mut().begin_paint();
         let gap_ms = frame_gap_ms(wid);
         if self.bench.is_some() {
@@ -1063,6 +1115,10 @@ impl WindowState {
         sync_cursor(&self.window, &mut self.last_cursor, &self.rt);
         sync_ime_allowed(&self.window, &mut self.ime_allowed, &self.rt);
         sync_ime_cursor(&self.window, self.scale, &self.rt);
+
+        if let Some(f) = &self.hooks.end {
+            f();
+        }
 
         if self.gate.borrow_mut().end_paint(superseded) {
             self.window.request_redraw();
@@ -1329,6 +1385,7 @@ struct PlatformApp {
     shaders: Vec<(String, String)>,
     shader_watch: Option<ShaderWatch>,
     bench: Option<Rc<RefCell<Bench>>>,
+    hooks: FrameHooks,
 }
 
 impl PlatformApp {
@@ -1613,6 +1670,7 @@ impl PlatformApp {
             gate,
             list: RenderList::new(),
             bench: self.bench.clone(),
+            hooks: self.hooks.clone(),
         };
 
         state.draw_frame(wid);

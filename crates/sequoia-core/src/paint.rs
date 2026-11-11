@@ -3477,7 +3477,7 @@ mod tests {
         assert!(!suffix.has_shaders());
 
         let mark = list.mark();
-        list.begin_target(Size::new(8.0, 8.0), BlendMode::Normal);
+        let _ = list.begin_target(Size::new(8.0, 8.0), BlendMode::Normal);
         let suffix = list.suffix(mark).expect("suffix");
         assert!(suffix.has_targets());
         let mut replay = RenderList::new();

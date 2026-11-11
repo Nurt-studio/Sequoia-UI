@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use sequoia_core::{Color, Constraints, Edges, Length, Rect, Size};
 use sequoia_layout::{
     Align, Axis, ContainerStyle, GridFlow, GridPlacement, GridStyle, Indents, Inset, Justify,
@@ -261,6 +263,9 @@ impl View for Unit {
 
 pub struct Text {
     content: Box<dyn Fn() -> String>,
+    /// Content produced by the last build. `None` means the next layout or
+    /// paint pass must call `content` again.
+    cached: RefCell<Option<String>>,
     font_size: Option<f32>,
     color: Option<Color>,
     weight: Option<FontWeight>,
@@ -288,6 +293,7 @@ impl Text {
         let s = content.into();
         Self {
             content: Box::new(move || s.clone()),
+            cached: RefCell::new(None),
             font_size: None,
             color: None,
             weight: None,
@@ -317,6 +323,7 @@ impl Text {
     pub fn with(content: impl Fn() -> String + 'static) -> Self {
         Self {
             content: Box::new(content),
+            cached: RefCell::new(None),
             font_size: None,
             color: None,
             weight: None,
@@ -759,6 +766,26 @@ impl Text {
         (self.content)()
     }
 
+    /// Returns the content for measure and paint, evaluating the closure only
+    /// when the cache is cold.
+    ///
+    /// The runtime clears the cache when a tracked signal read while building
+    /// this view changes, so a frame that leaves the view untouched reuses the
+    /// string instead of running the closure again.
+    fn cached_content(&self) -> String {
+        if let Some(text) = self.cached.borrow().as_ref() {
+            return text.clone();
+        }
+        self.refresh_content()
+    }
+
+    /// Re-evaluates the content closure and stores the result.
+    fn refresh_content(&self) -> String {
+        let text = (self.content)();
+        *self.cached.borrow_mut() = Some(text.clone());
+        text
+    }
+
     fn paint_decoration(
         &self,
         ctx: &mut PaintCtx,
@@ -797,17 +824,23 @@ impl Text {
 
 impl View for Text {
     fn body(&self) -> impl View + 'static {
-        let _ = (self.content)();
+        // Build is the one place that must run the closure: it refreshes the
+        // cache and records the signal reads that keep this view subscribed.
+        let _ = self.refresh_content();
         Unit
     }
     fn is_leaf(&self) -> bool {
         true
     }
 
+    fn invalidate_cache(&self) {
+        *self.cached.borrow_mut() = None;
+    }
+
     fn accessibility(&self) -> Option<crate::a11y::Accessible> {
         Some(crate::a11y::Accessible::new(
             crate::a11y::AccessibleRole::Text,
-            (self.content)(),
+            self.cached_content(),
         ))
     }
 
@@ -822,7 +855,7 @@ impl View for Text {
         let weight = self.weight.unwrap_or_default();
         let family = self.family.as_deref();
         let fstyle = self.font_style;
-        let content = (self.content)();
+        let content = self.cached_content();
         let pad = self.style.padding;
         let auto_wrap = if self.auto_wrap {
             text_wrap_limit(self.style, ctx.available_width())
@@ -926,7 +959,7 @@ impl View for Text {
         let size = self.font_size.unwrap_or_else(|| ctx.default_font_size()) * self.font_scale;
         let weight = self.weight.unwrap_or_default();
         let family = self.family.as_deref();
-        let content = (self.content)();
+        let content = self.cached_content();
         let pad = self.style.padding;
         let width = (width - pad.horizontal_sum()).max(0.0);
         let baseline = ctx.text_first_baseline_styled_spaced_lh(
@@ -948,7 +981,7 @@ impl View for Text {
         let size = self.font_size.unwrap_or(theme.font_size) * self.font_scale;
         let weight = self.weight.unwrap_or_default();
         let color = self.color.unwrap_or(theme.text);
-        let content = (self.content)();
+        let content = self.cached_content();
         let pad = self.style.padding;
 
         let content_rect = Rect::from_xywh(
@@ -971,7 +1004,7 @@ impl View for Text {
         } else {
             None
         };
-        let (shown, wrap_at, shaped) = if let Some(w) = truncate_width {
+        let (shown, _wrap_at, shaped) = if let Some(w) = truncate_width {
             if let Some(max_lines) = self.max_lines {
                 let shown = ctx.elide_lines_styled_spaced(
                     &content,
@@ -1101,7 +1134,7 @@ impl View for Text {
 
         #[cfg(debug_assertions)]
         {
-            if wrap_at.is_none()
+            if _wrap_at.is_none()
                 && !content.is_empty()
                 && shaped.width() > content_rect.size.width + 1.0
                 && content_rect.size.width > 0.0
