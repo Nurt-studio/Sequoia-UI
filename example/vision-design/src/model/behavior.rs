@@ -19,7 +19,7 @@ pub enum Value {
 }
 
 impl Value {
-    /// Human-readable form used in rule rows (`false`, `3`, `"Okno"`).
+    /// Human-readable form used in rule rows (`false`, `3`, `"Dialog"`).
     pub fn label(&self) -> String {
         match self {
             Value::Bool(b) => b.to_string(),

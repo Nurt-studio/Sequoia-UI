@@ -65,7 +65,7 @@ impl View for PickerOverlay {
         if rows.is_empty() {
             rows.push(AnyView::new(
                 Container::new().fill_width().padding_xy(8.0, 4.0).child(
-                    Text::new("(brak opcji)")
+                    Text::new("(no options)")
                         .size(11.0)
                         .color(colors::active().icon_inactive),
                 ),

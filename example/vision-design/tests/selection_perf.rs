@@ -305,26 +305,26 @@ fn report(n: usize, s: &SceneStats) -> String {
     let quads = grouped(s.quads as f64);
 
     format!(
-        "[vision-design] N={n:<4} | zaznaczono={selected:<4} | selekcja={selection_ms:7.2}ms | \
-         klatka avg={avg_ms:7.3}ms p95={p95_ms:7.3}ms (layout {layout_ms:6.3} + paint {paint_ms:6.3}) | \
-         ~{fps} FPS | CPU {one_core_pct:5.1}% rdzenia @60FPS ({machine_pct:4.2}% maszyny {cpus:.0} CPU) | \
-         RAM ~{total_mb:5.2} MB (warstwy {layers_mb:5.2} MB, zaznaczenie {selection_kb:5.1} KB, render-list {render_mb:5.2} MB) | \
-         itemy={items} quady={quads}"
+        "[vision-design] N={n:<4} | selected={selected:<4} | selection={selection_ms:7.2}ms | \
+         frame avg={avg_ms:7.3}ms p95={p95_ms:7.3}ms (layout {layout_ms:6.3} + paint {paint_ms:6.3}) | \
+         ~{fps} FPS | CPU {one_core_pct:5.1}% of a core @60FPS ({machine_pct:4.2}% of {cpus:.0} cores) | \
+         RAM ~{total_mb:5.2} MB (layers {layers_mb:5.2} MB, selection {selection_kb:5.1} KB, render list {render_mb:5.2} MB) | \
+         items={items} quads={quads}"
     )
 }
 
 #[test]
 fn marquee_selection_cpu_ram_fps() {
     let header = format!(
-        "[vision-design] marquee selection benchmark: {} klatek na scenariusz, okno {}x{}",
+        "[vision-design] marquee selection benchmark: {} frames per scenario, window {}x{}",
         FRAMES, W as u32, H as u32
     );
     println!("{header}");
 
     let mut saved = String::new();
-    saved.push_str("Vision Design - benchmark zaznaczania prostokatnego (marquee)\n");
+    saved.push_str("Vision Design - marquee selection benchmark\n");
     saved.push_str(&format!(
-        "System: {} | rdzenie: {:.0} | okno: {}x{} | klatek na scenariusz: {}\n",
+        "System: {} | cores: {:.0} | window: {}x{} | frames per scenario: {}\n",
         std::env::consts::OS,
         cpus(),
         W as u32,
@@ -332,10 +332,10 @@ fn marquee_selection_cpu_ram_fps() {
         FRAMES
     ));
     saved.push_str(
-        "FPS mierzy budowe klatki (layout + paint) na CPU, bez GPU i vsync; RAM to szacunek struktur, nie RSS.\n",
+        "FPS measures CPU frame building (layout + paint), without GPU or vsync; RAM approximates the data structures, not RSS.\n",
     );
     saved.push_str(
-        "Uruchamiaj pojedynczo (cargo test ... -- --nocapture): pelny `cargo test` moze zanizyc FPS przez rownolegle testy.\n\n",
+        "Run it on its own (cargo test ... -- --nocapture): a full `cargo test` can lower FPS because the tests run in parallel.\n\n",
     );
     saved.push_str(&header);
     saved.push('\n');
@@ -364,6 +364,6 @@ fn marquee_selection_cpu_ram_fps() {
     }
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("selection_perf_report.txt");
-    std::fs::write(&path, saved).expect("zapis raportu z benchmarku");
-    println!("[vision-design] wynik zapisany: {}", path.display());
+    std::fs::write(&path, saved).expect("write the benchmark report");
+    println!("[vision-design] report written: {}", path.display());
 }

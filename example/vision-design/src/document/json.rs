@@ -1676,7 +1676,7 @@ mod tests {
                 props: vec![
                     PropDef {
                         name: "title".into(),
-                        default: "Okno".into(),
+                        default: "Dialog".into(),
                         target: 2,
                         kind: PropKind::Text,
                     },
@@ -1779,7 +1779,7 @@ mod tests {
                 Var {
                     name: "label".into(),
                     ty: VarType::String,
-                    initial: Value::Str("Okno".into()),
+                    initial: Value::Str("Dialog".into()),
                 },
             ],
             rules: vec![

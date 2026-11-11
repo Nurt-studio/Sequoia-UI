@@ -31,6 +31,9 @@ sequoia-shader = { workspace = true }
 sequoia-view = { workspace = true }
 winit = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rfd = { workspace = true, features = ["xdg-portal", "async-std"] }
+
 [dev-dependencies]
 bytemuck = { workspace = true }
 wgpu = { workspace = true }

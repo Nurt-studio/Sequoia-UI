@@ -622,7 +622,7 @@ impl ComponentInterface {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PropDef {
     pub name: String,
-    /// Default value as text ("Okno", "#FA4D56", ...).
+    /// Default value as text ("Dialog", "#FA4D56", ...).
     pub default: String,
     /// Id of the node inside the master this prop drives.
     pub target: u64,

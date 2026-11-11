@@ -624,7 +624,7 @@ impl Runtime {
     /// A frame is skipped when there is no pending animation request and the
     /// accumulated flags do not require pixels (`Dirty::needs_repaint`).
     /// Bookkeeping-only flags (`HIT_TEST`, `DATA`) are discarded by the skip.
-    /// Returns [`FrameOutcome::Skipped`] without building a render list.
+    /// Returns [`crate::FrameOutcome::Skipped`] without building a render list.
     pub fn paint_if_dirty(
         &self,
         list: &mut RenderList,

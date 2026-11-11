@@ -1,10 +1,10 @@
-Vision Design - benchmark zaznaczania prostokatnego (marquee)
-System: windows | rdzenie: 4 | okno: 1440x900 | klatek na scenariusz: 120
-FPS mierzy budowe klatki (layout + paint) na CPU, bez GPU i vsync; RAM to szacunek struktur, nie RSS.
-Uruchamiaj pojedynczo (cargo test ... -- --nocapture): pelny `cargo test` moze zanizyc FPS przez rownolegle testy.
+Vision Design - marquee selection benchmark
+System: windows | cores: 4 | window: 1440x900 | frames per scenario: 120
+FPS measures CPU frame building (layout + paint), without GPU or vsync; RAM approximates the data structures, not RSS.
+Run it on its own (cargo test ... -- --nocapture): a full `cargo test` can lower FPS because the tests run in parallel.
 
-[vision-design] marquee selection benchmark: 120 klatek na scenariusz, okno 1440x900
-[vision-design] N=10   | zaznaczono=10   | selekcja=   0.18ms | klatka avg=  0.070ms p95=  0.082ms (layout  0.001 + paint  0.069) | ~14 338 FPS | CPU   0.4% rdzenia @60FPS (0.10% maszyny 4 CPU) | RAM ~ 0.01 MB (warstwy  0.01 MB, zaznaczenie   0.1 KB, render-list  0.00 MB) | itemy=52 quady=52
-[vision-design] N=50   | zaznaczono=50   | selekcja=   0.27ms | klatka avg=  0.367ms p95=  0.388ms (layout  0.001 + paint  0.366) | ~2 724 FPS | CPU   2.2% rdzenia @60FPS (0.55% maszyny 4 CPU) | RAM ~ 0.06 MB (warstwy  0.04 MB, zaznaczenie   0.5 KB, render-list  0.02 MB) | itemy=252 quady=252
-[vision-design] N=200  | zaznaczono=200  | selekcja=   0.70ms | klatka avg=  1.736ms p95=  2.428ms (layout  0.001 + paint  1.734) | ~576 FPS | CPU  10.4% rdzenia @60FPS (2.60% maszyny 4 CPU) | RAM ~ 0.25 MB (warstwy  0.16 MB, zaznaczenie   2.0 KB, render-list  0.08 MB) | itemy=1 002 quady=1 002
-[vision-design] N=4000 | zaznaczono=4000 | selekcja=  14.03ms | klatka avg= 33.284ms p95= 69.785ms (layout  0.003 + paint 33.280) | ~30 FPS | CPU 199.7% rdzenia @60FPS (49.93% maszyny 4 CPU) | RAM ~ 4.98 MB (warstwy  3.27 MB, zaznaczenie  32.0 KB, render-list  1.68 MB) | itemy=20 002 quady=20 002
+[vision-design] marquee selection benchmark: 120 frames per scenario, window 1440x900
+[vision-design] N=10   | selected=10   | selection=   0.18ms | frame avg=  0.070ms p95=  0.082ms (layout  0.001 + paint  0.069) | ~14 338 FPS | CPU   0.4% of a core @60FPS (0.10% of 4 cores) | RAM ~ 0.01 MB (layers  0.01 MB, selection   0.1 KB, render list  0.00 MB) | items=52 quads=52
+[vision-design] N=50   | selected=50   | selection=   0.27ms | frame avg=  0.367ms p95=  0.388ms (layout  0.001 + paint  0.366) | ~2 724 FPS | CPU   2.2% of a core @60FPS (0.55% of 4 cores) | RAM ~ 0.06 MB (layers  0.04 MB, selection   0.5 KB, render list  0.02 MB) | items=252 quads=252
+[vision-design] N=200  | selected=200  | selection=   0.70ms | frame avg=  1.736ms p95=  2.428ms (layout  0.001 + paint  1.734) | ~576 FPS | CPU  10.4% of a core @60FPS (2.60% of 4 cores) | RAM ~ 0.25 MB (layers  0.16 MB, selection   2.0 KB, render list  0.08 MB) | items=1 002 quads=1 002
+[vision-design] N=4000 | selected=4000 | selection=  14.03ms | frame avg= 33.284ms p95= 69.785ms (layout  0.003 + paint 33.280) | ~30 FPS | CPU 199.7% of a core @60FPS (49.93% of 4 cores) | RAM ~ 4.98 MB (layers  3.27 MB, selection  32.0 KB, render list  1.68 MB) | items=20 002 quads=20 002

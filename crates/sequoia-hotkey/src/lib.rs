@@ -119,7 +119,8 @@ fn kick(thread_id: u32) {
 
 impl GlobalHotkeys {
     pub fn new() -> Result<Self, Error> {
-        let (fired_tx, fired_rx) = std::sync::mpsc::channel();
+        let (fired_tx, fired_rx): (Sender<HotkeyId>, Receiver<HotkeyId>) =
+            std::sync::mpsc::channel();
         #[cfg(windows)]
         {
             let (tx, rx) = std::sync::mpsc::channel::<BackendMsg>();
@@ -143,6 +144,7 @@ impl GlobalHotkeys {
         }
         #[cfg(not(windows))]
         {
+            let _ = fired_rx;
             let _ = fired_tx;
             Err(Error::Unsupported)
         }

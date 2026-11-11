@@ -3,7 +3,7 @@
 //! A target pass renders the items recorded between `TargetBegin` and
 //! `TargetEnd` into a pooled texture. The texture is then sampled by shader
 //! draws (`TexInput::Target`) and by blits, which are encoded as image
-//! instances keyed with [`crate::types::target_key`].
+//! instances keyed with `crate::types::target_key`.
 //!
 //! All passes share the renderer's instance buffers, so every target pass is
 //! submitted before the next one writes those buffers again. Without that split

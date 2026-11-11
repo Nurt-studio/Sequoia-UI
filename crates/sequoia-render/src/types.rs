@@ -92,7 +92,7 @@ pub(crate) fn target_key(target: RenderTargetId) -> u64 {
     TARGET_KEY_BIT | target.get()
 }
 
-/// Decodes a key produced by [`target_key`].
+/// Decodes a key produced by `target_key`.
 #[must_use]
 pub(crate) fn target_from_key(key: u64) -> Option<RenderTargetId> {
     (key & TARGET_KEY_BIT != 0).then(|| RenderTargetId::new(key & !TARGET_KEY_BIT))
