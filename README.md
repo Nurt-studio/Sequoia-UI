@@ -5,6 +5,7 @@ retained view tree and updates it with fine-grained signals. There is no
 Virtual DOM, no WebView, and no JavaScript runtime.
 
 **[Documentation](https://nurt-studio.github.io/Sequoia-UI/)** ·
+[Website](https://nurt-studio.github.io/Sequoia-UI/web/) ·
 [API reference](https://docs.rs/sequoia-ui) ·
 [crates.io](https://crates.io/crates/sequoia-ui)
 

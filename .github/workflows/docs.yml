@@ -1,10 +1,11 @@
-name: Docs
+name: Pages
 
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "sequoia-web/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -29,6 +30,21 @@ jobs:
           mdbook-version: "0.5.4"
       - name: Build book
         run: mdbook build docs
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sequoia-web/package-lock.json
+      - name: Build web app
+        working-directory: sequoia-web
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/web/
+        run: |
+          npm ci
+          npm run build
+      - name: Copy web app into the Pages site
+        run: cp -r sequoia-web/dist docs/book/web
       - name: Disable Jekyll
         run: touch docs/book/.nojekyll
       - name: Upload Pages artifact
