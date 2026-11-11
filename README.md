@@ -34,7 +34,7 @@ the same public API that ships in `sequoia-ui`.*
 
 ```toml
 [dependencies]
-sequoia-ui = "0.1.4"
+sequoia-ui = "0.1.5"
 ```
 
 `sequoia-ui` is the single facade crate. It re-exports the whole framework:

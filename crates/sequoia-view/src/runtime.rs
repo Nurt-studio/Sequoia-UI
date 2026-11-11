@@ -129,6 +129,8 @@ struct Element {
     dirty: Dirty,
     revision: u64,
     rect: Cell<Rect>,
+    /// False while layout culls this subtree past the visible main axis.
+    laid_out: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -1133,9 +1135,11 @@ impl Runtime {
             return false;
         };
         let rect = e.rect.get();
-        !rect.is_empty()
-            && !rect.intersects(viewport)
-            && e.view.as_ref().is_some_and(|v| v.is_leaf())
+        // Parked rows sit far off screen; other rows are off screen when their
+        // last arranged rect no longer overlaps the viewport.
+        let parked = rect.right() < viewport.left() || rect.bottom() < viewport.top();
+        let offscreen = !rect.is_empty() && !rect.intersects(viewport);
+        (parked || offscreen) && e.view.as_ref().is_some_and(|v| v.is_leaf())
     }
 
     #[must_use]
@@ -3147,9 +3151,7 @@ impl Runtime {
             .borrow()
             .get(el)
             .is_some_and(|e| e.dirty.needs_layout());
-        if pending
-            && let Some(v) = self.view_rc(el)
-        {
+        if pending && let Some(v) = self.view_rc(el) {
             self.build_with(el, v);
             if let Some(e) = self.inner.arena.borrow_mut().get_mut(el) {
                 e.dirty = Dirty::empty();
@@ -4287,6 +4289,7 @@ impl Runtime {
     fn arrange_inner(&self, el: ElementId, rect: Rect, ctx: &mut LayoutCtx) {
         if let Some(e) = self.inner.arena.borrow_mut().get_mut(el) {
             e.rect.set(rect);
+            e.laid_out.set(true);
         }
 
         if let Some(v) = self.view_rc(el)
@@ -4659,6 +4662,7 @@ impl Runtime {
         let mut infos: Vec<(ElementId, f32, f32, f32, f32, f32, f32, LayoutStyle)> =
             Vec::with_capacity(children.len().min(256));
         let mut used_outer = 0.0_f32;
+        let mut cut = None;
         for (orig, &child) in children.iter().enumerate() {
             let extra = flex.get(orig).copied().unwrap_or(0.0);
             let cs = self.child_layout_style(child);
@@ -4673,7 +4677,21 @@ impl Runtime {
             used_outer += base;
             infos.push((child, base, grow, shrink, cross, mn, mx, cs));
             if cull && used_outer > avail_main && Self::cullable_main(&cs, cstyle.axis) {
+                cut = Some(orig + 1);
                 break;
+            }
+        }
+        if let Some(cut) = cut {
+            // Skipped rows keep no geometry this pass. Park their roots outside
+            // every clip and mark them hidden so paint and hit testing do not
+            // draw stale content at an old (or origin) rect.
+            let parked = Rect::from_xywh(-1.0e6, -1.0e6, 0.0, 0.0);
+            let mut arena = self.inner.arena.borrow_mut();
+            for &child in &children[cut..] {
+                if let Some(e) = arena.get_mut(child) {
+                    e.rect.set(parked);
+                    e.laid_out.set(false);
+                }
             }
         }
         let child_styles: Vec<LayoutStyle> = infos.iter().map(|info| info.7).collect();
@@ -5596,10 +5614,18 @@ impl Runtime {
         pass: PaintPass<'_>,
     ) {
         let Some(v) = self.view_rc(id) else { return };
-        let base_rect = {
+        let (base_rect, laid_out) = {
             let arena = self.inner.arena.borrow();
-            arena.get(id).map(|e| e.rect.get()).unwrap_or(Rect::ZERO)
+            match arena.get(id) {
+                Some(e) => (e.rect.get(), e.laid_out.get()),
+                None => return,
+            }
         };
+        if !laid_out {
+            // Layout culled this subtree past the visible main-axis extent.
+            // Its descendants may still hold old rects, so stop at the root.
+            return;
+        }
 
         let own = v.paint_offset_ctx_erased(self, id);
         let acc = Vec2::new(parent_offset.x + own.x, parent_offset.y + own.y);
@@ -5951,6 +5977,7 @@ impl Runtime {
                 dirty: Dirty::empty(),
                 revision: 0,
                 rect: Cell::new(Rect::ZERO),
+                laid_out: Cell::new(true),
             });
             if let Some(p) = parent
                 && let Some(pe) = arena.get_mut(p)
