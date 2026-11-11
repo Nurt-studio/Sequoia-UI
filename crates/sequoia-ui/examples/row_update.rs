@@ -13,7 +13,7 @@ const ROWS: usize = 3_000;
 const WARMUP: usize = 10;
 const RUNS: usize = 100;
 const TOTAL_FRAMES: u32 = (WARMUP + RUNS) as u32;
-const TARGET_ROW: usize = 1_500;
+const TARGET_ROW: usize = 10;
 
 #[derive(Clone, PartialEq)]
 struct RowData {

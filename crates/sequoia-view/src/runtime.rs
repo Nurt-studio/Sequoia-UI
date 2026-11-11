@@ -3521,6 +3521,7 @@ impl Runtime {
         let mut child_styles = Vec::with_capacity(capacity);
         let mut ids = Vec::with_capacity(capacity);
         let mut used_outer = 0.0_f32;
+        let mut shrinkable = false;
 
         for (orig_i, &child) in children.iter().enumerate() {
             let cs = self.child_layout_style(child);
@@ -3530,6 +3531,8 @@ impl Runtime {
             let extra = flex.get(orig_i).copied().unwrap_or(0.0);
             let (base, grow, shrink, cross, mn, mx) =
                 self.child_layout_info_full(child, cstyle, avail_main, avail_cross, extra, ctx);
+            let fixed = Self::cullable_main(&cs, cstyle.axis, base, mn);
+            shrinkable |= !fixed;
             if !bases.is_empty() {
                 used_outer += cstyle.gap;
             }
@@ -3541,7 +3544,7 @@ impl Runtime {
             }
             items.push(FlexItem::new(base, grow, shrink, mn, mx));
             child_styles.push(cs);
-            if cull && used_outer > avail_main && Self::cullable_main(&cs, cstyle.axis) {
+            if cull && !shrinkable && used_outer > avail_main && fixed {
                 break;
             }
         }
@@ -4663,6 +4666,7 @@ impl Runtime {
             Vec::with_capacity(children.len().min(256));
         let mut used_outer = 0.0_f32;
         let mut cut = None;
+        let mut shrinkable = false;
         for (orig, &child) in children.iter().enumerate() {
             let extra = flex.get(orig).copied().unwrap_or(0.0);
             let cs = self.child_layout_style(child);
@@ -4671,12 +4675,14 @@ impl Runtime {
             }
             let (base, grow, shrink, cross, mn, mx) =
                 self.child_layout_info_full(child, cstyle, avail_main, avail_cross, extra, ctx);
+            let fixed = Self::cullable_main(&cs, cstyle.axis, base, mn);
+            shrinkable |= !fixed;
             if !infos.is_empty() {
                 used_outer += cstyle.gap;
             }
             used_outer += base;
             infos.push((child, base, grow, shrink, cross, mn, mx, cs));
-            if cull && used_outer > avail_main && Self::cullable_main(&cs, cstyle.axis) {
+            if cull && !shrinkable && used_outer > avail_main && fixed {
                 cut = Some(orig + 1);
                 break;
             }
@@ -5285,10 +5291,10 @@ impl Runtime {
         avail_main.is_finite() && avail_main >= 0.0
     }
 
-    /// Whether `cs` may be the last laid-out child before the cut: it must not
-    /// claim flexible space and must not pull later siblings back into view
-    /// with a negative margin.
-    fn cullable_main(cs: &LayoutStyle, axis: Axis) -> bool {
+    /// Whether a child may be the last laid-out item before the cut: it must
+    /// not claim flexible space, must not shrink into view below its base, and
+    /// must not pull later siblings back with a negative margin.
+    fn cullable_main(cs: &LayoutStyle, axis: Axis, base: f32, min: f32) -> bool {
         let (start, end) = match axis {
             Axis::Horizontal => (cs.margin.left, cs.margin.right),
             Axis::Vertical => (cs.margin.top, cs.margin.bottom),
@@ -5297,7 +5303,11 @@ impl Runtime {
             Axis::Horizontal => cs.width,
             Axis::Vertical => cs.height,
         };
-        start >= 0.0 && end >= 0.0 && cs.flex_weight() <= 0.0 && !auto_main.is_fill()
+        start >= 0.0
+            && end >= 0.0
+            && cs.flex_weight() <= 0.0
+            && !auto_main.is_fill()
+            && min + 0.01 >= base
     }
 
     fn extra_main(avail_main: f32, used_main: f32) -> f32 {
@@ -6688,6 +6698,40 @@ mod tests {
         let bounds = Rect::from_xywh(0.0, 0.0, 800.0, 600.0);
         rt.layout(bounds, &mut text);
         assert_eq!(rt.rect_of(rt.root().unwrap()).unwrap().size, bounds.size);
+    }
+
+    #[test]
+    fn text_without_wrap_stays_single_line_at_fractional_scale() {
+        use crate::views::Text;
+
+        let mut text = TextSystem::new();
+        if text.shape("Hg", 16.0).glyph_count() == 0 {
+            eprintln!("skip: no fonts in environment");
+            return;
+        }
+        text.set_scale_factor(1.5);
+        let content = "Dark Theme";
+
+        for i in 16..=48 {
+            let size = i as f32 * 0.5;
+            let expected = text.shape(content, size).height();
+            let rt = Runtime::new();
+            rt.mount(Text::new(content).size(size));
+            rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
+            let height = rt.rect_of(rt.root().unwrap()).unwrap().size.height;
+            assert!(
+                (height - expected).abs() < 0.01,
+                "non-wrapped text at size {size} measured {height}, expected {expected}"
+            );
+        }
+
+        let multiline = text.shape("one\ntwo", 16.0);
+        let rt = Runtime::new();
+        rt.mount(Text::new("one\ntwo").size(16.0));
+        rt.layout(Rect::from_xywh(0.0, 0.0, 400.0, 400.0), &mut text);
+        let height = rt.rect_of(rt.root().unwrap()).unwrap().size.height;
+        assert!((height - multiline.height()).abs() < 0.01);
+        assert!(height > text.shape("one", 16.0).height() * 1.5);
     }
 
     #[test]

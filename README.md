@@ -13,7 +13,9 @@ Virtual DOM, no WebView, and no JavaScript runtime.
 </p>
 
 *Vision Design is a complete design-tool example in this repository. It uses
-the same public API that ships in `sequoia-ui`.*
+the same public API that ships in `sequoia-ui`. The screenshot above is
+rendered headlessly by `cargo run -p vision-design --bin render`, so it always
+matches the code in `example/vision-design`.*
 
 ## What you get
 
@@ -29,6 +31,60 @@ the same public API that ships in `sequoia-ui`.*
   effect chains.
 - **Desktop details.** IME, accessibility metadata, hotkeys, animations, async
   work, multi-window support, and headless PNG export.
+
+## Performance
+
+A short version: in a list of **3 000 rows**, changing one row updates one row
+and costs about **0.01 ms** of reactive work. Changing every row at once still
+fits comfortably in a single 60 fps frame, on integrated graphics.
+
+The benchmark (`crates/sequoia-ui/examples/row_update.rs`) builds the list once,
+then changes row data for 110 frames. The first 10 frames are warm-up; the rest
+are reported as the median (p50), which is the typical frame, not the best one.
+
+Two terms used below:
+
+- **Rebuilt** — the row's text closure runs again to produce a new string.
+  Nothing else in the tree is touched.
+- **Coarse trigger** — a global version signal that every row reads, so changing
+  it marks the whole list dirty. It is the worst case for any reactive UI, for
+example a shared "document changed" counter.
+
+### Without a window (CPU only)
+
+| What changes each frame | Rows rebuilt | Rebuild p50 | Frame p50 | Layout: measure | Layout: arrange |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| One row (fine-grained) | 1 | 0.01 ms | 1.11 ms | 0.07 ms | 0.34 ms |
+| One row, but the whole list is marked dirty | 38 | 0.25 ms | 0.80 ms | 0.10 ms | 0.18 ms |
+| All 3 000 rows (fine-grained) | 38 | 0.66 ms | 1.27 ms | 0.11 ms | 0.19 ms |
+
+Even when the list is marked dirty as a whole, only the rows that are on screen
+are rebuilt. Text measurement is cached between frames and shows the same effect:
+changing one row keeps **149 of 153** measurements, while dirtying everything
+leaves only **38**.
+
+### With a window — Intel HD Graphics 620, wgpu/Vulkan, 800×600, vsync on
+
+| What changes each frame | Rebuild p50 | Frame p50 | Average frame |
+| --- | ---: | ---: | ---: |
+| One row (fine-grained) | 0.02 ms | 2.50 ms | 10.24 ms |
+| One row, but the whole list is marked dirty | 1.22 ms | 12.63 ms | 14.51 ms |
+| All 3 000 rows (fine-grained) | 2.04 ms | 15.61 ms | 14.01 ms |
+
+The entire list is painted with **3 render passes and 2 draw calls**, about 600
+glyphs per frame. Vsync holds the average frame time at the display refresh rate,
+so the last column means "the frame was ready and waited for the screen", not
+"the frame cost 14 ms". Add `--no-vsync` to see the raw cost.
+
+These numbers come from one modest laptop GPU, not from every machine. To
+reproduce them:
+
+```text
+cargo run --release --example row_update              # all CPU scenarios
+cargo run --release --example row_update -- gpu s1    # one row, fine-grained
+cargo run --release --example row_update -- gpu s2    # one row, whole list dirty
+cargo run --release --example row_update -- gpu s3    # all rows
+```
 
 ## Install
 

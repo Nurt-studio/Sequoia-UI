@@ -928,26 +928,17 @@ impl View for Text {
                 self.line_height,
             )
         } else {
-            let w = ctx.text_width_styled_spaced(
+            ctx.text_wrapped_size_styled_spaced_lh(
                 &content,
                 size,
                 weight,
-                self.letter_spacing,
-                family,
-                fstyle,
-            );
-            let shaped = ctx.text_wrapped_size_styled_spaced_lh(
-                &content,
-                size,
-                weight,
-                w.max(1.0),
+                0.0,
                 self.wrap_mode,
                 self.letter_spacing,
                 family,
                 fstyle,
                 self.line_height,
-            );
-            Size::new(w.max(shaped.width), shaped.height)
+            )
         };
         Some(Size::new(
             text_size.width + pad.horizontal_sum(),
