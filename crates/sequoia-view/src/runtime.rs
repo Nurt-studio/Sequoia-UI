@@ -228,6 +228,7 @@ struct Inner {
     env_listener: RefCell<Option<sequoia_reactive::Listener>>,
 
     redraw: RefCell<Option<Box<dyn Fn()>>>,
+    redraw_armed: Cell<bool>,
     surfaces: RefCell<Vec<SurfaceDraw>>,
     overlays: RefCell<OverlayStore>,
 
@@ -328,15 +329,19 @@ impl Inner {
             self.queue.borrow_mut().push(id);
         }
 
+        let repaint = flags.needs_repaint();
         {
             let mut damage = self.damage.borrow_mut();
             damage.mark(flags);
-            if flags.needs_repaint() {
+            if repaint {
                 damage.mark_rect(rect);
             }
         }
 
-        if flags.needs_repaint()
+        // A coarse update marks thousands of elements in one frame; the host
+        // only needs one wake-up, not one per element. Painting re-arms this.
+        if repaint
+            && !self.redraw_armed.replace(true)
             && let Some(h) = self.redraw.borrow().as_ref()
         {
             h();
@@ -386,6 +391,7 @@ impl Runtime {
                 env_listener: RefCell::new(None),
                 shapes: sequoia_draw::ShapeCache::default(),
                 redraw: RefCell::new(None),
+                redraw_armed: Cell::new(false),
                 surfaces: RefCell::new(Vec::new()),
                 overlays: RefCell::default(),
                 pending_drag: RefCell::new(None),
@@ -1074,6 +1080,9 @@ impl Runtime {
 
     fn settle(&self) {
         flush_effects();
+        // Rects describe the previous layout, so they can only be trusted when
+        // no structural change is waiting for the next layout pass.
+        let rects_valid = !self.inner.layout_dirty.get();
         loop {
             let next = self.inner.queue.borrow_mut().pop();
             let Some(id) = next else { break };
@@ -1086,6 +1095,13 @@ impl Runtime {
                     .unwrap_or_else(Dirty::empty)
             };
             if flags.is_empty() {
+                continue;
+            }
+            if rects_valid && self.rebuild_can_wait(id) {
+                // Leave the flags set: the next layout that reaches this
+                // element rebuilds it in `measure_inner`. Keeping it out of
+                // the queue stops `has_pending_layout` from re-running the
+                // whole layout for content no one can see.
                 continue;
             }
             if let Some(e) = self.inner.arena.borrow_mut().get_mut(id) {
@@ -1101,6 +1117,25 @@ impl Runtime {
             s.rebuilds += 1;
             self.inner.stats.set(s);
         }
+    }
+
+    /// Whether a rebuild can wait until layout reaches the element.
+    ///
+    /// Only leaves fully outside the viewport qualify: their content is not
+    /// painted, and their rect will be recomputed when they scroll in.
+    fn rebuild_can_wait(&self, id: ElementId) -> bool {
+        let viewport = self.inner.viewport.get();
+        if viewport.is_empty() {
+            return false;
+        }
+        let arena = self.inner.arena.borrow();
+        let Some(e) = arena.get(id) else {
+            return false;
+        };
+        let rect = e.rect.get();
+        !rect.is_empty()
+            && !rect.intersects(viewport)
+            && e.view.as_ref().is_some_and(|v| v.is_leaf())
     }
 
     #[must_use]
@@ -1347,6 +1382,9 @@ impl Runtime {
             self.inner.layout_dirty.set(false);
             self.layout_once(bounds, text);
             if !self.has_pending_layout() {
+                // Rebuilding a deferred off-screen leaf during measure sets
+                // this flag; the pass that just finished incorporated it.
+                self.inner.layout_dirty.set(false);
                 return;
             }
             if pass + 1 < MAX_SETTLE_PASSES {
@@ -1429,6 +1467,7 @@ impl Runtime {
     /// need a full CPU pass; RenderList still drops items fully outside the
     /// active clip at push time, so the visible output is the same.
     pub fn paint_region(&self, list: &mut RenderList, text: &mut TextSystem, cull: CullCtx) {
+        self.inner.redraw_armed.set(false);
         // Paint once into a scratch list while the shape cache records misses
         // instead of tessellating them, then build the recorded set on worker
         // threads before the real pass. If nothing was missing the scratch
@@ -3098,6 +3137,28 @@ impl Runtime {
         self.inner
             .measure_calls
             .set(self.inner.measure_calls.get().wrapping_add(1));
+
+        // A leaf whose rebuild waited while it was off screen is now being
+        // reached by layout (it became visible, or its size is needed), so
+        // bring its content up to date before trusting any cached size.
+        let pending = self
+            .inner
+            .arena
+            .borrow()
+            .get(el)
+            .is_some_and(|e| e.dirty.needs_layout());
+        if pending
+            && let Some(v) = self.view_rc(el)
+        {
+            self.build_with(el, v);
+            if let Some(e) = self.inner.arena.borrow_mut().get_mut(el) {
+                e.dirty = Dirty::empty();
+            }
+            let mut s = self.inner.stats.get();
+            s.rebuilds += 1;
+            self.inner.stats.set(s);
+        }
+
         {
             let arena = self.inner.arena.borrow();
             if arena.get(el).map(|e| e.dirty.is_empty()).unwrap_or(false) {
@@ -3420,17 +3481,21 @@ impl Runtime {
         ctx: &mut LayoutCtx,
         need_cross: bool,
     ) -> (f32, f32) {
-        let flow: Vec<(usize, ElementId)> = children
-            .iter()
-            .copied()
-            .enumerate()
-            .filter(|(_, c)| !self.child_layout_style(*c).is_absolute())
-            .collect();
-        if flow.is_empty() {
-            return (0.0, 0.0);
-        }
+        let (avail_main, avail_cross) = match cstyle.axis {
+            Axis::Horizontal => (inner_avail.width, inner_avail.height),
+            Axis::Vertical => (inner_avail.height, inner_avail.width),
+        };
 
         if cstyle.wrap {
+            let flow: Vec<(usize, ElementId)> = children
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_, c)| !self.child_layout_style(*c).is_absolute())
+                .collect();
+            if flow.is_empty() {
+                return (0.0, 0.0);
+            }
             return self.measure_children_wrapped(
                 &flow,
                 cstyle,
@@ -3440,36 +3505,52 @@ impl Runtime {
                 need_cross,
             );
         }
-        let (avail_main, avail_cross) = match cstyle.axis {
-            Axis::Horizontal => (inner_avail.width, inner_avail.height),
-            Axis::Vertical => (inner_avail.height, inner_avail.width),
-        };
 
-        let mut bases = Vec::with_capacity(flow.len());
-        let mut crosses = if need_cross {
-            Vec::with_capacity(flow.len())
-        } else {
-            Vec::new()
-        };
-        let mut items = Vec::with_capacity(flow.len());
-        let mut child_styles = Vec::with_capacity(flow.len());
+        // A bounded main axis means the caller already fixed the visible
+        // extent (the window or a clipped container). Rows past that extent
+        // cannot be seen, so measuring them would shape text and allocate
+        // vectors for nothing. An unbounded axis keeps the full pass: a
+        // scroll view relies on the content size it gets from here.
+        let cull = Self::can_cull_main_axis(avail_main);
+        let capacity = children.len().min(256);
+        let mut bases = Vec::with_capacity(capacity);
+        let mut crosses = Vec::with_capacity(if need_cross { capacity } else { 0 });
+        let mut items = Vec::with_capacity(capacity);
+        let mut child_styles = Vec::with_capacity(capacity);
+        let mut ids = Vec::with_capacity(capacity);
+        let mut used_outer = 0.0_f32;
 
-        for &(orig_i, child) in &flow {
+        for (orig_i, &child) in children.iter().enumerate() {
+            let cs = self.child_layout_style(child);
+            if cs.is_absolute() {
+                continue;
+            }
             let extra = flex.get(orig_i).copied().unwrap_or(0.0);
             let (base, grow, shrink, cross, mn, mx) =
                 self.child_layout_info_full(child, cstyle, avail_main, avail_cross, extra, ctx);
+            if !bases.is_empty() {
+                used_outer += cstyle.gap;
+            }
+            used_outer += base;
             bases.push(base);
+            ids.push(child);
             if need_cross {
                 crosses.push(cross);
             }
             items.push(FlexItem::new(base, grow, shrink, mn, mx));
-            child_styles.push(self.child_layout_style(child));
+            child_styles.push(cs);
+            if cull && used_outer > avail_main && Self::cullable_main(&cs, cstyle.axis) {
+                break;
+            }
+        }
+        if bases.is_empty() {
+            return (0.0, 0.0);
         }
         let gaps = Self::main_gap_specs(&child_styles, cstyle.axis, cstyle.gap, avail_main);
         let resolved_gaps = Self::distribute_main(&items, &mut bases, &gaps, avail_main);
 
         if need_cross && avail_main.is_finite() {
-            for (k, &(_, child)) in flow.iter().enumerate() {
+            for (k, &child) in ids.iter().enumerate() {
                 if self.subtree_has_wrap_axis(child, cstyle.axis) {
                     crosses[k] =
                         self.constrained_cross(child, cstyle.axis, bases[k], avail_cross, ctx);
@@ -4540,16 +4621,16 @@ impl Runtime {
         flex: &[f32],
         ctx: &mut LayoutCtx,
     ) {
-        let flow_idx: Vec<usize> = children
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| !self.child_layout_style(**c).is_absolute())
-            .map(|(i, _)| i)
-            .collect();
         if cstyle.wrap {
+            let flow_idx: Vec<usize> = children
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| !self.child_layout_style(**c).is_absolute())
+                .map(|(i, _)| i)
+                .collect();
             self.arrange_children_wrapped(children, &flow_idx, cstyle, content, flex, ctx);
         } else {
-            self.arrange_children_linear(children, &flow_idx, cstyle, content, flex, ctx);
+            self.arrange_children_linear(children, cstyle, content, flex, ctx);
         }
 
         for &child in children {
@@ -4562,7 +4643,6 @@ impl Runtime {
     fn arrange_children_linear(
         &self,
         children: &[ElementId],
-        flow_idx: &[usize],
         cstyle: &ContainerStyle,
         content: Rect,
         flex: &[f32],
@@ -4573,15 +4653,28 @@ impl Runtime {
             Axis::Vertical => (content.size.height, content.size.width),
         };
 
+        // Mirror `measure_children`: stop arranging once the main axis is
+        // full. Absolute children are still arranged by `arrange_children`.
+        let cull = Self::can_cull_main_axis(avail_main);
         let mut infos: Vec<(ElementId, f32, f32, f32, f32, f32, f32, LayoutStyle)> =
-            Vec::with_capacity(flow_idx.len());
-        for &orig in flow_idx {
-            let child = children[orig];
+            Vec::with_capacity(children.len().min(256));
+        let mut used_outer = 0.0_f32;
+        for (orig, &child) in children.iter().enumerate() {
             let extra = flex.get(orig).copied().unwrap_or(0.0);
+            let cs = self.child_layout_style(child);
+            if cs.is_absolute() {
+                continue;
+            }
             let (base, grow, shrink, cross, mn, mx) =
                 self.child_layout_info_full(child, cstyle, avail_main, avail_cross, extra, ctx);
-            let cs = self.child_layout_style(child);
+            if !infos.is_empty() {
+                used_outer += cstyle.gap;
+            }
+            used_outer += base;
             infos.push((child, base, grow, shrink, cross, mn, mx, cs));
+            if cull && used_outer > avail_main && Self::cullable_main(&cs, cstyle.axis) {
+                break;
+            }
         }
         let child_styles: Vec<LayoutStyle> = infos.iter().map(|info| info.7).collect();
         let gaps = Self::main_gap_specs(&child_styles, cstyle.axis, cstyle.gap, avail_main);
@@ -5165,6 +5258,28 @@ impl Runtime {
             ),
             Dock::Fill => Rect::from_xywh(remaining.left(), remaining.top(), 0.0, 0.0),
         }
+    }
+
+    /// A linear container can stop at the visible main-axis extent only when
+    /// that extent is bounded. An unbounded axis (a scroll view measuring its
+    /// content) must see every child so the scroll range stays correct.
+    fn can_cull_main_axis(avail_main: f32) -> bool {
+        avail_main.is_finite() && avail_main >= 0.0
+    }
+
+    /// Whether `cs` may be the last laid-out child before the cut: it must not
+    /// claim flexible space and must not pull later siblings back into view
+    /// with a negative margin.
+    fn cullable_main(cs: &LayoutStyle, axis: Axis) -> bool {
+        let (start, end) = match axis {
+            Axis::Horizontal => (cs.margin.left, cs.margin.right),
+            Axis::Vertical => (cs.margin.top, cs.margin.bottom),
+        };
+        let auto_main = match axis {
+            Axis::Horizontal => cs.width,
+            Axis::Vertical => cs.height,
+        };
+        start >= 0.0 && end >= 0.0 && cs.flex_weight() <= 0.0 && !auto_main.is_fill()
     }
 
     fn extra_main(avail_main: f32, used_main: f32) -> f32 {
@@ -6073,6 +6188,12 @@ impl Runtime {
 
     fn rebind_reads(&self, el: ElementId, reads: ReadSet) {
         if let Some(e) = self.inner.arena.borrow_mut().get_mut(el) {
+            // A rebuild usually reads the same signals again. Re-binding would
+            // scan this element's whole observer list on every signal, so one
+            // coarse update of 3000 rows would take O(n^2).
+            if e.reads.same_deps(&reads) {
+                return;
+            }
             if let Some(w) = e.watcher.clone() {
                 e.reads.unbind(&w);
             }
@@ -6242,6 +6363,43 @@ mod tests {
         assert_eq!(
             filled_root_size(capped, bounds, measured),
             Size::new(400.0, 300.0)
+        );
+    }
+
+    #[test]
+    fn bounded_column_lays_out_only_visible_rows() {
+        struct FixedRow;
+        impl View for FixedRow {
+            fn body(&self) -> impl View + 'static {
+                crate::Unit
+            }
+            fn layout_style(&self) -> LayoutStyle {
+                LayoutStyle {
+                    width: Length::Fill(1.0),
+                    height: Length::px(20.0),
+                    ..LayoutStyle::default()
+                }
+            }
+        }
+
+        let mut col = crate::views::Column::new();
+        for _ in 0..3000 {
+            col = col.child(FixedRow);
+        }
+        let rt = Runtime::new();
+        rt.mount(col);
+        let mut text = TextSystem::new();
+        let bounds = Rect::from_xywh(0.0, 0.0, 800.0, 600.0);
+        rt.reset_measure_cache_stats();
+        rt.layout(bounds, &mut text);
+
+        let (calls, _) = rt.measure_cache_stats();
+        assert!(calls < 400, "virtualized layout measured {calls} nodes");
+        let root = rt.root().unwrap();
+        let last = *rt.children(root).last().unwrap();
+        assert!(
+            rt.rect_of(last).unwrap().is_empty(),
+            "a row past the visible extent was arranged"
         );
     }
 

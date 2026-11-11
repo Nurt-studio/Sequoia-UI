@@ -13,6 +13,20 @@ impl ReadSet {
         Self { deps: Vec::new() }
     }
 
+    /// Whether both sets depend on the same signals in the same order.
+    ///
+    /// Rebuilding a view normally reads the same signals again. Callers use
+    /// this to skip unregistering and re-registering every observer, which is
+    /// O(observers) per signal and makes one coarse update O(n^2).
+    pub fn same_deps(&self, other: &ReadSet) -> bool {
+        self.deps.len() == other.deps.len()
+            && self
+                .deps
+                .iter()
+                .zip(other.deps.iter())
+                .all(|(a, b)| a.0 == b.0)
+    }
+
     pub fn len(&self) -> usize {
         self.deps.len()
     }
@@ -30,6 +44,7 @@ impl ReadSet {
         self
     }
 
+    /// Registers `watcher` as an observer of every dependency.
     pub fn bind(&self, watcher: &Watcher) {
         let w: Rc<dyn Observer> = watcher.node.clone();
         let weak = Rc::downgrade(&w);

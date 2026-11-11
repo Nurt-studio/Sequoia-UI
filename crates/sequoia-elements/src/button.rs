@@ -9,6 +9,8 @@ use sequoia_view::{AnimSpec, AnyView, Column, Icon, Text, View};
 
 use crate::container::{ClickTrigger, Container};
 
+const PAD_X: f32 = 10.0;
+const PAD_Y: f32 = 5.0;
 const ICON_DEFAULT_PX: f32 = 16.0;
 const RIBBON_ICON_PX: f32 = 28.0;
 const RIBBON_GAP: f32 = 2.0;
@@ -414,9 +416,14 @@ fn resolved_px(value: Option<f32>) -> Option<f32> {
 
 impl Button {
     fn merged_padding(&self) -> (f32, f32) {
-        self.padding
-            .or_else(|| self.style.and_then(|s| s.padding))
-            .unwrap_or((0.0, 0.0))
+        if let Some(p) = self.padding.or_else(|| self.style.and_then(|s| s.padding)) {
+            return p;
+        }
+        if self.resolved_width().is_some() || self.resolved_height().is_some() {
+            (0.0, 0.0)
+        } else {
+            (PAD_X, PAD_Y)
+        }
     }
 
     fn resolved_width(&self) -> Option<f32> {
@@ -713,8 +720,10 @@ mod tests {
     }
 
     #[test]
-    fn default_button_padding_is_zero() {
-        assert_eq!(Button::new("x").merged_padding(), (0.0, 0.0));
+    fn default_button_padding_is_smart() {
+        assert_eq!(Button::new("x").merged_padding(), (PAD_X, PAD_Y));
+        assert_eq!(Button::new("x").width(100.0).merged_padding(), (0.0, 0.0));
+        assert_eq!(Button::new("x").height(32.0).merged_padding(), (0.0, 0.0));
         assert_eq!(
             Button::new("x").padding(4.0, 2.0).merged_padding(),
             (4.0, 2.0)

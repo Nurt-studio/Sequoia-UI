@@ -5,9 +5,10 @@ widgets, styles, and reusable components without writing Rust. Static files can
 be loaded and previewed directly; files that need application state or native
 callbacks are connected to Rust through `HostBindings`.
 
-The language is deliberately small. Values are literals or simple references,
-not general expressions. Arithmetic, branches, and loops belong in `fn`
-declarations and run only from callbacks.
+The language supports literals, references, array values, and expressions including
+arithmetic and ternary operators (`? :`), with compile-time type checking in widget
+attributes and component arguments. Loops and complex branching still belong in
+`fn` declarations.
 
 ## Loading a file
 
@@ -115,8 +116,8 @@ Column(padding: 12, gap: 8) {
 
 Positional labels are accepted only by `Text`, `Button`, and `Image`. All other
 components use named attributes. Every attribute has the form `name: value`.
-There are no positional component arguments and no arbitrary expressions in an
-attribute.
+There are no positional component arguments, but attribute values support expressions,
+arithmetic, ternary operators (`? :`), and array values with compile-time type checking.
 
 Common value forms are:
 
