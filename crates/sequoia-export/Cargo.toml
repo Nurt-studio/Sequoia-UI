@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Sequoia GUI framework — headless HiDPI PNG export (website-ready screenshots without a window)"
+description = "Sequoia GUI framework — headless HiDPI PNG, GIF, and Motion JPEG AVI export (screenshots and clips without a window)"
 
 [dependencies]
 image = { workspace = true }
@@ -18,6 +18,7 @@ sequoia-view = { workspace = true }
 
 [dev-dependencies]
 log = { workspace = true }
+sequoia-shader = { workspace = true }
 
 [lints]
 workspace = true
