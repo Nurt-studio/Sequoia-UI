@@ -435,8 +435,11 @@ impl Drop for ImageAtlas {
 }
 
 /// Render pipelines and binding layout for one registered user shader.
+///
+/// Pipelines are keyed by blend mode and color-target format so the same shader
+/// can draw into the window and into HDR intermediates.
 pub(crate) struct UserShaderEntry {
-    pub(crate) pipelines: HashMap<BlendMode, wgpu::RenderPipeline>,
+    pub(crate) pipelines: HashMap<(BlendMode, wgpu::TextureFormat), wgpu::RenderPipeline>,
     pub(crate) bgl: wgpu::BindGroupLayout,
     pub(crate) module: wgpu::ShaderModule,
 }

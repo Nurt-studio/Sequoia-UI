@@ -905,21 +905,75 @@ impl ShaderId {
     }
 }
 
+/// Pixel format of an offscreen render target.
+///
+/// The format is chosen per target, not globally, so an HDR intermediate can
+/// feed an 8-bit present pass in the same frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum TargetFormat {
+    /// 8-bit intermediate using the renderer's surface format.
+    #[default]
+    Rgba8,
+
+    /// Linear 16-bit float intermediate for banding-free compositing.
+    Rgba16Float,
+}
+
+impl TargetFormat {
+    /// Returns `true` for float formats that can carry values above 1.0.
+    #[must_use]
+    pub const fn is_hdr(self) -> bool {
+        matches!(self, Self::Rgba16Float)
+    }
+
+    /// Returns the number of bytes one pixel occupies in this format.
+    #[must_use]
+    pub const fn bytes_per_pixel(self) -> u32 {
+        match self {
+            Self::Rgba8 => 4,
+            Self::Rgba16Float => 8,
+        }
+    }
+}
+
 /// Identifier for an offscreen render target created by [`RenderList::begin_target`].
+///
+/// The handle carries the target's [`TargetFormat`], so it can be used both as
+/// a key in the renderer's target pool and as a [`TexInput::Target`] without a
+/// separate format argument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct RenderTargetId(pub u64);
+pub struct RenderTargetId {
+    raw: u64,
+    format: TargetFormat,
+}
 
 impl RenderTargetId {
-    /// Wraps a raw target identifier.
+    /// Wraps a raw target identifier using the default 8-bit format.
     #[must_use]
     pub const fn new(raw: u64) -> Self {
-        Self(raw)
+        Self {
+            raw,
+            format: TargetFormat::Rgba8,
+        }
+    }
+
+    /// Wraps a raw target identifier with an explicit format.
+    #[must_use]
+    pub const fn with_format(raw: u64, format: TargetFormat) -> Self {
+        Self { raw, format }
     }
 
     /// Returns the raw target identifier.
     #[must_use]
     pub const fn get(self) -> u64 {
-        self.0
+        self.raw
+    }
+
+    /// Returns the pixel format requested when the target was created.
+    #[must_use]
+    pub const fn format(self) -> TargetFormat {
+        self.format
     }
 }
 
@@ -1074,6 +1128,9 @@ pub enum PassNode {
         /// Blend mode used when the target is composited.
         blend: BlendMode,
 
+        /// Pixel format of the target texture.
+        format: TargetFormat,
+
         /// Items to render, as indices into the render list.
         items: std::ops::Range<usize>,
     },
@@ -1112,6 +1169,9 @@ pub struct TargetBegin {
 
     /// Target size in logical coordinates.
     pub size: Size,
+
+    /// Pixel format of the target texture.
+    pub format: TargetFormat,
 }
 
 /// Marker that finishes drawing into an offscreen target.
@@ -1152,6 +1212,7 @@ pub enum RenderItem {
         id: RenderTargetId,
         size: Size,
         blend: BlendMode,
+        format: TargetFormat,
     },
 
     /// Ends an offscreen pass.
@@ -1443,29 +1504,35 @@ impl RenderList {
     /// own pass, but its items also stay inside the enclosing target's range.
     pub fn target_plan(&self) -> Vec<PassNode> {
         let mut nodes = Vec::new();
-        let mut open: Vec<(RenderTargetId, Size, BlendMode, usize)> = Vec::new();
+        let mut open: Vec<(RenderTargetId, Size, BlendMode, TargetFormat, usize)> = Vec::new();
         let mut segment = 0usize;
         for (index, item) in self.items.iter().enumerate() {
             match item {
-                RenderItem::TargetBegin { id, size, blend } => {
+                RenderItem::TargetBegin {
+                    id,
+                    size,
+                    blend,
+                    format,
+                } => {
                     if open.is_empty() && segment < index {
                         nodes.push(PassNode::Present {
                             items: segment..index,
                         });
                     }
-                    open.push((*id, *size, *blend, index + 1));
+                    open.push((*id, *size, *blend, *format, index + 1));
                 }
                 RenderItem::TargetEnd { id } => {
                     let Some(position) = open.iter().rposition(|(open_id, ..)| open_id == id)
                     else {
                         continue;
                     };
-                    let (target, size, blend, start) = open.remove(position);
+                    let (target, size, blend, format, start) = open.remove(position);
                     if start <= index {
                         nodes.push(PassNode::Render {
                             target,
                             size,
                             blend,
+                            format,
                             items: start..index,
                         });
                     }
@@ -1967,25 +2034,54 @@ impl RenderList {
         self.item_transforms.push(t);
     }
 
-    /// Starts an offscreen pass and returns its handle.
+    /// Starts an offscreen pass into a default 8-bit target.
     ///
-    /// Rendering into targets is not implemented yet; the renderer records the
-    /// marker and warns during a frame. The handle can be referenced by
-    /// [`TexInput::Target`] in later stages.
+    /// Use [`RenderList::begin_target_with_format`] for an HDR intermediate.
     #[must_use]
     pub fn begin_target(&mut self, size: Size, blend: BlendMode) -> RenderTargetId {
-        let id = RenderTargetId::new(self.next_target);
+        self.begin_target_with_format(size, blend, TargetFormat::Rgba8)
+    }
+
+    /// Starts an offscreen pass with an explicit pixel format.
+    ///
+    /// The returned handle carries `format`; use it as a [`TexInput::Target`]
+    /// or composite it with [`RenderList::push_blit`].
+    #[must_use]
+    pub fn begin_target_with_format(
+        &mut self,
+        size: Size,
+        blend: BlendMode,
+        format: TargetFormat,
+    ) -> RenderTargetId {
+        let id = RenderTargetId::with_format(self.next_target, format);
         self.next_target += 1;
-        self.items.push(RenderItem::TargetBegin { id, size, blend });
+        self.items.push(RenderItem::TargetBegin {
+            id,
+            size,
+            blend,
+            format,
+        });
         self.item_clips.push(None);
         self.item_transforms.push(Transform::default());
         self.target_count += 1;
         id
     }
 
-    /// Ends an offscreen pass started with [`RenderList::begin_target`].
+    /// Starts an offscreen pass with the default blend mode.
     ///
-    /// The marker is recorded but ignored by the stage 1 renderer.
+    /// Shorthand for [`RenderList::begin_target_with_format`] with
+    /// [`BlendMode::Normal`]; pair it with [`RenderList::pop_target`].
+    #[must_use]
+    pub fn push_target(&mut self, size: Size, format: TargetFormat) -> RenderTargetId {
+        self.begin_target_with_format(size, BlendMode::Normal, format)
+    }
+
+    /// Ends an offscreen pass started with [`RenderList::push_target`].
+    pub fn pop_target(&mut self, id: RenderTargetId) {
+        self.end_target(id);
+    }
+
+    /// Ends an offscreen pass started with [`RenderList::begin_target`].
     pub fn end_target(&mut self, id: RenderTargetId) {
         self.items.push(RenderItem::TargetEnd { id });
         self.item_clips.push(None);
@@ -3437,7 +3533,7 @@ mod tests {
         assert_eq!(target.get(), 0);
         assert!(matches!(
             list.items()[0],
-            RenderItem::TargetBegin { id, size, blend }
+            RenderItem::TargetBegin { id, size, blend, .. }
                 if id == target && size.width == 32.0 && blend == BlendMode::Multiply
         ));
         assert!(matches!(
@@ -3449,6 +3545,28 @@ mod tests {
             RenderItem::Blit { target: id, blend: BlendMode::Screen, .. } if id == target
         ));
         assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn target_handles_carry_their_format() {
+        let mut list = RenderList::new();
+        let ldr = list.begin_target(Size::new(20.0, 10.0), BlendMode::Normal);
+        list.end_target(ldr);
+        let hdr = list.push_target(Size::new(20.0, 10.0), TargetFormat::Rgba16Float);
+        list.pop_target(hdr);
+
+        assert_eq!(ldr.format(), TargetFormat::Rgba8);
+        assert_eq!(hdr.format(), TargetFormat::Rgba16Float);
+        assert_ne!(ldr, hdr, "format is part of the handle");
+
+        let plan = list.target_plan();
+        assert!(matches!(
+            plan.as_slice(),
+            [
+                PassNode::Render { target: a, format: TargetFormat::Rgba8, .. },
+                PassNode::Render { target: b, format: TargetFormat::Rgba16Float, .. },
+            ] if *a == ldr && *b == hdr
+        ));
     }
 
     #[test]

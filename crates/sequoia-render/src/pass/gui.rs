@@ -31,6 +31,7 @@ impl crate::renderer::GpuRenderer {
         runs: &[GuiRun],
         image_draws: &[Option<ImageBinding>],
         all_opaque: bool,
+        shader_format: wgpu::TextureFormat,
     ) {
         for run in runs.iter() {
             match *run {
@@ -110,10 +111,12 @@ impl crate::renderer::GpuRenderer {
                     let Some(entry) = user_shaders.get(&shader_id) else {
                         continue;
                     };
-                    let Some(pipeline) = entry
-                        .pipelines
-                        .get(&blend)
-                        .or_else(|| entry.pipelines.get(&sequoia_core::BlendMode::Normal))
+                    let Some(pipeline) =
+                        entry.pipelines.get(&(blend, shader_format)).or_else(|| {
+                            entry
+                                .pipelines
+                                .get(&(sequoia_core::BlendMode::Normal, shader_format))
+                        })
                     else {
                         continue;
                     };

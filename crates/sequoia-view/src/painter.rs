@@ -2,7 +2,7 @@
 
 use sequoia_core::{
     BrushStroke, Color, Fill, GradientKind, GradientStops, ImageSampling, ImageSource, Pixels,
-    Point, Rect, Shadow, Size, SpanMask, StrokeSpace, Transform, Vec2,
+    Point, Rect, Shadow, Size, SpanMask, StrokeSpace, TargetFormat, Transform, Vec2,
 };
 use sequoia_text::FontWeight;
 
@@ -573,7 +573,22 @@ impl<'a, 'b> Painter<'a, 'b> {
         blend: sequoia_core::BlendMode,
         f: impl FnOnce(&mut Self) -> R,
     ) -> (sequoia_core::RenderTargetId, R) {
-        let target = self.ctx.list.begin_target(size, blend);
+        self.group_with_format(size, blend, TargetFormat::Rgba8, f)
+    }
+
+    /// Renders `f` into a new offscreen target with an explicit pixel format.
+    ///
+    /// [`TargetFormat::Rgba16Float`] keeps sub-8-bit precision across many
+    /// blended layers; use the returned handle as a shader input and tone-map
+    /// it when presenting to the window.
+    pub fn group_with_format<R>(
+        &mut self,
+        size: Size,
+        blend: sequoia_core::BlendMode,
+        format: TargetFormat,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> (sequoia_core::RenderTargetId, R) {
+        let target = self.ctx.list.begin_target_with_format(size, blend, format);
         let result = f(self);
         self.ctx.list.end_target(target);
         (target, result)

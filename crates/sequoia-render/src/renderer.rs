@@ -39,6 +39,14 @@ pub struct GpuRenderer {
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) render_format: wgpu::TextureFormat,
+    pub(crate) shader_module: wgpu::ShaderModule,
+    pub(crate) quad_layout: wgpu::PipelineLayout,
+    pub(crate) glyph_layout: wgpu::PipelineLayout,
+    /// Pipelines for offscreen target formats other than the window format.
+    pub(crate) target_pipelines: HashMap<wgpu::TextureFormat, FormatPipelines>,
+    /// Set once when an HDR intermediate falls back because the adapter cannot
+    /// filter `Rgba16Float` textures.
+    pub(crate) warned_hdr_target: bool,
     pub(crate) quad_pipeline: wgpu::RenderPipeline,
     pub(crate) quad_pipeline_opaque: wgpu::RenderPipeline,
     pub(crate) glyph_pipeline: wgpu::RenderPipeline,
@@ -601,7 +609,10 @@ impl GpuRenderer {
             blend_component(sequoia_core::BlendMode::Normal),
         );
         let mut passthrough_pipelines = HashMap::new();
-        passthrough_pipelines.insert(sequoia_core::BlendMode::Normal, passthrough_pipeline);
+        passthrough_pipelines.insert(
+            (sequoia_core::BlendMode::Normal, format),
+            passthrough_pipeline,
+        );
         let passthrough_entry = UserShaderEntry {
             pipelines: passthrough_pipelines,
             bgl: shader_bgl.clone(),
@@ -620,6 +631,11 @@ impl GpuRenderer {
             surface,
             config,
             render_format: format,
+            shader_module: shader.clone(),
+            quad_layout: layout.clone(),
+            glyph_layout: glyph_layout.clone(),
+            target_pipelines: HashMap::new(),
+            warned_hdr_target: false,
             quad_pipeline,
             quad_pipeline_opaque,
             glyph_pipeline,
@@ -1238,7 +1254,7 @@ impl GpuRenderer {
         }
 
         let mut pipelines = HashMap::new();
-        pipelines.insert(BlendMode::Normal, pipeline);
+        pipelines.insert((BlendMode::Normal, self.render_format), pipeline);
         let id = if let Some(id) = self.by_name.get(&name).copied() {
             id
         } else {
@@ -1278,14 +1294,104 @@ impl GpuRenderer {
         self.pipeline_builds
     }
 
-    /// Builds the pipeline for one shader and blend mode if it does not exist.
+    /// Returns the wgpu format backing `target`.
+    ///
+    /// `Rgba8` uses the window's render format so target passes keep the same
+    /// color space as a direct draw. `Rgba16Float` requires filterable float
+    /// sampling; on adapters without it the window format is used instead.
+    pub(crate) fn target_texture_format(
+        &mut self,
+        target: sequoia_core::RenderTargetId,
+    ) -> wgpu::TextureFormat {
+        if target.format() != sequoia_core::TargetFormat::Rgba16Float {
+            return self.render_format;
+        }
+        if texture_format_usable(&self.device, wgpu::TextureFormat::Rgba16Float) {
+            return wgpu::TextureFormat::Rgba16Float;
+        }
+        if !self.warned_hdr_target {
+            self.warned_hdr_target = true;
+            log::warn!(
+                "sequoia-render: Rgba16Float intermediates are not filterable on this adapter \
+                 - falling back to the window format"
+            );
+        }
+        self.render_format
+    }
+
+    /// Returns pipelines that write into `format`.
+    ///
+    /// The window format reuses the renderer's main pipelines. Other formats
+    /// get a lazily built set, so HDR targets only pay for the pipelines they
+    /// actually use.
+    pub(crate) fn pipelines_for_format(&mut self, format: wgpu::TextureFormat) -> FormatPipelines {
+        if format == self.render_format {
+            return FormatPipelines {
+                quad: self.quad_pipeline.clone(),
+                quad_opaque: self.quad_pipeline_opaque.clone(),
+                glyph: self.glyph_pipeline.clone(),
+                blit: self.blit_pipeline.clone(),
+                gradient: self.gradient_pipeline.clone(),
+            };
+        }
+        if !self.target_pipelines.contains_key(&format) {
+            let blend = premultiplied_blend();
+            let shader = self.shader_module.clone();
+            let pipelines = FormatPipelines {
+                quad: create_quad_pipeline(&self.device, &shader, &self.quad_layout, format, blend),
+                quad_opaque: create_quad_opaque_pipeline(
+                    &self.device,
+                    &shader,
+                    &self.quad_layout,
+                    format,
+                ),
+                glyph: create_glyph_pipeline(
+                    &self.device,
+                    &shader,
+                    &self.glyph_layout,
+                    format,
+                    blend,
+                ),
+                blit: create_blit_pipeline(
+                    &self.device,
+                    &shader,
+                    &self.glyph_layout,
+                    format,
+                    blend,
+                ),
+                gradient: create_gradient_pipeline(
+                    &self.device,
+                    &shader,
+                    &self.quad_layout,
+                    format,
+                    blend,
+                ),
+            };
+            self.target_pipelines.insert(format, pipelines);
+            #[cfg(debug_assertions)]
+            {
+                self.pipeline_builds += 5;
+            }
+        }
+        self.target_pipelines
+            .get(&format)
+            .cloned()
+            .expect("target pipelines")
+    }
+
+    /// Builds the pipeline for one shader, blend mode, and target format.
     ///
     /// Returns `true` when a new pipeline was created.
-    pub(crate) fn ensure_shader_pipeline(&mut self, shader: ShaderId, blend: BlendMode) -> bool {
+    pub(crate) fn ensure_shader_pipeline(
+        &mut self,
+        shader: ShaderId,
+        blend: BlendMode,
+        format: wgpu::TextureFormat,
+    ) -> bool {
         let Some(entry) = self.user_shaders.get(&shader) else {
             return false;
         };
-        if entry.pipelines.contains_key(&blend) {
+        if entry.pipelines.contains_key(&(blend, format)) {
             return false;
         }
         let module = entry.module.clone();
@@ -1299,11 +1405,11 @@ impl GpuRenderer {
             &self.device,
             &module,
             &layout,
-            self.render_format,
+            format,
             blend_component(blend),
         );
         if let Some(entry) = self.user_shaders.get_mut(&shader) {
-            entry.pipelines.insert(blend, pipeline);
+            entry.pipelines.insert((blend, format), pipeline);
         }
         #[cfg(debug_assertions)]
         {
@@ -1322,7 +1428,7 @@ impl GpuRenderer {
         }
         for item in list.items() {
             if let sequoia_core::RenderItem::Shader(draw) = item {
-                self.ensure_shader_pipeline(draw.shader, draw.blend);
+                self.ensure_shader_pipeline(draw.shader, draw.blend, self.render_format);
             }
         }
     }
@@ -2729,6 +2835,7 @@ impl GpuRenderer {
                                     &seg.runs,
                                     image_draws,
                                     seg.all_opaque,
+                                    self.render_format,
                                 );
                             }
                             if has_buffers && let Some(idx) = seg.backdrop_idx {
@@ -2818,6 +2925,7 @@ impl GpuRenderer {
                                     &fplan.runs,
                                     image_draws,
                                     fplan.all_opaque,
+                                    self.render_format,
                                     filter_blur,
                                 );
                                 passes += if filter_blur >= 0.5 { 3 } else { 2 };
@@ -2887,6 +2995,7 @@ impl GpuRenderer {
                                     &fplan.runs,
                                     image_draws,
                                     fplan.all_opaque,
+                                    self.render_format,
                                 );
                             }
                         }
@@ -2942,6 +3051,7 @@ impl GpuRenderer {
                         &plan.runs,
                         image_draws,
                         plan.all_opaque,
+                        self.render_format,
                     );
                 }
                 if has_buffers && let Some(idx) = plan.backdrop_idx {
@@ -3053,6 +3163,7 @@ impl GpuRenderer {
                 user_shaders: &self.user_shaders,
                 backdrop_buf: &self.backdrop_buf,
                 fb,
+                format: self.render_format,
             };
             draw_opacity_draws(
                 nodes,
@@ -3188,8 +3299,12 @@ impl GpuRenderer {
                             };
                             let Some(pipeline) = entry
                                 .pipelines
-                                .get(&blend)
-                                .or_else(|| entry.pipelines.get(&sequoia_core::BlendMode::Normal))
+                                .get(&(blend, self.render_format))
+                                .or_else(|| {
+                                    entry
+                                        .pipelines
+                                        .get(&(sequoia_core::BlendMode::Normal, self.render_format))
+                                })
                             else {
                                 continue;
                             };

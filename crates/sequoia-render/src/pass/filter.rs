@@ -36,6 +36,7 @@ impl crate::renderer::GpuRenderer {
         runs: &[GuiRun],
         image_draws: &[Option<ImageBinding>],
         all_opaque: bool,
+        shader_format: wgpu::TextureFormat,
         blur_px: f32,
     ) {
         {
@@ -78,6 +79,7 @@ impl crate::renderer::GpuRenderer {
                 runs,
                 image_draws,
                 all_opaque,
+                shader_format,
             );
         }
 

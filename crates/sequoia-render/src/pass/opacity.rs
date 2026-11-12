@@ -60,6 +60,7 @@ pub(crate) struct OpacityDrawContext<'a> {    pub(crate) group_layers: &'a [Grou
     pub(crate) user_shaders: &'a std::collections::HashMap<sequoia_core::ShaderId, UserShaderEntry>,
     pub(crate) backdrop_buf: &'a wgpu::Buffer,
     pub(crate) fb: (u32, u32),
+    pub(crate) format: wgpu::TextureFormat,
 }
 
 /// Conservative physical-pixel bounds for one opacity segment or group.
@@ -399,6 +400,7 @@ pub(crate) fn draw_opacity_draws(
                     runs,
                     image_draws,
                     *all_opaque,
+                    ctx.format,
                 );
             }
             OpacityDraw::Group {

@@ -21,6 +21,7 @@ impl GpuRenderer {
     /// pixels) when missing or resized.
     pub(crate) fn ensure_render_target(&mut self, target: RenderTargetId, size: (u32, u32)) {
         let size = (size.0.max(1), size.1.max(1));
+        let format = self.target_texture_format(target);
         if let Some(entry) = self.render_targets.get_mut(&target) {
             if entry.size == size {
                 entry.last_used = self.frame_index;
@@ -41,7 +42,7 @@ impl GpuRenderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: self.render_format,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -67,6 +68,7 @@ impl GpuRenderer {
                 view,
                 bind_group,
                 size,
+                format,
                 last_used: self.frame_index,
             },
         );
@@ -114,14 +116,14 @@ impl GpuRenderer {
             let px = ((size.width * scale).ceil() as u32).clamp(1, max.0);
             let py = ((size.height * scale).ceil() as u32).clamp(1, max.1);
             self.ensure_render_target(target, (px, py));
-            let Some(view) = self
+            let Some((view, format)) = self
                 .render_targets
                 .get(&target)
-                .map(|entry| entry.view.clone())
+                .map(|entry| (entry.view.clone(), entry.format))
             else {
                 continue;
             };
-            if !self.render_target_items(&mut encoder, list, items, &view, scale) {
+            if !self.render_target_items(&mut encoder, list, items, &view, format, scale) {
                 continue;
             }
             self.queue.submit(Some(encoder.finish()));
@@ -143,6 +145,7 @@ impl GpuRenderer {
         list: &RenderList,
         range: std::ops::Range<usize>,
         view: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
         scale: f32,
     ) -> bool {
         let items = &list.items()[range.clone()];
@@ -179,6 +182,14 @@ impl GpuRenderer {
             return false;
         }
         let has_shaders = !shader_data.instances.is_empty();
+        if has_shaders {
+            for run in &runs {
+                if let GuiRun::Shader(_, _, shader, blend) = *run {
+                    self.ensure_shader_pipeline(shader, blend, format);
+                }
+            }
+        }
+        let pipelines = self.pipelines_for_format(format);
 
         Self::ensure_capacity(
             &self.device,
@@ -379,11 +390,11 @@ impl GpuRenderer {
             });
             Self::draw_gui_runs(
                 &mut pass,
-                &self.quad_pipeline,
-                &self.quad_pipeline_opaque,
-                &self.glyph_pipeline,
-                &self.blit_pipeline,
-                &self.gradient_pipeline,
+                &pipelines.quad,
+                &pipelines.quad_opaque,
+                &pipelines.glyph,
+                &pipelines.blit,
+                &pipelines.gradient,
                 &self.bind_group,
                 atlas_bg,
                 None,
@@ -400,6 +411,7 @@ impl GpuRenderer {
                 &runs,
                 &image_draws,
                 false,
+                format,
             );
         }
         true
@@ -413,8 +425,11 @@ mod tests {
     #[test]
     fn target_keys_round_trip_and_do_not_collide_with_image_keys() {
         let target = RenderTargetId::new(7);
+        let hdr = RenderTargetId::with_format(7, sequoia_core::TargetFormat::Rgba16Float);
         let key = target_key(target);
         assert_eq!(target_from_key(key), Some(target));
+        assert_eq!(target_from_key(target_key(hdr)), Some(hdr));
+        assert_ne!(target_key(target), target_key(hdr));
         assert_eq!(target_from_key(7), None);
         assert_ne!(key, target.get());
     }

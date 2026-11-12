@@ -6,7 +6,7 @@
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 
-use sequoia_core::{BlendMode, Color, Rect, RenderTargetId, TexInput};
+use sequoia_core::{BlendMode, Color, Rect, RenderTargetId, TargetFormat, TexInput};
 
 /// Instance data for a rounded rectangle, border, or shadow.
 #[repr(C)]
@@ -80,22 +80,51 @@ pub(crate) struct RenderTargetTexture {
     pub(crate) view: wgpu::TextureView,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) size: (u32, u32),
+    pub(crate) format: wgpu::TextureFormat,
     pub(crate) last_used: u64,
+}
+
+/// Pipelines that write into one offscreen target format.
+#[derive(Clone)]
+pub(crate) struct FormatPipelines {
+    pub(crate) quad: wgpu::RenderPipeline,
+    pub(crate) quad_opaque: wgpu::RenderPipeline,
+    pub(crate) glyph: wgpu::RenderPipeline,
+    pub(crate) blit: wgpu::RenderPipeline,
+    pub(crate) gradient: wgpu::RenderPipeline,
 }
 
 /// Image-bind-group key marking a texture that comes from an offscreen target.
 pub(crate) const TARGET_KEY_BIT: u64 = 1 << 63;
 
-/// Encodes a render target as an image bind-group key.
+/// Bit of a target key that records a 16-bit float intermediate.
+pub(crate) const TARGET_FORMAT_BIT: u64 = 1 << 62;
+
+/// Encodes a render target, including its format, as an image bind-group key.
 #[must_use]
 pub(crate) fn target_key(target: RenderTargetId) -> u64 {
-    TARGET_KEY_BIT | target.get()
+    let format = if target.format() == TargetFormat::Rgba16Float {
+        TARGET_FORMAT_BIT
+    } else {
+        0
+    };
+    let raw = target.get() & !(TARGET_KEY_BIT | TARGET_FORMAT_BIT);
+    TARGET_KEY_BIT | format | raw
 }
 
 /// Decodes a key produced by `target_key`.
 #[must_use]
 pub(crate) fn target_from_key(key: u64) -> Option<RenderTargetId> {
-    (key & TARGET_KEY_BIT != 0).then(|| RenderTargetId::new(key & !TARGET_KEY_BIT))
+    if key & TARGET_KEY_BIT == 0 {
+        return None;
+    }
+    let raw = key & !(TARGET_KEY_BIT | TARGET_FORMAT_BIT);
+    let format = if key & TARGET_FORMAT_BIT != 0 {
+        TargetFormat::Rgba16Float
+    } else {
+        TargetFormat::Rgba8
+    };
+    Some(RenderTargetId::with_format(raw, format))
 }
 
 /// CPU-side shader instances and their dynamic uniform payloads.
