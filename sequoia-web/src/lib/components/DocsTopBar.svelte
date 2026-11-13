@@ -1,6 +1,8 @@
 <script>
 	import { nav } from '../navigation.svelte.js';
 
+	let { version = '0.1.5' } = $props();
+
 	/** @param {string} page */
 	function goto(page) {
 		nav.page = page;
@@ -18,7 +20,7 @@
 			}}>Sequoia<span class="logo-ui">UI</span></a
 		>
 		<div class="top-bar-divider"></div>
-		<span class="top-bar-version">v0.1.5</span>
+		<span class="top-bar-version">v{version}</span>
 	</div>
 	<div class="top-bar-nav">
 		<a
@@ -31,7 +33,7 @@
 		>
 		<a
 			href="/"
-			class:active={nav.page === 'blog'}
+			class:active={nav.page === 'blog' || nav.page === 'release-0.1.6'}
 			onclick={(e) => {
 				e.preventDefault();
 				goto('blog');
@@ -45,6 +47,14 @@
 				e.preventDefault();
 				goto('benchmarks');
 			}}>Benchmarks</a
+		>
+		<a
+			href="/"
+			class:active={nav.page === 'compare-0.1.6'}
+			onclick={(e) => {
+				e.preventDefault();
+				goto('compare-0.1.6');
+			}}>Compare</a
 		>
 		<a href="https://nurt-studio.github.io/Sequoia-UI/guides/widgets.html" target="_blank" rel="noreferrer">Components</a>
 		<a href="https://nurt-studio.github.io/Sequoia-UI/getting-started/examples.html" target="_blank" rel="noreferrer">Examples</a>

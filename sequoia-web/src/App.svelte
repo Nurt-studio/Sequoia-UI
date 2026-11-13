@@ -5,6 +5,8 @@
 	import DocsPage from './lib/pages/DocsPage.svelte';
 	import BlogPage from './lib/pages/BlogPage.svelte';
 	import BenchmarksPage from './lib/pages/BenchmarksPage.svelte';
+	import Compare016Page from './lib/pages/Compare016Page.svelte';
+	import Release016Page from './lib/pages/Release016Page.svelte';
 
 	$effect(() => {
 		void nav.page;
@@ -20,4 +22,8 @@
 	<BlogPage />
 {:else if nav.page === 'benchmarks'}
 	<BenchmarksPage />
+{:else if nav.page === 'compare-0.1.6'}
+	<Compare016Page />
+{:else if nav.page === 'release-0.1.6'}
+	<Release016Page />
 {/if}

@@ -98,6 +98,33 @@
 		</div>
 	</div>
 	<div class="blog-featured-card">
+		<div class="blog-featured-img">
+			<span class="big-num">02</span>
+			<span class="img-label">0.1.6</span>
+		</div>
+		<div class="blog-featured-content">
+			<div class="meta">
+				<span class="blog-tag">Release (Unreleased)</span>
+				<span class="blog-date">Not yet released</span>
+			</div>
+			<h2>SequoiaUI 0.1.6 (Unreleased)</h2>
+			<p>
+				Continuous export: animated GIF and Motion JPEG AVI next to PNG, CPU shaders in headless
+				renders, and the glassmorphism demo. Also introduces BlockEditor with typed blocks, inline
+				objects, cross-block selection and IME support, plus expressions in the .seq format for
+				component arguments, styles and signal-backed attributes. Requires Rust 1.88 or newer.
+			</p>
+			<a
+				href="/"
+				class="blog-read-more"
+				onclick={(e) => {
+					e.preventDefault();
+					nav.page = 'release-0.1.6';
+				}}>Read the release notes →</a
+			>
+		</div>
+	</div>
+	<div class="blog-featured-card">
 		<div class="blog-featured-img has-image">
 			<img
 				src={benchmarkSummary}

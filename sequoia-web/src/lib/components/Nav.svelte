@@ -9,6 +9,7 @@
 		{ label: 'Components', href: `${DOCS}guides/widgets.html` },
 		{ label: 'Examples', href: `${DOCS}getting-started/examples.html` },
 		{ label: 'Benchmarks', href: '/', page: 'benchmarks', onClick: () => (nav.page = 'benchmarks') },
+		{ label: 'Compare', href: '/', page: 'compare-0.1.6', onClick: () => (nav.page = 'compare-0.1.6') },
 		{ label: 'Blog', href: '/', page: 'blog', onClick: () => (nav.page = 'blog') }
 	];
 
