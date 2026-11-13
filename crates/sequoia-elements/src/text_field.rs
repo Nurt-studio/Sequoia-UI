@@ -1414,7 +1414,7 @@ impl View for TextField {
                 let x1 = stored.get(s1).copied().unwrap_or(x0);
                 if x1 > x0 {
                     let top = y - size * 0.8;
-                    let sel = Rect::from_xywh(x + x0, top, x1 - x0, size * 1.05);
+                    let sel = Rect::from_xywh(x + x0, top, x1 - x0, size * 0.8);
                     ctx.quad(sel, theme.accent_pressed, 0.0);
                 }
             }
@@ -1445,7 +1445,7 @@ impl View for TextField {
         let caret_rect = ctx
             .state
             .focused
-            .then(|| Rect::from_xywh(x + caret_x, y - size * 0.8, CARET_W, size * 1.05))
+            .then(|| Rect::from_xywh(x + caret_x, y - size * 0.8, CARET_W, size * 0.8))
             .filter(|_| !self.disabled);
         self.with_state(|s| s.caret_rect = caret_rect);
         if let Some(r) = caret_rect {
