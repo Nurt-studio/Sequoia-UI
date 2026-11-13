@@ -25,6 +25,16 @@ use crate::ir::{
 };
 use crate::value::Value;
 
+macro_rules! tracked_get {
+    ($sig:expr, $tracked:expr) => {
+        if $tracked {
+            $sig.get()
+        } else {
+            $sig.get_untracked()
+        }
+    };
+}
+
 pub fn resolve_theme(file: &str, app: &SeqApp) -> Result<Theme, SeqError> {
     match &app.theme {
         ThemeName::Dark => Ok(Theme::dark()),
@@ -388,6 +398,52 @@ fn value_to_expr(value: &SeqValue, line: usize) -> Option<SeqExpr> {
                 .map(|v| value_to_expr(v, line))
                 .collect::<Option<Vec<_>>>()?,
         ),
+        SeqValue::Length(len) => {
+            let (name, arg) = match len {
+                LengthVal::Fill(n) => ("fill", *n),
+                LengthVal::Px(n) => ("px", *n),
+                LengthVal::Percent(n) => ("percent", *n),
+                LengthVal::Fit => {
+                    return Some(SeqExpr {
+                        line,
+                        kind: SeqExprKind::Var("fit".to_string()),
+                    });
+                }
+            };
+            SeqExprKind::Call {
+                name: name.to_string(),
+                args: vec![SeqExpr {
+                    line,
+                    kind: SeqExprKind::Float(f64::from(arg)),
+                }],
+            }
+        }
+        SeqValue::Theme(field) => SeqExprKind::Field {
+            base: "theme".to_string(),
+            field: field.clone(),
+        },
+        SeqValue::Env(field) => SeqExprKind::Field {
+            base: "env".to_string(),
+            field: field.clone(),
+        },
+        SeqValue::ItemField(field) => SeqExprKind::Field {
+            base: "item".to_string(),
+            field: field.clone(),
+        },
+        SeqValue::Dynamic(name) => SeqExprKind::Call {
+            name: "dynamic".to_string(),
+            args: vec![SeqExpr {
+                line,
+                kind: SeqExprKind::Var(name.clone()),
+            }],
+        },
+        SeqValue::CallSeq { name, args } => SeqExprKind::Call {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|v| value_to_expr(v, line))
+                .collect::<Option<Vec<_>>>()?,
+        },
         SeqValue::Expr(expr) => return Some(expr.clone()),
         _ => return None,
     };
@@ -413,11 +469,23 @@ fn prepare_node(
 ) -> Result<SeqNode, SeqError> {
     let mut out = node.clone();
     for arg in &mut out.args {
-        if value_contains_expr(&arg.value) {
+        if value_contains_expr(&arg.value) && !keeps_live_expr(&node.kind, &arg.name) {
             arg.value = normalize_value(file, arg.line, &arg.value, res, row)?;
         }
     }
     Ok(out)
+}
+
+/// Attributes that are evaluated again whenever their inputs change keep the
+/// raw expression so the signal-based lowering can subscribe to it.
+fn keeps_live_expr(kind: &str, name: &str) -> bool {
+    match kind {
+        "If" => name == "when",
+        "Opacity" | "Scale" | "Rotate" | "Width" | "Height" | "Progress" | "Slider"
+        | "DragValue" | "NumberField" | "SplitPanel" => name == "value",
+        "Translate" => name == "x" || name == "y",
+        _ => false,
+    }
 }
 
 fn normalize_value(
@@ -429,16 +497,8 @@ fn normalize_value(
 ) -> Result<SeqValue, SeqError> {
     match value {
         SeqValue::Expr(expr) => {
-            let resolved = resolve_expr(expr, res, row);
-            match crate::ir::evaluate_seq_expr(&resolved) {
-                Ok(value) => normalize_value(file, line, &value, res, row),
-                Err(message) => Err(SeqError::new(
-                    file,
-                    line,
-                    1,
-                    format!("expression: {message}"),
-                )),
-            }
+            let value = eval_seq_expr(file, line, expr, res, row, false)?;
+            normalize_value(file, line, &value, res, row)
         }
         SeqValue::Tuple(items) => Ok(SeqValue::Tuple(
             items
@@ -470,14 +530,19 @@ fn normalize_value(
     }
 }
 
-fn resolve_expr(expr: &SeqExpr, res: &Resolver<'_>, row: Option<&SeqRowData>) -> SeqExpr {
+fn resolve_expr(
+    expr: &SeqExpr,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+    tracked: bool,
+) -> SeqExpr {
     let line = expr.line;
     let kind = match &expr.kind {
         SeqExprKind::Var(name) => {
             if matches!(name.as_str(), "true" | "false" | "None" | "fit") {
                 expr.kind.clone()
             } else {
-                match resolve_binding(name, res).and_then(|v| value_to_expr(&v, line)) {
+                match resolve_binding(name, res, tracked).and_then(|v| value_to_expr(&v, line)) {
                     Some(resolved) => resolved.kind,
                     None => expr.kind.clone(),
                 }
@@ -485,8 +550,8 @@ fn resolve_expr(expr: &SeqExpr, res: &Resolver<'_>, row: Option<&SeqRowData>) ->
         }
         SeqExprKind::Field { base, field } => {
             let resolved = match base.as_str() {
-                "env" => resolve_env(field, res),
-                "item" => resolve_item(field, row),
+                "env" => resolve_env(field, res, tracked),
+                "item" => resolve_item(field, row, tracked),
                 _ => None,
             };
             match resolved.and_then(|v| value_to_expr(&v, line)) {
@@ -496,23 +561,23 @@ fn resolve_expr(expr: &SeqExpr, res: &Resolver<'_>, row: Option<&SeqRowData>) ->
         }
         SeqExprKind::Unary { op, expr } => SeqExprKind::Unary {
             op: *op,
-            expr: Box::new(resolve_expr(expr, res, row)),
+            expr: Box::new(resolve_expr(expr, res, row, tracked)),
         },
         SeqExprKind::Binary { op, lhs, rhs } => SeqExprKind::Binary {
             op: *op,
-            lhs: Box::new(resolve_expr(lhs, res, row)),
-            rhs: Box::new(resolve_expr(rhs, res, row)),
+            lhs: Box::new(resolve_expr(lhs, res, row, tracked)),
+            rhs: Box::new(resolve_expr(rhs, res, row, tracked)),
         },
         SeqExprKind::Ternary { cond, then, els } => SeqExprKind::Ternary {
-            cond: Box::new(resolve_expr(cond, res, row)),
-            then: Box::new(resolve_expr(then, res, row)),
-            els: Box::new(resolve_expr(els, res, row)),
+            cond: Box::new(resolve_expr(cond, res, row, tracked)),
+            then: Box::new(resolve_expr(then, res, row, tracked)),
+            els: Box::new(resolve_expr(els, res, row, tracked)),
         },
         SeqExprKind::Tuple(items) => {
-            SeqExprKind::Tuple(items.iter().map(|e| resolve_expr(e, res, row)).collect())
+            SeqExprKind::Tuple(items.iter().map(|e| resolve_expr(e, res, row, tracked)).collect())
         }
         SeqExprKind::Array(items) => {
-            SeqExprKind::Array(items.iter().map(|e| resolve_expr(e, res, row)).collect())
+            SeqExprKind::Array(items.iter().map(|e| resolve_expr(e, res, row, tracked)).collect())
         }
         SeqExprKind::Call { name, args } => {
             if name == "dynamic"
@@ -522,14 +587,14 @@ fn resolve_expr(expr: &SeqExpr, res: &Resolver<'_>, row: Option<&SeqRowData>) ->
                     SeqExprKind::Str(s) => Some(s.as_str()),
                     _ => None,
                 }
-                && let Some(value) = resolve_binding(target, res)
+                && let Some(value) = resolve_binding(target, res, tracked)
                 && let Some(resolved) = value_to_expr(&value, line)
             {
                 return resolved;
             }
             SeqExprKind::Call {
                 name: name.clone(),
-                args: args.iter().map(|e| resolve_expr(e, res, row)).collect(),
+                args: args.iter().map(|e| resolve_expr(e, res, row, tracked)).collect(),
             }
         }
         _ => expr.kind.clone(),
@@ -538,69 +603,170 @@ fn resolve_expr(expr: &SeqExpr, res: &Resolver<'_>, row: Option<&SeqRowData>) ->
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn resolve_binding(name: &str, res: &Resolver<'_>) -> Option<SeqValue> {
+fn resolve_binding(name: &str, res: &Resolver<'_>, tracked: bool) -> Option<SeqValue> {
     let Resolver::Host(b) = res else {
         return None;
     };
     if let Some(sig) = b.get_float(name) {
-        return Some(SeqValue::Num(sig.get_untracked() as f32));
+        return Some(SeqValue::Num(tracked_get!(sig, tracked) as f32));
     }
     if let Some(sig) = b.get_int(name) {
-        return Some(SeqValue::Num(sig.get_untracked() as f32));
+        return Some(SeqValue::Num(tracked_get!(sig, tracked) as f32));
     }
     if let Some(sig) = b.get_bool(name) {
-        return Some(SeqValue::Bool(sig.get_untracked()));
+        return Some(SeqValue::Bool(tracked_get!(sig, tracked)));
     }
     if let Some(sig) = b.get_str(name) {
-        return Some(SeqValue::Str(sig.get_untracked()));
+        return Some(SeqValue::Str(tracked_get!(sig, tracked)));
     }
     if let Some(memo) = b.get_memo_float(name) {
-        return Some(SeqValue::Num(memo.get_untracked() as f32));
+        return Some(SeqValue::Num(tracked_get!(memo, tracked) as f32));
     }
     if let Some(memo) = b.get_memo_int(name) {
-        return Some(SeqValue::Num(memo.get_untracked() as f32));
+        return Some(SeqValue::Num(tracked_get!(memo, tracked) as f32));
     }
     if let Some(memo) = b.get_memo_bool(name) {
-        return Some(SeqValue::Bool(memo.get_untracked()));
+        return Some(SeqValue::Bool(tracked_get!(memo, tracked)));
     }
     if let Some(memo) = b.get_memo_str(name) {
-        return Some(SeqValue::Str(memo.get_untracked()));
+        return Some(SeqValue::Str(tracked_get!(memo, tracked)));
     }
     None
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn resolve_env(field: &str, res: &Resolver<'_>) -> Option<SeqValue> {
+fn resolve_env(field: &str, res: &Resolver<'_>, tracked: bool) -> Option<SeqValue> {
     let Resolver::Host(b) = res else {
         return None;
     };
     if let Some(sig) = b.get_env_float(field) {
-        return Some(SeqValue::Num(sig.get_untracked() as f32));
+        return Some(SeqValue::Num(tracked_get!(sig, tracked) as f32));
     }
     if let Some(sig) = b.get_env_int(field) {
-        return Some(SeqValue::Num(sig.get_untracked() as f32));
+        return Some(SeqValue::Num(tracked_get!(sig, tracked) as f32));
     }
     if let Some(sig) = b.get_env_bool(field) {
-        return Some(SeqValue::Bool(sig.get_untracked()));
+        return Some(SeqValue::Bool(tracked_get!(sig, tracked)));
     }
     if let Some(sig) = b.get_env_str(field) {
-        return Some(SeqValue::Str(sig.get_untracked()));
+        return Some(SeqValue::Str(tracked_get!(sig, tracked)));
     }
     None
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn resolve_item(field: &str, row: Option<&SeqRowData>) -> Option<SeqValue> {
+fn resolve_item(field: &str, row: Option<&SeqRowData>, tracked: bool) -> Option<SeqValue> {
     let row = row?;
     if field == "id" {
         return Some(SeqValue::Num(row.id as f32));
     }
     match row.fields.get(field)? {
-        FieldSignal::Str(sig) => Some(SeqValue::Str(sig.get_untracked())),
-        FieldSignal::Bool(sig) => Some(SeqValue::Bool(sig.get_untracked())),
-        FieldSignal::Int(sig) => Some(SeqValue::Num(sig.get_untracked() as f32)),
-        FieldSignal::Float(sig) => Some(SeqValue::Num(sig.get_untracked() as f32)),
+        FieldSignal::Str(sig) => Some(SeqValue::Str(tracked_get!(sig, tracked))),
+        FieldSignal::Bool(sig) => Some(SeqValue::Bool(tracked_get!(sig, tracked))),
+        FieldSignal::Int(sig) => Some(SeqValue::Num(tracked_get!(sig, tracked) as f32)),
+        FieldSignal::Float(sig) => Some(SeqValue::Num(tracked_get!(sig, tracked) as f32)),
     }
+}
+
+fn eval_seq_expr(
+    file: &str,
+    line: usize,
+    expr: &SeqExpr,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+    tracked: bool,
+) -> Result<SeqValue, SeqError> {
+    let resolved = resolve_expr(expr, res, row, tracked);
+    crate::ir::evaluate_seq_expr(&resolved)
+        .map_err(|message| SeqError::new(file, line, 1, format!("expression: {message}")))
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn expr_signal_f32(
+    file: &str,
+    line: usize,
+    expr: &SeqExpr,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+    what: &str,
+) -> Result<Signal<f32>, SeqError> {
+    let Resolver::Host(bindings) = res else {
+        return Err(SeqError::new(
+            file,
+            line,
+            1,
+            format!("'{what}' z wyrażenia wymaga hosta Rust"),
+        ));
+    };
+    let start = match eval_seq_expr(file, line, expr, res, row, false)? {
+        SeqValue::Num(n) if n.is_finite() => n,
+        _ => {
+            return Err(SeqError::new(
+                file,
+                line,
+                1,
+                format!("'{what}' to liczba"),
+            ));
+        }
+    };
+    let sig = Signal::new(start);
+    let out = sig.clone();
+    let file = file.to_string();
+    let expr = expr.clone();
+    let bindings = HostBindings::clone(bindings);
+    let row = row.cloned();
+    effect(move || {
+        let res = Resolver::Host(&bindings);
+        if let Ok(SeqValue::Num(n)) = eval_seq_expr(&file, line, &expr, &res, row.as_ref(), true)
+            && n.is_finite()
+        {
+            out.set(n);
+        }
+    })
+    .forget();
+    Ok(sig)
+}
+
+fn expr_signal_bool(
+    file: &str,
+    line: usize,
+    expr: &SeqExpr,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<Signal<bool>, SeqError> {
+    let Resolver::Host(bindings) = res else {
+        return Err(SeqError::new(
+            file,
+            line,
+            1,
+            "'when' z wyrażenia wymaga hosta Rust",
+        ));
+    };
+    let start = match eval_seq_expr(file, line, expr, res, row, false)? {
+        SeqValue::Bool(b) => b,
+        _ => {
+            return Err(SeqError::new(
+                file,
+                line,
+                1,
+                "'when' to true/false albo wyrażenie Bool",
+            ));
+        }
+    };
+    let sig = Signal::new(start);
+    let out = sig.clone();
+    let file = file.to_string();
+    let expr = expr.clone();
+    let bindings = HostBindings::clone(bindings);
+    let row = row.cloned();
+    effect(move || {
+        let res = Resolver::Host(&bindings);
+        if let Ok(SeqValue::Bool(b)) = eval_seq_expr(&file, line, &expr, &res, row.as_ref(), true) {
+            out.set(b);
+        }
+    })
+    .forget();
+    Ok(sig)
 }
 
 fn splice_children(nodes: &[SeqNode], kids: &[SeqNode]) -> Vec<SeqNode> {
@@ -2822,6 +2988,7 @@ fn when_signal(
 ) -> Result<Signal<bool>, SeqError> {
     match value {
         SeqValue::Bool(b) => Ok(Signal::new(*b)),
+        SeqValue::Expr(expr) => expr_signal_bool(file, line, expr, res, row),
         SeqValue::Ident(prop) | SeqValue::Dynamic(prop) => match res {
             Resolver::Static => Err(SeqError::new(
                 file,
@@ -4666,6 +4833,7 @@ fn bridge_f32(
 ) -> Result<Signal<f32>, SeqError> {
     match value {
         SeqValue::Num(n) => Ok(Signal::new(*n)),
+        SeqValue::Expr(expr) => expr_signal_f32(file, line, expr, res, row, what),
         SeqValue::Ident(prop) | SeqValue::Dynamic(prop) => match res {
             Resolver::Static => Err(SeqError::new(
                 file,
@@ -4770,6 +4938,7 @@ fn live_f32(
 ) -> Result<Signal<f32>, SeqError> {
     match value {
         SeqValue::Num(n) => Ok(Signal::new(*n)),
+        SeqValue::Expr(expr) => expr_signal_f32(file, line, expr, res, row, what),
         SeqValue::Ident(prop) | SeqValue::Dynamic(prop) => match res {
             Resolver::Static => Err(SeqError::new(
                 file,

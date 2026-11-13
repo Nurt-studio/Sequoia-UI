@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use sequoia_core::{Color, RenderItem};
-use sequoia_seq::{HostBindings, SeqLoader};
+use sequoia_seq::{HostBindings, SeqLoader, build_styles, parse, resolve_theme};
 use sequoia_style::ButtonStyle;
 use sequoia_test::Harness;
 
@@ -27,6 +27,16 @@ fn texts(h: &Harness) -> Vec<sequoia_core::TextDraw> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn style_arithmetic_expressions_build() {
+    let src = "app A {\n  title: \"A\"\n  size: (400, 300)\n  style S: Box {\n    radius: 4 * 2\n  }\n  style T: Text {\n    size: 12 + 4\n  }\n  window M {\n    Text(\"x\", style: T)\n  }\n}\n";
+    let app = parse("S.seq", src).unwrap();
+    let theme = resolve_theme("S.seq", &app).unwrap();
+    let styles = build_styles("S.seq", &theme, &app.styles).unwrap();
+    assert_eq!(styles.box_style("S").expect("Box S").radius, 8.0);
+    assert_eq!(styles.text_style("T").expect("Text T").size, Some(16.0));
 }
 
 #[test]

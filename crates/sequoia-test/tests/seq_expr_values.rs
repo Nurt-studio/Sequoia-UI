@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use sequoia_reactive::Signal;
-use sequoia_seq::{HostBindings, SeqLoader, SeqNode, SeqValue, parse};
+use sequoia_seq::{HostBindings, SeqLoader, SeqNode, SeqValue, expand_components, parse};
 
 const SRC: &str = r#"app A {
   title: "A"
@@ -100,6 +100,24 @@ fn array_values_fold_element_expressions() {
 fn component_params_flow_into_expressions() {
     let src = "component Card(w: Float) {\n  Row(width: w * 2) {\n    Text(\"c\")\n  }\n}\napp A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    Card(w: 10 + 5)\n  }\n}\n";
     SeqLoader::load_str("Main.seq", src).unwrap();
+}
+
+#[test]
+fn component_param_expression_uses_call_site_value() {
+    let src = "component MyComp(size_param: Float) {\n  Text(\"x\", size: size_param * 2)\n}\napp A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    MyComp(size_param: 10 + 2)\n  }\n}\n";
+    let app = parse("Main.seq", src).unwrap();
+    let app = expand_components("Main.seq", &app).unwrap();
+    let node = &app.windows[0].nodes[0];
+    assert_eq!(num(arg_value(node, "size")), 24.0);
+}
+
+#[test]
+fn component_param_expression_keeps_plain_value() {
+    let src = "component MyComp(size_param: Float) {\n  Text(\"x\", size: size_param * 2)\n}\napp A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    MyComp(size_param: 5)\n  }\n}\n";
+    let app = parse("Main.seq", src).unwrap();
+    let app = expand_components("Main.seq", &app).unwrap();
+    let node = &app.windows[0].nodes[0];
+    assert_eq!(num(arg_value(node, "size")), 10.0);
 }
 
 #[test]

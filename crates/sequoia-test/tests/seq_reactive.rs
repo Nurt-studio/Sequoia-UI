@@ -21,6 +21,61 @@ fn glyphs(h: &Harness) -> usize {
 }
 
 #[test]
+fn expression_when_reacts_to_host_value() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  prop count: Float\n  window M {\n    Column {\n      If(when: count > 5) {\n        Text(\"widoczne\")\n      }\n    }\n  }\n}\n";
+    let count = Signal::new(1.0);
+    let b = HostBindings::new().prop_float("count", count.clone());
+    let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
+    let h = Harness::new(loaded.view);
+    h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
+    assert_eq!(glyphs(&h), 0, "1 > 5 jest fałszem");
+    count.set(6.0);
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.tick();
+        h.layout(200.0, 100.0);
+        h.paint();
+    }
+    assert_eq!(glyphs(&h), 8, "wyrażenie ma być reaktywne");
+}
+
+#[test]
+fn expression_value_reacts_for_animated_width() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  prop count: Float\n  window M {\n    Row {\n      Width(value: count * 10) {\n        Text(\"a\")\n      }\n      Text(\"b\")\n    }\n  }\n}\n";
+    let count = Signal::new(1.0);
+    let b = HostBindings::new().prop_float("count", count.clone());
+    let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
+    let h = Harness::new(loaded.view);
+    h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
+    assert!(last_text_left(&h) < 20.0, "width 10");
+    count.set(5.0);
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.tick();
+        h.layout(200.0, 100.0);
+        h.paint();
+    }
+    assert!(last_text_left(&h) > 40.0, "width 50 po zmianie");
+}
+
+fn last_text_left(h: &Harness) -> f32 {
+    use sequoia_core::RenderItem;
+    h.paint()
+        .items()
+        .iter()
+        .filter_map(|i| match i {
+            RenderItem::Text(t) => t.glyphs.first().map(|g| g.rect.left()),
+            _ => None,
+        })
+        .next_back()
+        .unwrap_or(0.0)
+}
+
+#[test]
 fn if_static_true_renders() {
     let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    If(when: true) {\n      Text(\"widoczne\")\n    }\n  }\n}\n";
     let loaded = SeqLoader::load_str("Main.seq", src).unwrap();
