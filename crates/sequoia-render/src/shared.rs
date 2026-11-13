@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 use winit::window::Window;
 
 use crate::gpu::resources::ImageCache;
-use crate::renderer::{GpuRenderer, GpuSurfaceSetup, request_device, select_backend};
+use crate::renderer::{
+    GpuRenderer, GpuSurfaceSetup, PreinitGpu, request_device, select_backend,
+};
 use crate::types::*;
 
 /// One GPU device shared by all renderers created from it.
@@ -53,6 +55,50 @@ impl SharedGpu {
             adapter,
             device,
             queue,
+            info,
+            backend,
+            images,
+        })
+    }
+
+    /// Creates a device from preinitialized GPU state.
+    ///
+    /// Falls back to [`SharedGpu::new`] when the preinitialized adapter cannot
+    /// present to `window`.
+    pub fn new_preinit(
+        window: Arc<Window>,
+        options: GpuOptions,
+        preinit: PreinitGpu,
+    ) -> Result<Self, RenderError> {
+        let surface = preinit
+            .instance
+            .create_surface(window.clone())
+            .map_err(RenderError::CreateSurface)?;
+        let caps = surface.get_capabilities(&preinit.adapter);
+        if caps.formats.is_empty() || !preinit.adapter.is_surface_supported(&surface) {
+            drop(surface);
+            return Self::new(window, options);
+        }
+        drop(surface);
+        let info = preinit.adapter.get_info();
+        log::info!(
+            "sequoia-render: shared GPU '{}' ({:?}, {} {})",
+            info.name,
+            info.backend,
+            info.driver,
+            info.driver_info
+        );
+        let budget = MemoryBudget::default();
+        let images = Arc::new(Mutex::new(ImageCache::new(
+            budget.images,
+            budget.max_images,
+        )));
+        let backend = backend_of(&info);
+        Ok(Self {
+            instance: preinit.instance,
+            adapter: preinit.adapter,
+            device: preinit.device,
+            queue: preinit.queue,
             info,
             backend,
             images,

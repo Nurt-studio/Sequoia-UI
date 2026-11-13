@@ -2,6 +2,7 @@
 
 mod avatar;
 mod badge;
+mod block_editor;
 mod buffer;
 mod button;
 mod checkbox;
@@ -42,6 +43,7 @@ mod window_controls;
 
 pub use avatar::{Avatar, avatar_color_for, initials_for};
 pub use badge::{Badge, badge_label};
+pub use block_editor::{BlockEditor, BlockPosition, DocumentSelection};
 pub use button::{BUTTON_BLEND_RATE, Button};
 pub use checkbox::Checkbox;
 pub use chip::{Chip, remove_hit_rect};

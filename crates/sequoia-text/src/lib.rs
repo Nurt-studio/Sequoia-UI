@@ -1,7 +1,14 @@
 #![forbid(unsafe_code)]
 
+mod block;
 mod rich;
 
+pub use block::{
+    Block, BlockDecoration, BlockId, BlockLine, BlockMeasurer, BlockPosition, BlockStyle,
+    BlockTextStyle, BlockType, DecorationKind, Document, DocumentFragment, DocumentSelection,
+    HeadingLevel, INLINE_OBJECT_CHAR, InlineContent, InlineElement, LaidOutBlock, LaidOutDocument,
+    LaidOutObject, TextRun,
+};
 pub use rich::{
     RichAlign, RichCaret, RichHit, RichLine, RichParagraph, RichRect, Squiggle, TextSpan,
     styled_spans_to_text_spans,

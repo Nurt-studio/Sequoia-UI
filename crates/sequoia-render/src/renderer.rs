@@ -59,19 +59,19 @@ pub struct GpuRenderer {
     pub(crate) frame_cap: usize,
     pub(crate) blit_buf: wgpu::Buffer,
     pub(crate) blit_cap: usize,
-    pub(crate) blit_pipeline: wgpu::RenderPipeline,
-    pub(crate) surface_blit_pipeline: wgpu::RenderPipeline,
+    pub(crate) blit_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) surface_blit_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) blit_sampler: wgpu::Sampler,
     pub(crate) present_buf: wgpu::Buffer,
     pub(crate) present_cap: usize,
     pub(crate) backdrop_buf: wgpu::Buffer,
     pub(crate) backdrop_cap: usize,
-    pub(crate) backdrop_pipeline: wgpu::RenderPipeline,
-    pub(crate) backdrop_blur_pipeline: wgpu::RenderPipeline,
-    pub(crate) gradient_pipeline: wgpu::RenderPipeline,
+    pub(crate) backdrop_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) backdrop_blur_pipeline: Option<wgpu::RenderPipeline>,
+    pub(crate) gradient_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) gradient_buf: wgpu::Buffer,
     pub(crate) gradient_cap: usize,
-    pub(crate) present_pipeline: wgpu::RenderPipeline,
+    pub(crate) present_pipeline: Option<wgpu::RenderPipeline>,
     pub(crate) backdrop_tex: Option<BackdropBuffers>,
     pub(crate) frame_target: Option<FrameTarget>,
     pub(crate) frame_target_valid: bool,
@@ -268,12 +268,24 @@ pub(crate) fn select_backend(
         GpuBackend::Auto => auto_backend_candidates().to_vec(),
         backend => vec![backend],
     };
+    let __trace = std::env::var_os("SEQUOIA_STARTUP_TRACE").is_some();
+    let __start = std::time::Instant::now();
+    let mut __marks: Vec<(&'static str, f64)> = Vec::new();
+    macro_rules! mark {
+        ($label:expr) => {
+            if __trace {
+                __marks.push(($label, __start.elapsed().as_secs_f64() * 1000.0));
+            }
+        };
+    }
 
     for backend in candidates {
         let instance = create_instance(backend);
+        mark!("instance");
         let Ok(surface) = instance.create_surface(window.clone()) else {
             continue;
         };
+        mark!("surface");
         let Ok(adapter) =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: options.power_preference.wgpu(),
@@ -283,6 +295,16 @@ pub(crate) fn select_backend(
         else {
             continue;
         };
+        mark!("adapter");
+        if __trace {
+            let mut out = String::new();
+            for (label, ms) in &__marks {
+                out.push_str(&format!(
+                    "[startup] gpu.select.{label:<12} {ms:>8.2} ms\n"
+                ));
+            }
+            eprint!("{out}");
+        }
         return Ok((instance, surface, adapter));
     }
     Err(RenderError::NoAdapter)
@@ -301,6 +323,7 @@ pub(crate) fn dbg_label(name: &'static str) -> Option<&'static str> {
 pub(crate) fn request_device(
     adapter: &wgpu::Adapter,
 ) -> Result<(wgpu::Device, wgpu::Queue), RenderError> {
+    let __start = std::time::Instant::now();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: dbg_label("sequoia-device"),
         required_features: wgpu::Features::empty(),
@@ -310,11 +333,57 @@ pub(crate) fn request_device(
         trace: wgpu::Trace::Off,
     }))
     .map_err(RenderError::Device)?;
+    if std::env::var_os("SEQUOIA_STARTUP_TRACE").is_some() {
+        eprintln!(
+            "[startup] gpu.request_device         {:>8.2} ms",
+            __start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 
     device.on_uncaptured_error(Arc::new(|error| {
         log::error!("sequoia-render: uncaptured GPU error: {error}");
     }));
     Ok((device, queue))
+}
+
+/// GPU instance, adapter, and device created before a window exists.
+///
+/// The platform can build this on a worker thread while the native window is
+/// being created, then attach surfaces once the window is ready.
+pub struct PreinitGpu {
+    pub(crate) instance: wgpu::Instance,
+    pub(crate) adapter: wgpu::Adapter,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+}
+
+/// Creates a GPU instance, adapter, and device without a surface.
+///
+/// The adapter picked here must still be checked against each window's
+/// surface before it is used; see [`crate::SharedGpu::new_preinit`].
+pub fn preinit_gpu(options: GpuOptions) -> Result<PreinitGpu, RenderError> {
+    let candidates: Vec<GpuBackend> = match options.backend {
+        GpuBackend::Auto => auto_backend_candidates().to_vec(),
+        backend => vec![backend],
+    };
+    for backend in candidates {
+        let instance = create_instance(backend);
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: options.power_preference.wgpu(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })) else {
+            continue;
+        };
+        let (device, queue) = request_device(&adapter)?;
+        return Ok(PreinitGpu {
+            instance,
+            adapter,
+            device,
+            queue,
+        });
+    }
+    Err(RenderError::NoAdapter)
 }
 
 impl GpuRenderer {
@@ -344,6 +413,19 @@ impl GpuRenderer {
         options: GpuOptions,
         shared: Option<&crate::shared::SharedGpu>,
     ) -> Result<Self, RenderError> {
+        let __create_start = std::time::Instant::now();
+        let __trace = std::env::var_os("SEQUOIA_STARTUP_TRACE").is_some();
+        let mut __marks: Vec<(&'static str, f64)> = Vec::new();
+        macro_rules! mark {
+            ($label:expr) => {
+                if __trace {
+                    __marks.push((
+                        $label,
+                        __create_start.elapsed().as_secs_f64() * 1000.0,
+                    ));
+                }
+            };
+        }
         let setup = match shared {
             Some(shared) => shared.surface_setup(window)?,
             None => {
@@ -379,6 +461,7 @@ impl GpuRenderer {
                 }
             }
         };
+        mark!("setup");
         let GpuSurfaceSetup {
             surface,
             adapter_info,
@@ -419,6 +502,7 @@ impl GpuRenderer {
             desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
+        mark!("configure");
 
         let screen_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sequoia-screen-bgl"),
@@ -523,46 +607,58 @@ impl GpuRenderer {
 
         let (shader_white_tex, shader_white_bg) =
             create_white_bind_group(&device, &queue, &atlas_bgl, &blit_sampler);
+        mark!("buffers");
 
-        let shader = create_shader_module(&device);
+        macro_rules! timed {
+            ($label:expr, $e:expr) => {{
+                let __start = std::time::Instant::now();
+                let __value = $e;
+                if __trace {
+                    __marks.push(($label, __start.elapsed().as_secs_f64() * 1000.0));
+                }
+                __value
+            }};
+        }
 
-        let (layout, glyph_layout) = create_pipeline_layouts(&device, &screen_bgl, &atlas_bgl);
+        let shader = timed!("base_module", create_shader_module(&device));
+
+        let (layout, glyph_layout) = timed!(
+            "layouts",
+            create_pipeline_layouts(&device, &screen_bgl, &atlas_bgl)
+        );
 
         let blend = premultiplied_blend();
 
-        let quad_pipeline = create_quad_pipeline(&device, &shader, &layout, format, blend);
+        let quad_pipeline = timed!(
+            "quad",
+            create_quad_pipeline(&device, &shader, &layout, format, blend)
+        );
 
-        let quad_pipeline_opaque = create_quad_opaque_pipeline(&device, &shader, &layout, format);
+        let quad_pipeline_opaque = timed!(
+            "quad_opaque",
+            create_quad_opaque_pipeline(&device, &shader, &layout, format)
+        );
 
-        let glyph_pipeline = create_glyph_pipeline(&device, &shader, &glyph_layout, format, blend);
-
-        let blit_pipeline = create_blit_pipeline(&device, &shader, &glyph_layout, format, blend);
-
-        let surface_blit_pipeline =
-            create_surface_blit_pipeline(&device, &shader, &glyph_layout, format, blend);
+        let glyph_pipeline = timed!(
+            "glyph",
+            create_glyph_pipeline(&device, &shader, &glyph_layout, format, blend)
+        );
 
         let backdrop_buf = vertex_buffer(
             &device,
             "sequoia-backdrops",
             (INITIAL_BACKDROP_CAPACITY * BACKDROP_BYTES) as u64,
         );
-
-        let backdrop_pipeline =
-            create_backdrop_pipeline(&device, &shader, &glyph_layout, format, blend);
-
-        let backdrop_blur_pipeline =
-            create_backdrop_blur_pipeline(&device, &shader, &glyph_layout, format);
-
-        let present_pipeline = create_present_pipeline(&device, &shader, &glyph_layout, format);
+        mark!("backdrop_buf");
 
         let quad_ceiling = instance_ceiling(&device, QUAD_BYTES);
         let glyph_ceiling = instance_ceiling(&device, GLYPH_BYTES);
         let image_ceiling = instance_ceiling(&device, BLIT_BYTES);
         let gradient_ceiling = instance_ceiling(&device, GRADIENT_BYTES);
-
-        let gradient_pipeline = create_gradient_pipeline(&device, &shader, &layout, format, blend);
+        mark!("ceilings");
 
         let shader_bgl = create_user_shader_bind_group_layout(&device);
+        mark!("shader_bgl");
         let shader_buf = vertex_buffer(
             &device,
             "sequoia-shaders",
@@ -574,6 +670,7 @@ impl GpuRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        mark!("shader_bufs");
         let shader_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sequoia-shader-bg"),
             layout: &shader_bgl,
@@ -593,28 +690,18 @@ impl GpuRenderer {
             ],
         });
 
+        mark!("shader_bind_group");
         // Built-in passthrough shader (id 0).
         let passthrough_src = passthrough_wgsl();
-        let passthrough_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("passthrough"),
-            source: wgpu::ShaderSource::Wgsl(passthrough_src.into()),
-        });
-        let passthrough_layout =
-            create_user_shader_pipeline_layout(&device, &shader_bgl, &atlas_bgl);
-        let passthrough_pipeline = create_user_shader_pipeline(
-            &device,
-            &passthrough_module,
-            &passthrough_layout,
-            format,
-            blend_component(sequoia_core::BlendMode::Normal),
-        );
-        let mut passthrough_pipelines = HashMap::new();
-        passthrough_pipelines.insert(
-            (sequoia_core::BlendMode::Normal, format),
-            passthrough_pipeline,
+        let passthrough_module = timed!(
+            "passthrough_module",
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("passthrough"),
+                source: wgpu::ShaderSource::Wgsl(passthrough_src.into()),
+            })
         );
         let passthrough_entry = UserShaderEntry {
-            pipelines: passthrough_pipelines,
+            pipelines: HashMap::new(),
             bgl: shader_bgl.clone(),
             module: passthrough_module,
         };
@@ -622,6 +709,7 @@ impl GpuRenderer {
         passthrough_shaders.insert(ShaderId::new(0), passthrough_entry);
         let mut passthrough_names = HashMap::new();
         passthrough_names.insert("passthrough".to_string(), ShaderId::new(0));
+        mark!("pipelines");
 
         let mut renderer = Self {
             device,
@@ -639,17 +727,17 @@ impl GpuRenderer {
             quad_pipeline,
             quad_pipeline_opaque,
             glyph_pipeline,
-            blit_pipeline,
-            surface_blit_pipeline,
+            blit_pipeline: None,
+            surface_blit_pipeline: None,
             blit_sampler,
             backdrop_buf,
             backdrop_cap: INITIAL_BACKDROP_CAPACITY,
-            backdrop_pipeline,
-            backdrop_blur_pipeline,
-            gradient_pipeline,
+            backdrop_pipeline: None,
+            backdrop_blur_pipeline: None,
+            gradient_pipeline: None,
             gradient_buf,
             gradient_cap: INITIAL_GRADIENT_CAPACITY,
-            present_pipeline,
+            present_pipeline: None,
             backdrop_tex: None,
             frame_target: None,
             frame_target_valid: false,
@@ -737,6 +825,17 @@ impl GpuRenderer {
             pipeline_builds: 1,
         };
         renderer.set_memory_budget(MemoryBudget::default());
+        mark!("done");
+        if __trace {
+            let mut out = String::new();
+            for (label, ms) in &__marks {
+                out.push_str(&format!(
+                    "[startup] renderer.create.{:<18} {:>8.2} ms\n",
+                    label, ms
+                ));
+            }
+            eprint!("{out}");
+        }
         Ok(renderer)
     }
 
@@ -1210,20 +1309,20 @@ impl GpuRenderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Compiles and registers a user shader from a complete WGSL module.
+    /// Registers a user shader from a complete WGSL module.
     ///
     /// The source must define `vs_main` and `fs_main` entry points matching the
     /// engine ABI. [`crate::compose_user_shader`] can wrap a bare `fs_user`
     /// function when the shader does not need a custom vertex stage.
     ///
     /// Registering an existing name replaces that shader in place, keeping its
-    /// [`ShaderId`] stable. Pipelines for blend modes other than
-    /// [`BlendMode::Normal`] are built lazily the first time they are drawn.
+    /// [`ShaderId`] stable. Render pipelines are built lazily the first time
+    /// each blend mode is drawn.
     ///
     /// # Errors
     ///
     /// Returns [`RenderError::ShaderCompile`] with the naga or wgpu diagnostic
-    /// when parsing, validation, or pipeline creation fails.
+    /// when parsing or module validation fails.
     pub fn register_shader(
         &mut self,
         name: impl Into<String>,
@@ -1233,8 +1332,6 @@ impl GpuRenderer {
         let wgsl = wgsl.as_ref();
         validate_user_shader(wgsl)?;
 
-        let pipeline_layout =
-            create_user_shader_pipeline_layout(&self.device, &self.shader_bgl, &self.atlas_bgl);
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = self
             .device
@@ -1242,19 +1339,10 @@ impl GpuRenderer {
                 label: Some(name.as_str()),
                 source: wgpu::ShaderSource::Wgsl(wgsl.into()),
             });
-        let pipeline = create_user_shader_pipeline(
-            &self.device,
-            &module,
-            &pipeline_layout,
-            self.render_format,
-            blend_component(BlendMode::Normal),
-        );
         if let Some(error) = pollster::block_on(error_scope.pop()) {
             return Err(RenderError::ShaderCompile(error.to_string()));
         }
 
-        let mut pipelines = HashMap::new();
-        pipelines.insert((BlendMode::Normal, self.render_format), pipeline);
         let id = if let Some(id) = self.by_name.get(&name).copied() {
             id
         } else {
@@ -1265,16 +1353,12 @@ impl GpuRenderer {
         self.user_shaders.insert(
             id,
             UserShaderEntry {
-                pipelines,
+                pipelines: HashMap::new(),
                 bgl: self.shader_bgl.clone(),
                 module,
             },
         );
         self.by_name.insert(name, id);
-        #[cfg(debug_assertions)]
-        {
-            self.pipeline_builds += 1;
-        }
         Ok(id)
     }
 
@@ -1326,12 +1410,14 @@ impl GpuRenderer {
     /// actually use.
     pub(crate) fn pipelines_for_format(&mut self, format: wgpu::TextureFormat) -> FormatPipelines {
         if format == self.render_format {
+            self.ensure_blit_pipeline();
+            self.ensure_gradient_pipeline();
             return FormatPipelines {
                 quad: self.quad_pipeline.clone(),
                 quad_opaque: self.quad_pipeline_opaque.clone(),
                 glyph: self.glyph_pipeline.clone(),
-                blit: self.blit_pipeline.clone(),
-                gradient: self.gradient_pipeline.clone(),
+                blit: self.blit_pipeline.clone().expect("blit pipeline"),
+                gradient: self.gradient_pipeline.clone().expect("gradient pipeline"),
             };
         }
         if !self.target_pipelines.contains_key(&format) {
@@ -1377,6 +1463,108 @@ impl GpuRenderer {
             .get(&format)
             .cloned()
             .expect("target pipelines")
+    }
+
+    fn ensure_blit_pipeline(&mut self) {
+        if self.blit_pipeline.is_none() {
+            self.blit_pipeline = Some(create_blit_pipeline(
+                &self.device,
+                &self.shader_module,
+                &self.glyph_layout,
+                self.render_format,
+                premultiplied_blend(),
+            ));
+        }
+    }
+
+    fn ensure_surface_blit_pipeline(&mut self) {
+        if self.surface_blit_pipeline.is_none() {
+            self.surface_blit_pipeline = Some(create_surface_blit_pipeline(
+                &self.device,
+                &self.shader_module,
+                &self.glyph_layout,
+                self.render_format,
+                premultiplied_blend(),
+            ));
+        }
+    }
+
+    fn ensure_gradient_pipeline(&mut self) {
+        if self.gradient_pipeline.is_none() {
+            self.gradient_pipeline = Some(create_gradient_pipeline(
+                &self.device,
+                &self.shader_module,
+                &self.quad_layout,
+                self.render_format,
+                premultiplied_blend(),
+            ));
+        }
+    }
+
+    fn ensure_backdrop_pipelines(&mut self) {
+        if self.backdrop_pipeline.is_none() {
+            self.backdrop_pipeline = Some(create_backdrop_pipeline(
+                &self.device,
+                &self.shader_module,
+                &self.glyph_layout,
+                self.render_format,
+                premultiplied_blend(),
+            ));
+        }
+        if self.backdrop_blur_pipeline.is_none() {
+            self.backdrop_blur_pipeline = Some(create_backdrop_blur_pipeline(
+                &self.device,
+                &self.shader_module,
+                &self.glyph_layout,
+                self.render_format,
+            ));
+        }
+    }
+
+    fn ensure_present_pipeline(&mut self) {
+        if self.present_pipeline.is_none() {
+            self.present_pipeline = Some(create_present_pipeline(
+                &self.device,
+                &self.shader_module,
+                &self.glyph_layout,
+                self.render_format,
+            ));
+        }
+    }
+
+    fn ensure_scene_pipelines(
+        &mut self,
+        list: &RenderList,
+        surfaces: &[SurfaceDraw],
+        use_offscreen: bool,
+    ) {
+        let opacity = list.has_opacity_groups();
+        let mut needs_blit = opacity;
+        let mut needs_gradient = opacity;
+        for item in list.items() {
+            match item {
+                sequoia_core::RenderItem::Image(_) | sequoia_core::RenderItem::Blit { .. } => {
+                    needs_blit = true;
+                }
+                sequoia_core::RenderItem::Gradient(_) => needs_gradient = true,
+                _ => {}
+            }
+        }
+        if needs_blit {
+            self.ensure_blit_pipeline();
+        }
+        if !surfaces.is_empty() {
+            self.ensure_surface_blit_pipeline();
+        }
+        if needs_gradient {
+            self.ensure_gradient_pipeline();
+        }
+        if list.has_backdrops() || list.has_filters() || opacity {
+            self.ensure_backdrop_pipelines();
+        }
+        if use_offscreen {
+            self.ensure_present_pipeline();
+        }
     }
 
     /// Builds the pipeline for one shader, blend mode, and target format.
@@ -1589,7 +1777,11 @@ impl GpuRenderer {
         // Partial repaint needs a persistent colour target. Composited paths
         // (backdrops, filters, opacity groups) and embedded surface callbacks
         // keep the old full-repaint path for now.
-        let use_offscreen = !has_backdrops && !has_filters && !list.has_opacity_groups();
+        let use_offscreen = !has_backdrops
+            && !has_filters
+            && !list.has_opacity_groups()
+            && damage.is_some_and(|regions| !regions.is_empty());
+        self.ensure_scene_pipelines(list, surfaces, use_offscreen);
         if use_offscreen {
             if self.ensure_frame_target(fb) {
                 self.frame_target_valid = false;
@@ -2067,7 +2259,7 @@ impl GpuRenderer {
                 self.stats.frames += 1;
                 if dq + dg + di + dgrad > 0 {
                     log::error!(
-                        "sequoia-render: frame exceeds the device vertex-buffer limit — \
+                        "sequoia-render: frame exceeds the device vertex-buffer limit Ä‚ËĂ˘â€šÂ¬Ă˘â‚¬ĹĄ \
                      dropped quads={dq} glyphs={dg} images={di} gradients={dgrad} \
                      (paint items={}, quad ceiling={}, glyph ceiling={})",
                         list.items().len(),
@@ -2216,7 +2408,7 @@ impl GpuRenderer {
                         self.warned_filter_combo = true;
                         log::warn!(
                             "sequoia-render: {skipped} composite op(s) skipped \
-                             (backdrop marker inside a filter range or nested filter — \
+                             (backdrop marker inside a filter range or nested filter Ä‚ËĂ˘â€šÂ¬Ă˘â‚¬ĹĄ \
                              the outer filter wins)"
                         );
                     }
@@ -2762,7 +2954,7 @@ impl GpuRenderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_pipeline(&self.surface_blit_pipeline);
+                pass.set_pipeline(self.surface_blit_pipeline.as_ref().expect("surface blit pipeline"));
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.set_vertex_buffer(0, self.blit_buf.slice(..));
                 for (i, key) in blit_keys.iter().enumerate() {
@@ -2817,8 +3009,8 @@ impl GpuRenderer {
                                     &self.quad_pipeline,
                                     &self.quad_pipeline_opaque,
                                     &self.glyph_pipeline,
-                                    &self.blit_pipeline,
-                                    &self.gradient_pipeline,
+                                    self.blit_pipeline.as_ref().expect("blit pipeline"),
+                                    self.gradient_pipeline.as_ref().expect("gradient pipeline"),
                                     &self.bind_group,
                                     self.atlas_tex.as_ref().map(|(_, bg)| bg),
                                     self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
@@ -2845,8 +3037,8 @@ impl GpuRenderer {
                                     self.backdrop_tex.as_ref(),
                                 ) {
                                     Self::draw_backdrop_marker_at(
-                                        &self.backdrop_pipeline,
-                                        &self.backdrop_blur_pipeline,
+                                        self.backdrop_pipeline.as_ref().expect("backdrop pipeline"),
+                                        self.backdrop_blur_pipeline.as_ref().expect("backdrop blur pipeline"),
                                         &self.bind_group,
                                         bufs,
                                         origin,
@@ -2897,14 +3089,14 @@ impl GpuRenderer {
                             {
                                 let filter_blur = backdrop_insts[idx as usize].params[0];
                                 Self::draw_filter_at(
-                                    &self.backdrop_pipeline,
-                                    &self.backdrop_blur_pipeline,
+                                    self.backdrop_pipeline.as_ref().expect("backdrop pipeline"),
+                                    self.backdrop_blur_pipeline.as_ref().expect("backdrop blur pipeline"),
                                     &self.bind_group,
                                     &self.quad_pipeline,
                                     &self.quad_pipeline_opaque,
                                     &self.glyph_pipeline,
-                                    &self.blit_pipeline,
-                                    &self.gradient_pipeline,
+                                    self.blit_pipeline.as_ref().expect("blit pipeline"),
+                                    self.gradient_pipeline.as_ref().expect("gradient pipeline"),
                                     self.atlas_tex.as_ref().map(|(_, bg)| bg),
                                     self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
                                     bufs,
@@ -2977,8 +3169,8 @@ impl GpuRenderer {
                                     &self.quad_pipeline,
                                     &self.quad_pipeline_opaque,
                                     &self.glyph_pipeline,
-                                    &self.blit_pipeline,
-                                    &self.gradient_pipeline,
+                                    self.blit_pipeline.as_ref().expect("blit pipeline"),
+                                    self.gradient_pipeline.as_ref().expect("gradient pipeline"),
                                     &self.bind_group,
                                     self.atlas_tex.as_ref().map(|(_, bg)| bg),
                                     self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
@@ -3033,8 +3225,8 @@ impl GpuRenderer {
                         &self.quad_pipeline,
                         &self.quad_pipeline_opaque,
                         &self.glyph_pipeline,
-                        &self.blit_pipeline,
-                        &self.gradient_pipeline,
+                        self.blit_pipeline.as_ref().expect("blit pipeline"),
+                        self.gradient_pipeline.as_ref().expect("gradient pipeline"),
                         &self.bind_group,
                         self.atlas_tex.as_ref().map(|(_, bg)| bg),
                         self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
@@ -3062,8 +3254,8 @@ impl GpuRenderer {
                         self.backdrop_tex.as_ref(),
                     ) {
                         Self::draw_backdrop_marker_at(
-                            &self.backdrop_pipeline,
-                            &self.backdrop_blur_pipeline,
+                            self.backdrop_pipeline.as_ref().expect("backdrop pipeline"),
+                            self.backdrop_blur_pipeline.as_ref().expect("backdrop blur pipeline"),
                             &self.bind_group,
                             bufs,
                             origin,
@@ -3111,7 +3303,7 @@ impl GpuRenderer {
                     &self.queue,
                     &mut self.present_buf,
                     &mut self.present_cap,
-                    &self.present_pipeline,
+                    self.present_pipeline.as_ref().expect("present pipeline"),
                     &self.bind_group,
                     bufs,
                     self.clear_color,
@@ -3146,9 +3338,9 @@ impl GpuRenderer {
                 quad_pipeline: &self.quad_pipeline,
                 quad_pipeline_opaque: &self.quad_pipeline_opaque,
                 glyph_pipeline: &self.glyph_pipeline,
-                blit_pipeline: &self.blit_pipeline,
-                gradient_pipeline: &self.gradient_pipeline,
-                backdrop_pipeline: &self.backdrop_pipeline,
+                blit_pipeline: self.blit_pipeline.as_ref().expect("blit pipeline"),
+                gradient_pipeline: self.gradient_pipeline.as_ref().expect("gradient pipeline"),
+                backdrop_pipeline: self.backdrop_pipeline.as_ref().expect("backdrop pipeline"),
                 bind_group: &self.bind_group,
                 atlas_bg: self.atlas_tex.as_ref().map(|(_, bg)| bg),
                 image_atlas_bg: self.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
@@ -3206,7 +3398,7 @@ impl GpuRenderer {
                     multiview_mask: None,
                 });
                 if !blit_quads.is_empty() {
-                    pass.set_pipeline(&self.surface_blit_pipeline);
+                    pass.set_pipeline(self.surface_blit_pipeline.as_ref().expect("surface blit pipeline"));
                     pass.set_bind_group(0, &self.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.blit_buf.slice(..));
                     for (i, key) in blit_keys.iter().enumerate() {
@@ -3243,7 +3435,7 @@ impl GpuRenderer {
                             if image_draws.is_empty() {
                                 continue;
                             }
-                            pass.set_pipeline(&self.blit_pipeline);
+                            pass.set_pipeline(self.blit_pipeline.as_ref().expect("blit pipeline"));
                             pass.set_bind_group(0, &self.bind_group, &[]);
                             pass.set_vertex_buffer(0, self.image_buf.slice(..));
                             let image_atlas_bg =
@@ -3288,7 +3480,7 @@ impl GpuRenderer {
                             }
                         }
                         GuiRun::Gradients(start, len) => {
-                            pass.set_pipeline(&self.gradient_pipeline);
+                            pass.set_pipeline(self.gradient_pipeline.as_ref().expect("gradient pipeline"));
                             pass.set_bind_group(0, &self.bind_group, &[]);
                             pass.set_vertex_buffer(0, self.gradient_buf.slice(..));
                             pass.draw(0..4, start..start + len);
@@ -3345,7 +3537,7 @@ impl GpuRenderer {
                     &self.queue,
                     &mut self.present_buf,
                     &mut self.present_cap,
-                    &self.present_pipeline,
+                    self.present_pipeline.as_ref().expect("present pipeline"),
                     &self.bind_group,
                     frame_bg,
                     clear_color,

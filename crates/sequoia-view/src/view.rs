@@ -404,6 +404,19 @@ impl EventCtx<'_> {
             .caret_positions_spaced(text, size, weight, spacing)
     }
 
+    pub fn caret_positions_styled_spaced(
+        &mut self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+        spacing: LetterSpacing,
+        family: Option<&str>,
+        style: FontStyle,
+    ) -> Vec<f32> {
+        self.text
+            .caret_positions_styled_spaced(text, size, weight, spacing, family, style)
+    }
+
     pub fn char_index_from_x(
         &mut self,
         text: &str,
@@ -985,6 +998,19 @@ impl PaintCtx<'_> {
     ) -> Vec<f32> {
         self.text
             .caret_positions_spaced(text, size, weight, spacing)
+    }
+
+    pub fn caret_positions_styled_spaced(
+        &mut self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+        spacing: LetterSpacing,
+        family: Option<&str>,
+        style: FontStyle,
+    ) -> Vec<f32> {
+        self.text
+            .caret_positions_styled_spaced(text, size, weight, spacing, family, style)
     }
 
     pub fn shape_rich_full(

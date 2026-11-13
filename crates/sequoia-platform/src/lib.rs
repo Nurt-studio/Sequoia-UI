@@ -11,7 +11,7 @@ use sequoia_core::{Color, Point, Rect, RenderList, Size};
 use sequoia_elements::{SharedClipboard, SharedDataClipboard};
 use sequoia_input::{CursorIcon, ImeEvent, Key, Modifiers, PointerButton};
 use sequoia_reactive::Environment;
-use sequoia_render::{GpuOptions, GpuRenderer};
+use sequoia_render::{GpuOptions, GpuRenderer, PreinitGpu, RenderError, preinit_gpu};
 use sequoia_style::Theme;
 use sequoia_text::TextSystem;
 use sequoia_view::{AnyView, CullCtx, FrameOutcome, Runtime, View};
@@ -76,6 +76,50 @@ impl std::fmt::Display for AppError {
 }
 
 impl std::error::Error for AppError {}
+
+static STARTUP_TRACE_MARKS: Mutex<Vec<(&'static str, f64)>> = Mutex::new(Vec::new());
+
+/// Env-gated stage timer used to diagnose startup latency.
+struct StartupTrace {
+    start: Option<Instant>,
+    label: &'static str,
+}
+
+impl StartupTrace {
+    fn new(label: &'static str) -> Self {
+        Self {
+            start: std::env::var_os("SEQUOIA_STARTUP_TRACE")
+                .is_some()
+                .then(Instant::now),
+            label,
+        }
+    }
+}
+
+impl Drop for StartupTrace {
+    fn drop(&mut self) {
+        if let Some(start) = self.start {
+            STARTUP_TRACE_MARKS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((self.label, start.elapsed().as_secs_f64() * 1000.0));
+        }
+    }
+}
+
+fn dump_startup_trace() {
+    let mut marks = STARTUP_TRACE_MARKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if marks.is_empty() {
+        return;
+    }
+    let mut out = String::new();
+    for (label, ms) in marks.drain(..) {
+        out.push_str(&format!("[startup] {label:<30} {ms:>8.2} ms\n"));
+    }
+    eprint!("{out}");
+}
 
 /// Controls when the platform schedules frames.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -254,6 +298,7 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let _trace = StartupTrace::new("App::default");
         Self {
             windows: vec![WindowSpec::untitled()],
             theme: Theme::dark(),
@@ -700,6 +745,11 @@ impl App {
     }
 
     pub fn run(self) -> Result<(), AppError> {
+        let preinit_options = GpuOptions::with_backend(self.backend);
+        let gpu_preinit = std::thread::Builder::new()
+            .name("sequoia-gpu-preinit".into())
+            .spawn(move || preinit_gpu(preinit_options))
+            .ok();
         let event_loop = EventLoop::<JobWake>::with_user_event()
             .build()
             .map_err(|e| AppError::EventLoop(e.to_string()))?;
@@ -766,6 +816,7 @@ impl App {
             initial,
             live: HashMap::new(),
             shared_gpu: None,
+            gpu_preinit,
             last_input: None,
             id_map: HashMap::new(),
             error: None,
@@ -1020,6 +1071,8 @@ impl WindowState {
     }
 
     fn draw_frame(&mut self, wid: WinitWindowId) {
+        let trace_frame = std::env::var_os("SEQUOIA_FRAME_TRACE").is_some()
+            && FRAME_TRACE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 3;
         if let Some(f) = &self.hooks.start {
             f();
         }
@@ -1036,6 +1089,9 @@ impl WindowState {
         let mut t = Instant::now();
         self.rt.tick();
         let tick_ms = t.elapsed().as_secs_f64() * 1000.0;
+        if trace_frame {
+            eprintln!("[startup] frame tick              {tick_ms:>8.2} ms");
+        }
         t = Instant::now();
         let size = self.window.inner_size();
         let s = self.scale;
@@ -1043,6 +1099,9 @@ impl WindowState {
         let bounds = Rect::from_xywh(0.0, 0.0, size.width as f32 / s, size.height as f32 / s);
         self.rt.layout(bounds, &mut self.text);
         let layout_ms = t.elapsed().as_secs_f64() * 1000.0;
+        if trace_frame {
+            eprintln!("[startup] frame layout            {layout_ms:>8.2} ms");
+        }
         t = Instant::now();
         self.list.clear();
         let mut epoch = self.text.atlas().epoch();
@@ -1066,6 +1125,9 @@ impl WindowState {
         }
         let surfaces = self.rt.take_surface_draws();
         let paint_ms = t.elapsed().as_secs_f64() * 1000.0;
+        if trace_frame {
+            eprintln!("[startup] frame paint             {paint_ms:>8.2} ms");
+        }
         t = Instant::now();
         if outcome == FrameOutcome::Painted
             && let Err(e) = self.gpu.render_with_damage_regions(
@@ -1079,6 +1141,12 @@ impl WindowState {
             log::warn!("sequoia-platform: render error: {e}");
         }
         let render_ms = t.elapsed().as_secs_f64() * 1000.0;
+        if trace_frame {
+            eprintln!(
+                "[startup] frame render+present    {render_ms:>8.2} ms (damage regions {})",
+                damage.as_ref().map_or(0, |d| d.len())
+            );
+        }
         note_frame(gap_ms, tick_ms, layout_ms, paint_ms, render_ms);
         if let Some(bench) = &self.bench {
             let stats = self.gpu.take_stats();
@@ -1306,6 +1374,8 @@ static FRAME_ENDS: OnceLock<Mutex<HashMap<WinitWindowId, Instant>>> = OnceLock::
 
 static LAST_SLOW_LOG: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 
+static FRAME_TRACE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn forget_frame_stats(wid: WinitWindowId) {
     let Some(map) = FRAME_ENDS.get() else {
         return;
@@ -1375,6 +1445,9 @@ struct PlatformApp {
 
     /// Device shared by every window; keeps image uploads from being repeated.
     shared_gpu: Option<SharedGpu>,
+
+    /// GPU initialization running alongside native window creation.
+    gpu_preinit: Option<std::thread::JoinHandle<Result<PreinitGpu, RenderError>>>,
 
     /// Last window that received input — the target for device events
     /// that do not carry a window identifier themselves.
@@ -1447,6 +1520,7 @@ impl PlatformApp {
         id: WindowId,
         spec: &WindowSpec,
     ) -> Result<(), AppError> {
+        let _trace = StartupTrace::new("create_window");
         let s = &spec.settings;
 
         let show_after_first_frame = s.visible;
@@ -1506,11 +1580,14 @@ impl PlatformApp {
             }
         }
 
-        let window = Arc::new(
-            event_loop
-                .create_window(attrs)
-                .map_err(|e| AppError::Window(format!("{id}: {e}")))?,
-        );
+        let window = {
+            let _trace = StartupTrace::new("create_window.native_window");
+            Arc::new(
+                event_loop
+                    .create_window(attrs)
+                    .map_err(|e| AppError::Window(format!("{id}: {e}")))?,
+            )
+        };
 
         // Enabled per focus: platforms otherwise route every key through the
         // IME, which breaks plain-key accelerators in non-text widgets.
@@ -1538,7 +1615,9 @@ impl PlatformApp {
             options = options.surface_format(format);
         }
         let mut new_shared = None;
-        let mut gpu = if let Some(shared) = self
+        let mut gpu = {
+            let _trace = StartupTrace::new("create_window.gpu_device");
+            if let Some(shared) = self
             .shared_gpu
             .as_ref()
             .filter(|shared| shared.supports(self.backend))
@@ -1556,9 +1635,30 @@ impl PlatformApp {
                 }
             }
         } else {
-            match SharedGpu::new(window.clone(), options) {
+            let shared_result = if let Some(handle) = self.gpu_preinit.take() {
+                let _trace = StartupTrace::new("create_window.preinit_join");
+                match handle.join() {
+                    Ok(Ok(preinit)) => {
+                        SharedGpu::new_preinit(window.clone(), options, preinit)
+                    }
+                    Ok(Err(e)) => {
+                        log::info!(
+                            "sequoia-platform: GPU preinit failed for window {id} ({e}) - retrying"
+                        );
+                        SharedGpu::new(window.clone(), options)
+                    }
+                    Err(_) => SharedGpu::new(window.clone(), options),
+                }
+            } else {
+                let _trace = StartupTrace::new("create_window.shared_gpu");
+                SharedGpu::new(window.clone(), options)
+            };
+            match shared_result {
                 Ok(shared) => {
-                    match shared.renderer(window.clone(), size.width, size.height, options) {
+                    match {
+                        let _trace = StartupTrace::new("create_window.renderer");
+                        shared.renderer(window.clone(), size.width, size.height, options)
+                    } {
                         Ok(gpu) => {
                             new_shared = Some(shared);
                             gpu
@@ -1592,6 +1692,7 @@ impl PlatformApp {
                         })?
                 }
             }
+        }
         };
         if let Some(shared) = new_shared {
             self.shared_gpu = Some(shared);
@@ -1600,11 +1701,14 @@ impl PlatformApp {
         if let Some(budget) = s.memory_budget {
             gpu.set_memory_budget(budget);
         }
-        for (name, wgsl) in &self.shaders {
-            if let Err(e) = gpu.register_shader(name, wgsl) {
-                log::error!(
-                    "sequoia-platform: failed to register shader `{name}` on window {id}: {e}"
-                );
+        {
+            let _trace = StartupTrace::new("create_window.register_shaders");
+            for (name, wgsl) in &self.shaders {
+                if let Err(e) = gpu.register_shader(name, wgsl) {
+                    log::error!(
+                        "sequoia-platform: failed to register shader `{name}` on window {id}: {e}"
+                    );
+                }
             }
         }
 
@@ -1622,11 +1726,18 @@ impl PlatformApp {
             .scale_override
             .map(sanitize_scale)
             .unwrap_or_else(|| sanitize_scale(window.scale_factor()));
-        let mut text = TextSystem::new();
-        text.set_scale_factor(scale);
-        install_fonts(&self.assets, &mut text);
+        let mut text = {
+            let _trace = StartupTrace::new("create_window.text_system");
+            let mut text = TextSystem::new();
+            text.set_scale_factor(scale);
+            install_fonts(&self.assets, &mut text);
+            text
+        };
 
-        let rt = Runtime::new();
+        let rt = {
+            let _trace = StartupTrace::new("create_window.runtime");
+            Runtime::new()
+        };
         for (name, _) in &self.shaders {
             if let Some(shader_id) = gpu.shader_id(name) {
                 rt.register_shader_id_with(name.clone(), shader_id);
@@ -1636,6 +1747,7 @@ impl PlatformApp {
         rt.set_root_fill(true);
         rt.set_environment(self.env.clone());
         if let Some(root) = spec.root.clone() {
+            let _trace = StartupTrace::new("create_window.mount");
             rt.mount_any(root);
         }
 
@@ -1673,15 +1785,22 @@ impl PlatformApp {
             hooks: self.hooks.clone(),
         };
 
-        state.draw_frame(wid);
+        {
+            let _trace = StartupTrace::new("create_window.first_draw");
+            state.draw_frame(wid);
+        }
         state.gate.borrow_mut().clear_request();
-        if show_after_first_frame {
-            state.window.set_visible(true);
-            state.rt.mark_full_damage();
+        {
+            let _trace = StartupTrace::new("create_window.show");
+            if show_after_first_frame {
+                state.window.set_visible(true);
+                state.rt.mark_full_damage();
+            }
         }
         state.request_redraw();
         self.live.insert(wid, state);
         log::debug!("sequoia-platform: created window {id} (winit {wid:?})");
+        dump_startup_trace();
         Ok(())
     }
 
