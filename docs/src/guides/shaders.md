@@ -165,10 +165,13 @@ Every parameter becomes one of three things:
 | `FragPos`, `FragLocal` | Fragment position in draw-rect pixels | `frag.local` |
 | `FragUv` | Texture coordinates in `0.0..=1.0` | `frag.uv` |
 | `FragWorld` | Window coordinates in pixels | `frag.world` |
-| `Sampler2D` | Texture plus filtering sampler | `name` and `name_sampler` |
+| `Sampler2D` | `texture_2d` plus filtering sampler | `name` and `name_sampler` |
+| `Sampler3D` | `texture_3d` plus filtering sampler | `name` and `name_sampler` |
 | `f32`, `i32`, `u32`, `bool` | Four-byte uniform | `name` |
 | `Vec2`, `Vec3`, `Vec4` | Vector uniform | `name` |
 | `Color` | Straight-alpha RGBA uniform | `name` as `vec4<f32>` |
+| `[f32; N]` | Packed float array | `name` as `array<f32, N>` |
+| `[Vec4; N]` | Vector array | `name` as `array<vec4<f32>, N>` |
 
 The generated body can also read `frag.local`, `frag.world`, `frag.uv`,
 `frag.rect_size`, and `screen.size` directly. `screen.size` is the physical
@@ -189,7 +192,7 @@ has the same 16-byte stride as WGSL `vec3<f32>`.
 
 ## Textures and offscreen passes
 
-A `Sampler2D` parameter declares one texture input. Up to three are allowed.
+A `Sampler2D` parameter declares one texture input. Up to six are allowed.
 Each input is bound to its own group starting at group 1, so a shader can sample
 several captured layers:
 
@@ -243,9 +246,9 @@ let view = Canvas::new().on_draw(|g| {
 # let _ = view;
 ```
 
-Names in the input slice must match the `Sampler2D` parameters exactly. A missing
-input samples a transparent white texture; an input name the shader does not
-declare is ignored with a warning. `Painter::shader` uses the current blend mode,
+Names in the input slice must match the `Sampler2D`/`Sampler3D` parameters
+exactly. A missing input samples an opaque white texture; an input name the
+shader does not declare is ignored with a warning. `Painter::shader` uses the current blend mode,
 and `shader_with_blend` takes an explicit `BlendMode` when a pass needs one.
 `shader_at` lets you choose the source UV rectangle, which is useful for
 inspecting or repeating part of a captured layer.
@@ -253,6 +256,58 @@ inspecting or repeating part of a captured layer.
 Targets are ordered: a target must be finished before a later draw samples it.
 `group` records the target bounds in the render list and returns its
 `RenderTargetId`; keep the id only for draws that follow it.
+
+## Arrays and 3D LUTs
+
+Two uniform shapes are meant for tables: `[f32; N]` and `[Vec4; N]`. WGSL
+requires uniform array strides to be multiples of 16 bytes, so `[f32; N]` is
+stored packed four values per `vec4` and unpacked into a local `array<f32, N>`
+before the body runs — `weights[i]` reads a single `f32`, while `[Vec4; N]`
+keeps one `vec4<f32>` per element.
+
+A `Sampler3D` parameter binds a `texture_3d<f32>` with a linear, clamp-to-edge
+sampler. Together with `ImageSource::cube` it applies an Adobe/IRIDAS `.cube`
+colour LUT: the sampled colour becomes the 3D lookup coordinate, and the
+sampler interpolates the table trilinearly.
+
+```rust,no_run
+use sequoia_ui::prelude::*;
+use sequoia_ui::core::{BlendMode, ImageSource, TexInput};
+use sequoia_ui::shader::shader;
+
+shader! {
+    pub fn apply_lut(content: Sampler2D, lut: Sampler3D, uv: FragUv) -> Color {
+        let sampled = textureSample(content, content_sampler, uv);
+        let mapped = textureSample(lut, lut_sampler, sampled.rgb);
+        return vec4<f32>(mapped.rgb, sampled.a);
+    }
+}
+
+let view = Canvas::new().on_draw(|g| {
+    let rect = g.rect();
+    let (photo, ()) = g.group(rect.size, BlendMode::Normal, |inner| {
+        inner.image(rect, [0.0, 0.0, 1.0, 1.0], ImageSource::File("photo.jpg".into()));
+    });
+    g.shader(
+        ApplyLut,
+        rect,
+        &[
+            ("content", TexInput::Target(photo)),
+            ("lut", TexInput::Image(ImageSource::cube("lut.cube"))),
+        ],
+    );
+});
+# let _ = view;
+```
+
+The renderer parses the `.cube` file, uploads it as a `Rgba16Float`
+`texture_3d` on first use and caches it by path. Only 3D tables with
+`LUT_3D_SIZE` in `2..=128` and the default `DOMAIN_MIN 0 0 0` /
+`DOMAIN_MAX 1 1 1` are accepted; 1D or 2D LUTs and custom domains are rejected
+with a warning. Because the sampler interpolates between table entries, a 33³
+LUT reproduces what a photo editor applying the same table produces. 3D inputs
+count toward the six-texture limit, and a missing one samples an opaque white
+1×1×1 volume.
 
 ## Canvas shortcuts
 
@@ -402,7 +457,7 @@ use additive or screen modes for glows and light effects.
 - Shader draws are render items, so they follow the same damage tracking as
   other draws. Targets and filters used by a pass can still force a full
   repaint; see [Rendering](../concepts/rendering.md).
-- Textures are bound by name. Renaming a `Sampler2D` parameter without updating
+- Textures are bound by name. Renaming a `Sampler2D`/`Sampler3D` parameter without updating
   the input slice silently samples the fallback texture; check for warnings.
 - The macro rejects unsupported parameter types, duplicate parameter names, more
   than three textures, and uniform payloads over 256 bytes at compile time.
