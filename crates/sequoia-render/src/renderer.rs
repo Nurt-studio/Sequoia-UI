@@ -17,9 +17,11 @@ use winit::window::Window;
 
 use crate::gpu::pipelines::*;
 use crate::gpu::resources::{
-    ImageAtlas, ImageCache, SharedImageCache, UserShaderEntry, lock_images, vertex_buffer,
+    ImageAtlas, ImageCache, SharedImageCache, UserShaderEntry, VolumeCache, lock_images,
+    vertex_buffer,
 };
-use crate::gpu::shaders::{passthrough_wgsl, validate_user_shader};
+use crate::gpu::shaders::{passthrough_wgsl, texture_kinds as shader_texture_kinds, validate_user_shader};
+use sequoia_shader::TextureKind;
 use crate::pass::opacity::*;
 use crate::scene::grouping::*;
 use crate::scene::instances::*;
@@ -141,6 +143,12 @@ pub struct GpuRenderer {
     pub(crate) shader_bind_group: wgpu::BindGroup,
     pub(crate) shader_white_bg: wgpu::BindGroup,
     pub(crate) _shader_white_tex: wgpu::Texture,
+    /// Layout for `Sampler3D` input groups (`texture_3d<f32>` + sampler).
+    pub(crate) volume_bgl: wgpu::BindGroupLayout,
+    /// 1x1x1 white fallback sampled by missing 3D inputs.
+    pub(crate) shader_white_volume_bg: wgpu::BindGroup,
+    pub(crate) _shader_white_volume_tex: wgpu::Texture,
+    pub(crate) volumes: VolumeCache,
     pub(crate) scratch_shader_textures: Vec<ShaderTextureGroups>,
     pub(crate) render_targets: HashMap<sequoia_core::RenderTargetId, RenderTargetTexture>,
     pub(crate) target_cache: usize,
@@ -148,6 +156,65 @@ pub struct GpuRenderer {
     pub(crate) target_reuses: u64,
     #[cfg(debug_assertions)]
     pub(crate) pipeline_builds: u64,
+}
+
+/// 1x1x1 white `texture_3d` used when a `Sampler3D` input is unbound.
+fn create_white_volume_bind_group(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+) -> (wgpu::Texture, wgpu::BindGroup) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sequoia-shader-white-3d"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let white = [half::f16::from_f32(1.0).to_bits(); 4];
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(&white),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sequoia-shader-white-3d-bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+    (texture, bind_group)
 }
 
 fn create_white_bind_group(
@@ -540,6 +607,8 @@ impl GpuRenderer {
             ],
         });
 
+        let volume_bgl = create_volume_bind_group_layout(&device);
+
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sequoia-uniform"),
             size: 16,
@@ -607,6 +676,8 @@ impl GpuRenderer {
 
         let (shader_white_tex, shader_white_bg) =
             create_white_bind_group(&device, &queue, &atlas_bgl, &blit_sampler);
+        let (shader_white_volume_tex, shader_white_volume_bg) =
+            create_white_volume_bind_group(&device, &queue, &volume_bgl, &blit_sampler);
         mark!("buffers");
 
         macro_rules! timed {
@@ -703,6 +774,7 @@ impl GpuRenderer {
         let passthrough_entry = UserShaderEntry {
             pipelines: HashMap::new(),
             bgl: shader_bgl.clone(),
+            kinds: Vec::new(),
             module: passthrough_module,
         };
         let mut passthrough_shaders = HashMap::new();
@@ -816,6 +888,10 @@ impl GpuRenderer {
             shader_bind_group,
             shader_white_bg,
             _shader_white_tex: shader_white_tex,
+            volume_bgl,
+            shader_white_volume_bg,
+            _shader_white_volume_tex: shader_white_volume_tex,
+            volumes: VolumeCache::default(),
             scratch_shader_textures: Vec::new(),
             render_targets: HashMap::new(),
             target_cache: 8,
@@ -1355,6 +1431,7 @@ impl GpuRenderer {
             UserShaderEntry {
                 pipelines: HashMap::new(),
                 bgl: self.shader_bgl.clone(),
+                kinds: shader_texture_kinds(wgsl),
                 module,
             },
         );
@@ -1584,11 +1661,20 @@ impl GpuRenderer {
         }
         let module = entry.module.clone();
         let bgl = entry.bgl.clone();
-        let atlas_bgl = self.atlas_bgl.clone();
+        let kinds = entry.kinds.clone();
+        let texture_layouts: Vec<wgpu::BindGroupLayout> = kinds
+            .iter()
+            .map(|kind| match kind {
+                TextureKind::D3 => self.volume_bgl.clone(),
+                TextureKind::D2 => self.atlas_bgl.clone(),
+            })
+            .collect();
+        let texture_layout_refs: Vec<&wgpu::BindGroupLayout> = texture_layouts.iter().collect();
         if blend_mode_is_advanced(blend) {
             log::warn!("sequoia-render: blend mode {blend:?} falls back to Normal until stage 4");
         }
-        let layout = create_user_shader_pipeline_layout(&self.device, &bgl, &atlas_bgl);
+        let layout =
+            create_user_shader_pipeline_layout(&self.device, &bgl, &texture_layout_refs);
         let pipeline = create_user_shader_pipeline(
             &self.device,
             &module,
@@ -2740,15 +2826,43 @@ impl GpuRenderer {
 
         self.scratch_shader_textures.clear();
         let shader_texture_inputs = std::mem::take(&mut self.shader_data.textures);
-        for textures in &shader_texture_inputs {
-            let mut groups: ShaderTextureGroups = [
-                self.shader_white_bg.clone(),
-                self.shader_white_bg.clone(),
-                self.shader_white_bg.clone(),
-            ];
+        let instance_shaders: Vec<ShaderId> = self
+            .shader_data
+            .instances
+            .iter()
+            .map(|instance| ShaderId::new(instance.shader_id))
+            .collect();
+        for (index, textures) in shader_texture_inputs.iter().enumerate() {
+            let kinds = instance_shaders
+                .get(index)
+                .and_then(|id| self.user_shaders.get(id))
+                .map(|entry| entry.kinds.clone())
+                .unwrap_or_default();
+            let mut groups: ShaderTextureGroups =
+                std::array::from_fn(|_| self.shader_white_bg.clone());
+            for (slot, kind) in kinds.iter().enumerate() {
+                if *kind == TextureKind::D3
+                    && let Some(group) = groups.get_mut(slot)
+                {
+                    *group = self.shader_white_volume_bg.clone();
+                }
+            }
             for (binding, input) in textures.iter() {
-                let group = match input {
-                    TexInput::Image(source) => {
+                let kind = kinds
+                    .get(*binding as usize)
+                    .copied()
+                    .unwrap_or(TextureKind::D2);
+                let group = match (kind, input) {
+                    (TextureKind::D3, TexInput::Image(sequoia_core::ImageSource::Cube(path))) => {
+                        self.volumes.bind_group(
+                            &self.device,
+                            &self.queue,
+                            &self.volume_bgl,
+                            &self.blit_sampler,
+                            path,
+                        )
+                    }
+                    (TextureKind::D2, TexInput::Image(source)) => {
                         let max_dim = self.quality.max_image_dim().max(1);
                         let allow_new = self.quality.max_image_dim() > 0;
                         Self::image_bind_group(
@@ -2762,7 +2876,7 @@ impl GpuRenderer {
                             max_dim,
                         )
                     }
-                    TexInput::Target(target) => self
+                    (TextureKind::D2, TexInput::Target(target)) => self
                         .render_targets
                         .get(target)
                         .map(|entry| entry.bind_group.clone()),
@@ -3515,7 +3629,13 @@ impl GpuRenderer {
                                 if let Some(groups) =
                                     self.scratch_shader_textures.get(index as usize)
                                 {
-                                    for (slot, group) in groups.iter().enumerate() {
+                                    // The pipeline layout only has the texture
+                                    // groups the shader declares; binding more
+                                    // fails validation.
+                                    let count = entry.kinds.len();
+                                    for (slot, group) in
+                                        groups.iter().take(count).enumerate()
+                                    {
                                         pass.set_bind_group(slot as u32 + 1, group, &[]);
                                     }
                                 }

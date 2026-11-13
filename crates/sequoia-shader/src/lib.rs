@@ -41,10 +41,10 @@ mod wgsl;
 pub use builtin::{ApplyMask, BUILTINS};
 pub use math::{Color, Vec2, Vec3, Vec4};
 pub use registry::ShaderRegistry;
-pub use sampler::Sampler2D;
+pub use sampler::{Sampler2D, Sampler3D};
 pub use traits::{
     FragLocal, FragPos, FragUv, FragWorld, MAX_TEXTURES, SequoiShader, TEXTURE_GROUP_BASE,
-    VertexIndex,
+    TextureKind, VertexIndex,
 };
 pub use wgsl::{WGSL_ARRAY_UNIFORMS, WGSL_EPILOGUE, WGSL_PRELUDE, WGSL_STD};
 
@@ -78,6 +78,18 @@ mod tests {
     crate::shader! {
         fn constant() -> Color {
             return vec4<f32>(1.0, 0.5, 0.25, 1.0);
+        }
+    }
+
+    crate::shader! {
+        fn lut3d_sample(uv: FragUv, lut: Sampler3D) -> Color {
+            return textureSample(lut, lut_sampler, vec3<f32>(uv.x, uv.y, 0.5));
+        }
+    }
+
+    crate::shader! {
+        fn array_shader(weights: [f32; 4], vectors: [Vec4; 2]) -> Color {
+            return vec4<f32>(weights[0], vectors[0].w, 0.0, 1.0);
         }
     }
 
@@ -120,5 +132,29 @@ mod tests {
         assert_eq!(Constant::UNIFORM_SIZE, 16);
         assert_eq!(bytes.len(), 16);
         assert_eq!(Constant::TEXTURES, &[] as &[&str]);
+    }
+
+    #[test]
+    fn supports_sampler_3d_and_arrays() {
+        assert_eq!(Lut3dSample::TEXTURES, &["lut"]);
+        assert_eq!(Lut3dSample::TEXTURE_KINDS, &[TextureKind::D3]);
+        assert!(Lut3dSample::WGSL.contains("@group(1) @binding(0) var lut: texture_3d<f32>"));
+        assert_eq!(Textured::TEXTURE_KINDS, &[TextureKind::D2]);
+
+        let shader = ArrayShader {
+            weights: [1.0, 2.0, 3.0, 4.0],
+            vectors: [Vec4::splat(1.0), Vec4::splat(2.0)],
+        };
+        let mut bytes = Vec::new();
+        shader.encode_uniforms(&mut bytes);
+        assert_eq!(ArrayShader::UNIFORM_SIZE, 48);
+        assert_eq!(bytes.len(), 48);
+        // f32 arrays are packed contiguously and rounded up to 16 B.
+        assert_eq!(f32::from_le_bytes(bytes[0..4].try_into().unwrap()), 1.0);
+        assert_eq!(f32::from_le_bytes(bytes[12..16].try_into().unwrap()), 4.0);
+        assert_eq!(f32::from_le_bytes(bytes[16..20].try_into().unwrap()), 1.0);
+        assert_eq!(f32::from_le_bytes(bytes[44..48].try_into().unwrap()), 2.0);
+        assert!(ArrayShader::WGSL.contains("var weights: array<f32, 4>;"));
+        assert!(ArrayShader::WGSL.contains("array<vec4<f32>, 2>"));
     }
 }

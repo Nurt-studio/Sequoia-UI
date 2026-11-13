@@ -893,6 +893,9 @@ impl Rasterizer<'_> {
                 TexInput::Image(ImageSource::File(_)) => {
                     log::warn!("sequoia-export: file textures are not supported by CPU shaders");
                 }
+                TexInput::Image(ImageSource::Cube(_)) => {
+                    log::warn!("sequoia-export: 3D LUT inputs are not supported by CPU shaders");
+                }
                 _ => {}
             }
         }

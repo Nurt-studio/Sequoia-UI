@@ -12,7 +12,7 @@ use syn::spanned::Spanned;
 use syn::{Attribute, Ident, Pat, Signature, Type, Visibility, braced, parse_macro_input};
 
 const MAX_UNIFORM_BYTES: usize = 256;
-const MAX_TEXTURES: usize = 3;
+const MAX_TEXTURES: usize = 6;
 
 struct ShaderItem {
     attrs: Vec<Attribute>,
@@ -48,36 +48,58 @@ enum UniformType {
     Vec3,
     Vec4,
     Color,
+    F32Array(usize),
+    Vec4Array(usize),
 }
 
 impl UniformType {
     fn parse(ty: &Type) -> Option<Self> {
-        let Type::Path(path) = ty else {
-            return None;
-        };
-        let ident = path.path.segments.last()?.ident.to_string();
-        Some(match ident.as_str() {
-            "f32" => Self::F32,
-            "i32" => Self::I32,
-            "u32" => Self::U32,
-            "bool" => Self::Bool,
-            "Vec2" => Self::Vec2,
-            "Vec3" => Self::Vec3,
-            "Vec4" => Self::Vec4,
-            "Color" => Self::Color,
-            _ => return None,
-        })
+        if let Type::Path(path) = ty {
+            let ident = path.path.segments.last()?.ident.to_string();
+            Some(match ident.as_str() {
+                "f32" => Self::F32,
+                "i32" => Self::I32,
+                "u32" => Self::U32,
+                "bool" => Self::Bool,
+                "Vec2" => Self::Vec2,
+                "Vec3" => Self::Vec3,
+                "Vec4" => Self::Vec4,
+                "Color" => Self::Color,
+                _ => return None,
+            })
+        } else if let Type::Array(array) = ty {
+            let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(lit), .. }) = &array.len else {
+                return None;
+            };
+            let n = lit.base10_parse::<usize>().ok()?;
+            if n == 0 {
+                return None;
+            }
+            if type_is(&array.elem, "f32") {
+                Some(Self::F32Array(n))
+            } else if type_is(&array.elem, "Vec4") {
+                Some(Self::Vec4Array(n))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
-    fn wgsl(self) -> &'static str {
+    fn wgsl(self) -> String {
         match self {
-            Self::F32 => "f32",
-            Self::I32 => "i32",
-            Self::U32 => "u32",
-            Self::Bool => "u32",
-            Self::Vec2 => "vec2<f32>",
-            Self::Vec3 => "vec3<f32>",
-            Self::Vec4 | Self::Color => "vec4<f32>",
+            Self::F32 => "f32".into(),
+            Self::I32 => "i32".into(),
+            Self::U32 => "u32".into(),
+            Self::Bool => "u32".into(),
+            Self::Vec2 => "vec2<f32>".into(),
+            Self::Vec3 => "vec3<f32>".into(),
+            Self::Vec4 | Self::Color => "vec4<f32>".into(),
+            // WGSL requires uniform array strides to be a multiple of 16 B,
+            // so f32 arrays are stored as packed vec4s and unpacked in fs_user.
+            Self::F32Array(n) => format!("array<vec4<f32>, {}>", n.div_ceil(4)),
+            Self::Vec4Array(n) => format!("array<vec4<f32>, {n}>"),
         }
     }
 
@@ -85,7 +107,7 @@ impl UniformType {
         match self {
             Self::F32 | Self::I32 | Self::U32 | Self::Bool => 4,
             Self::Vec2 => 8,
-            Self::Vec3 | Self::Vec4 | Self::Color => 16,
+            Self::Vec3 | Self::Vec4 | Self::Color | Self::F32Array(_) | Self::Vec4Array(_) => 16,
         }
     }
 
@@ -95,8 +117,16 @@ impl UniformType {
             Self::Vec2 => 8,
             Self::Vec3 => 12,
             Self::Vec4 | Self::Color => 16,
+            Self::F32Array(n) => n.div_ceil(4) * 16,
+            Self::Vec4Array(n) => n * 16,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum TextureKind {
+    Sampler2D,
+    Sampler3D,
 }
 
 enum InputKind {
@@ -108,7 +138,7 @@ enum InputKind {
 
 enum ParamKind {
     Uniform(UniformType),
-    Texture,
+    Texture(TextureKind),
     Input(InputKind),
 }
 
@@ -128,7 +158,7 @@ struct ShaderModel {
     struct_name: Ident,
     vis: Visibility,
     fields: Vec<UniformField>,
-    textures: Vec<Ident>,
+    textures: Vec<(Ident, TextureKind)>,
     inputs: Vec<(Ident, InputKind)>,
     size: usize,
     body: TokenStream2,
@@ -180,7 +210,9 @@ fn parse_params(sig: &Signature) -> syn::Result<Vec<Param>> {
         let kind = if let Some(ty) = UniformType::parse(&typed.ty) {
             ParamKind::Uniform(ty)
         } else if type_is(&typed.ty, "Sampler2D") {
-            ParamKind::Texture
+            ParamKind::Texture(TextureKind::Sampler2D)
+        } else if type_is(&typed.ty, "Sampler3D") {
+            ParamKind::Texture(TextureKind::Sampler3D)
         } else if type_is(&typed.ty, "FragPos") || type_is(&typed.ty, "FragLocal") {
             ParamKind::Input(InputKind::FragPos)
         } else if type_is(&typed.ty, "FragUv") {
@@ -193,7 +225,7 @@ fn parse_params(sig: &Signature) -> syn::Result<Vec<Param>> {
             let ty = &typed.ty;
             return Err(syn::Error::new(
                 ty.span(),
-                "unsupported shader parameter type; allowed: f32, i32, u32, bool, Vec2, Vec3, Vec4, Color, Sampler2D, FragPos, FragUv, FragWorld, VertexIndex",
+                "unsupported shader parameter type; allowed: f32, i32, u32, bool, Vec2, Vec3, Vec4, Color, [f32; N], [Vec4; N], Sampler2D, Sampler3D, FragPos, FragUv, FragWorld, VertexIndex",
             ));
         };
         params.push(Param { name, kind });
@@ -224,14 +256,14 @@ fn build_model(item: ShaderItem) -> syn::Result<ShaderModel> {
                 fields.push(UniformField { name, ty, offset });
                 offset += ty.size();
             }
-            ParamKind::Texture => {
+            ParamKind::Texture(kind) => {
                 if textures.len() == MAX_TEXTURES {
                     return Err(syn::Error::new(
                         name.span(),
                         format!("a shader may declare at most {MAX_TEXTURES} textures"),
                     ));
                 }
-                textures.push(name);
+                textures.push((name, kind));
             }
             ParamKind::Input(kind) => inputs.push((name, kind)),
         }
@@ -294,6 +326,31 @@ fn byte_write(field: &UniformField) -> TokenStream2 {
             bytes[#offset + 8..#offset + 12].copy_from_slice(&self.#name.b.to_le_bytes());
             bytes[#offset + 12..#offset + 16].copy_from_slice(&self.#name.a.to_le_bytes());
         },
+        UniformType::F32Array(n) => {
+            let mut tokens = TokenStream2::new();
+            for i in 0..n {
+                let off = offset + i * 4;
+                let q = quote! {
+                    bytes[#off..#off + 4].copy_from_slice(&self.#name[#i].to_le_bytes());
+                };
+                tokens.extend(q);
+            }
+            tokens
+        }
+        UniformType::Vec4Array(n) => {
+            let mut tokens = TokenStream2::new();
+            for i in 0..n {
+                let off = offset + i * 16;
+                let q = quote! {
+                    bytes[#off..#off + 4].copy_from_slice(&self.#name[#i].x.to_le_bytes());
+                    bytes[#off + 4..#off + 8].copy_from_slice(&self.#name[#i].y.to_le_bytes());
+                    bytes[#off + 8..#off + 12].copy_from_slice(&self.#name[#i].z.to_le_bytes());
+                    bytes[#off + 12..#off + 16].copy_from_slice(&self.#name[#i].w.to_le_bytes());
+                };
+                tokens.extend(q);
+            }
+            tokens
+        }
     }
 }
 
@@ -312,10 +369,14 @@ fn build_wgsl(model: &ShaderModel) -> (String, usize) {
     }
     wgsl.push_str("}\n");
     wgsl.push_str("@group(0) @binding(1) var<uniform> sequoia_u: SequoiaUniforms;\n");
-    for (slot, name) in model.textures.iter().enumerate() {
+    for (slot, (name, kind)) in model.textures.iter().enumerate() {
         let group = 1 + slot;
+        let tex_type = match kind {
+            TextureKind::Sampler2D => "texture_2d<f32>",
+            TextureKind::Sampler3D => "texture_3d<f32>",
+        };
         wgsl.push_str(&format!(
-            "@group({group}) @binding(0) var {name}: texture_2d<f32>;\n"
+            "@group({group}) @binding(0) var {name}: {tex_type};\n"
         ));
         wgsl.push_str(&format!(
             "@group({group}) @binding(1) var {name}_sampler: sampler;\n"
@@ -323,16 +384,22 @@ fn build_wgsl(model: &ShaderModel) -> (String, usize) {
     }
     wgsl.push_str("fn fs_user(frag: ShaderVarying) -> vec4<f32> {\n");
     for field in &model.fields {
+        let name = &field.name;
         if matches!(field.ty, UniformType::Bool) {
-            wgsl.push_str(&format!(
-                "    let {} = sequoia_u.{} != 0u;\n",
-                field.name, field.name
-            ));
+            wgsl.push_str(&format!("    let {name} = sequoia_u.{name} != 0u;\n"));
+        } else if let UniformType::F32Array(n) = field.ty {
+            // Unpack the packed vec4 storage into a plain array so the body can
+            // write `weights[i]` as if the uniform held `array<f32, N>`.
+            wgsl.push_str(&format!("    var {name}: array<f32, {n}>;\n"));
+            for i in 0..n {
+                let lane = ["x", "y", "z", "w"][i % 4];
+                wgsl.push_str(&format!(
+                    "    {name}[{i}] = sequoia_u.{name}[{}].{lane};\n",
+                    i / 4
+                ));
+            }
         } else {
-            wgsl.push_str(&format!(
-                "    let {} = sequoia_u.{};\n",
-                field.name, field.name
-            ));
+            wgsl.push_str(&format!("    let {name} = sequoia_u.{name};\n"));
         }
     }
     for (name, kind) in &model.inputs {
@@ -374,6 +441,8 @@ fn generate(model: &ShaderModel, wgsl: &str) -> TokenStream2 {
             UniformType::Vec3 => quote!(#runtime::Vec3),
             UniformType::Vec4 => quote!(#runtime::Vec4),
             UniformType::Color => quote!(#runtime::Color),
+            UniformType::F32Array(n) => quote!([f32; #n]),
+            UniformType::Vec4Array(n) => quote!([#runtime::Vec4; #n]),
         };
         quote!(pub #name: #ty,)
     });
@@ -384,7 +453,11 @@ fn generate(model: &ShaderModel, wgsl: &str) -> TokenStream2 {
     };
 
     let writes = model.fields.iter().map(byte_write);
-    let texture_names = model.textures.iter().map(|name| name.to_string());
+    let texture_names = model.textures.iter().map(|(name, _)| name.to_string());
+    let texture_kinds = model.textures.iter().map(|(_, kind)| match kind {
+        TextureKind::Sampler2D => quote!(#runtime::TextureKind::D2),
+        TextureKind::Sampler3D => quote!(#runtime::TextureKind::D3),
+    });
     let wgsl_lit = syn::LitStr::new(wgsl, model.name.span());
 
     quote! {
@@ -396,6 +469,7 @@ fn generate(model: &ShaderModel, wgsl: &str) -> TokenStream2 {
             const NAME: &'static str = #shader_name;
             const WGSL: &'static str = #wgsl_lit;
             const TEXTURES: &'static [&'static str] = &[#(#texture_names),*];
+            const TEXTURE_KINDS: &'static [#runtime::TextureKind] = &[#(#texture_kinds),*];
             const UNIFORM_SIZE: usize = #uniform_size;
 
             fn encode_uniforms(&self, out: &mut Vec<u8>) {
@@ -554,6 +628,17 @@ mod tests {
     #[should_panic(expected = "VertexIndex is not implemented")]
     fn vertex_index_fallback_is_not_silent() {
         let _ = compile("fn broken(index: VertexIndex) -> Color { return vec4<f32>(1.0); }");
+    }
+
+    #[test]
+    fn f32_arrays_are_packed_into_vec4_storage() {
+        let wgsl = compile(
+            "fn arr(weights: [f32; 5]) -> Color { return vec4<f32>(weights[4]); }",
+        )
+        .expect("arrays must compile");
+        assert!(wgsl.contains("weights: array<vec4<f32>, 2>,"), "{wgsl}");
+        assert!(wgsl.contains("var weights: array<f32, 5>;"), "{wgsl}");
+        assert!(wgsl.contains("weights[4] = sequoia_u.weights[1].x;"), "{wgsl}");
     }
 
     #[test]

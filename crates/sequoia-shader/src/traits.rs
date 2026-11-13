@@ -2,7 +2,17 @@
 pub const TEXTURE_GROUP_BASE: u32 = 1;
 
 /// Maximum number of textures a generated shader can declare.
-pub const MAX_TEXTURES: usize = 3;
+pub const MAX_TEXTURES: usize = 6;
+
+/// Dimension of a texture input declared in a shader signature.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextureKind {
+    /// `texture_2d<f32>`, sampled with `vec2<f32>` coordinates.
+    #[default]
+    D2,
+    /// `texture_3d<f32>`, sampled with `vec3<f32>` coordinates (LUTs, volumes).
+    D3,
+}
 
 /// Fragment local coordinates in pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -37,6 +47,12 @@ pub trait SequoiShader {
 
     /// Texture parameter names in binding order.
     const TEXTURES: &'static [&'static str];
+
+    /// Dimension of each entry in [`SequoiShader::TEXTURES`].
+    ///
+    /// An empty slice means every texture is 2D, which is what hand-written
+    /// shaders and the engine built-ins use.
+    const TEXTURE_KINDS: &'static [TextureKind] = &[];
 
     /// Size of the encoded uniform payload in bytes.
     const UNIFORM_SIZE: usize;

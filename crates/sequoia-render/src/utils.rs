@@ -82,6 +82,8 @@ pub(crate) fn decode_image(source: &ImageSource) -> Option<(u32, u32, Vec<u8>)> 
             }
             Some((width, height, data.to_vec()))
         }
+        // 3D LUTs are not 2D images; they are uploaded as `texture_3d` inputs.
+        ImageSource::Cube(_) => None,
         _ => None,
     }
 }

@@ -15,6 +15,7 @@ use crate::scene::grouping::group_runs_with_opacity;
 use crate::types::*;
 use crate::utils::index_image_sources;
 use sequoia_core::{PassNode, RenderList, RenderTargetId, TexInput};
+use sequoia_shader::TextureKind;
 
 impl GpuRenderer {
     /// Returns the pooled texture for `target`, creating it at `size` (physical
@@ -304,15 +305,42 @@ impl GpuRenderer {
         let mut shader_textures: Vec<ShaderTextureGroups> = Vec::new();
         let mut shader_bind_group: Option<wgpu::BindGroup> = None;
         if has_shaders {
-            for textures in &shader_data.textures {
-                let mut groups: ShaderTextureGroups = [
-                    self.shader_white_bg.clone(),
-                    self.shader_white_bg.clone(),
-                    self.shader_white_bg.clone(),
-                ];
+            let instance_shaders: Vec<sequoia_core::ShaderId> = shader_data
+                .instances
+                .iter()
+                .map(|instance| sequoia_core::ShaderId::new(instance.shader_id))
+                .collect();
+            for (index, textures) in shader_data.textures.iter().enumerate() {
+                let kinds = instance_shaders
+                    .get(index)
+                    .and_then(|id| self.user_shaders.get(id))
+                    .map(|entry| entry.kinds.clone())
+                    .unwrap_or_default();
+                let mut groups: ShaderTextureGroups =
+                    std::array::from_fn(|_| self.shader_white_bg.clone());
+                for (slot, kind) in kinds.iter().enumerate() {
+                    if *kind == TextureKind::D3
+                        && let Some(group) = groups.get_mut(slot)
+                    {
+                        *group = self.shader_white_volume_bg.clone();
+                    }
+                }
                 for (binding, input) in textures.iter() {
-                    let group = match input {
-                        TexInput::Image(source) => {
+                    let kind = kinds
+                        .get(*binding as usize)
+                        .copied()
+                        .unwrap_or(TextureKind::D2);
+                    let group = match (kind, input) {
+                        (TextureKind::D3, TexInput::Image(sequoia_core::ImageSource::Cube(path))) => {
+                            self.volumes.bind_group(
+                                &self.device,
+                                &self.queue,
+                                &self.volume_bgl,
+                                &self.blit_sampler,
+                                path,
+                            )
+                        }
+                        (TextureKind::D2, TexInput::Image(source)) => {
                             let max_dim = self.quality.max_image_dim().max(1);
                             let allow_new = self.quality.max_image_dim() > 0;
                             Self::image_bind_group(
@@ -326,7 +354,7 @@ impl GpuRenderer {
                                 max_dim,
                             )
                         }
-                        TexInput::Target(target) => self
+                        (TextureKind::D2, TexInput::Target(target)) => self
                             .render_targets
                             .get(target)
                             .map(|entry| entry.bind_group.clone()),

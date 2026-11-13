@@ -798,12 +798,41 @@ pub(crate) fn create_user_shader_bind_group_layout(device: &wgpu::Device) -> wgp
 pub(crate) fn create_user_shader_pipeline_layout(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
-    atlas_bgl: &wgpu::BindGroupLayout,
+    texture_layouts: &[&wgpu::BindGroupLayout],
 ) -> wgpu::PipelineLayout {
+    let mut bind_group_layouts: Vec<Option<&wgpu::BindGroupLayout>> =
+        Vec::with_capacity(texture_layouts.len() + 1);
+    bind_group_layouts.push(Some(bgl));
+    bind_group_layouts.extend(texture_layouts.iter().map(|layout| Some(*layout)));
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("sequoia-user-shader-layout"),
-        bind_group_layouts: &[Some(bgl), Some(atlas_bgl), Some(atlas_bgl), Some(atlas_bgl)],
+        bind_group_layouts: &bind_group_layouts,
         immediate_size: 0,
+    })
+}
+
+/// Layout for a `Sampler3D` input group: `texture_3d<f32>` plus a sampler.
+pub(crate) fn create_volume_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sequoia-volume-bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
     })
 }
 

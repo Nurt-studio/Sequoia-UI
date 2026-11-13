@@ -3,6 +3,8 @@
 //! Each pipeline selects a vertex/fragment entry point from this module, so the
 //! geometry helpers and effect code stay identical across draw paths.
 
+use sequoia_shader::TextureKind;
+
 /// WGSL source implementing quads, glyphs, blits, backdrops, and gradients.
 pub(crate) const SHADER: &str = r#"
 // Screen size in physical pixels.
@@ -715,6 +717,45 @@ fn fs_main(frag: ShaderVarying) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Detects the dimension of each texture group declared by a shader module.
+///
+/// The renderer needs this to pick `texture_2d` or `texture_3d` bind group
+/// layouts. Groups are indexed by their `@group(n)` number minus one, so the
+/// result lines up with the `TEXTURES` slot order.
+#[must_use]
+pub(crate) fn texture_kinds(source: &str) -> Vec<TextureKind> {
+    let mut kinds: Vec<TextureKind> = Vec::new();
+    for line in source.lines() {
+        let Some(start) = line.find("@group(") else {
+            continue;
+        };
+        let rest = &line[start + 7..];
+        let Some(end) = rest.find(')') else {
+            continue;
+        };
+        let Ok(group) = rest[..end].trim().parse::<usize>() else {
+            continue;
+        };
+        if group == 0 {
+            continue;
+        }
+        let is_3d = line.contains("texture_3d");
+        let is_2d = line.contains("texture_2d");
+        if !is_3d && !is_2d {
+            continue;
+        }
+        if kinds.len() < group {
+            kinds.resize(group, TextureKind::D2);
+        }
+        kinds[group - 1] = if is_3d {
+            TextureKind::D3
+        } else {
+            TextureKind::D2
+        };
+    }
+    kinds
+}
+
 /// Composes a user fragment function with the engine vertex and uniform ABI.
 pub fn compose_user_shader(source: &str) -> String {
     format!("{USER_SHADER_PRELUDE}\n{source}\n{USER_SHADER_EPILOGUE}")
@@ -780,3 +821,19 @@ pub fn passthrough_wgsl() -> String {
 
 pub(crate) const PASSTHROUGH_FS: &str =
     "fn fs_user(frag: ShaderVarying) -> vec4<f32> { return uniforms.values[0]; }";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_texture_dimensions_per_group() {
+        let source = "@group(0) @binding(0) var<uniform> u: U;\n\
+            @group(1) @binding(0) var photo: texture_2d<f32>;\n\
+            @group(1) @binding(1) var photo_sampler: sampler;\n\
+            @group(2) @binding(0) var lut: texture_3d<f32>;\n\
+            @group(2) @binding(1) var lut_sampler: sampler;";
+        assert_eq!(texture_kinds(source), vec![TextureKind::D2, TextureKind::D3]);
+        assert!(texture_kinds("fn f() {}").is_empty());
+    }
+}

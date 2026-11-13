@@ -128,7 +128,10 @@ impl crate::renderer::GpuRenderer {
                         };
                         pass.set_bind_group(0, shader_bind_group, &[instance.uniform_offset]);
                         if let Some(groups) = shader_textures.get(index as usize) {
-                            for (slot, group) in groups.iter().enumerate() {
+                            // Only bind the groups the shader's pipeline layout
+                            // declares; extra bind groups fail validation.
+                            let count = entry.kinds.len();
+                            for (slot, group) in groups.iter().take(count).enumerate() {
                                 pass.set_bind_group(slot as u32 + 1, group, &[]);
                             }
                         }

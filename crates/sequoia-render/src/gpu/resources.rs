@@ -434,6 +434,128 @@ impl Drop for ImageAtlas {
     }
 }
 
+/// Uploaded `texture_3d` and the bind group that samples it.
+pub(crate) struct GpuVolume {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+}
+
+/// Cache of 3D LUT uploads keyed by `.cube` path.
+///
+/// LUTs are immutable files, so entries never need refreshing; a failed parse
+/// is remembered to avoid re-reading the file every frame.
+#[derive(Default)]
+pub(crate) struct VolumeCache {
+    entries: HashMap<u64, GpuVolume>,
+    failures: HashSet<u64>,
+}
+
+impl VolumeCache {
+    /// Returns a bind group for a 3D LUT, uploading it on first use.
+    pub(crate) fn bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        path: &str,
+    ) -> Option<wgpu::BindGroup> {
+        let key = volume_key(path);
+        if let Some(entry) = self.entries.get(&key) {
+            return Some(entry.bind_group.clone());
+        }
+        if self.failures.contains(&key) {
+            return None;
+        }
+        let lut = match crate::lut::load_cube(path) {
+            Ok(lut) => lut,
+            Err(error) => {
+                log::warn!("sequoia-render: cannot load LUT `{path}`: {error}");
+                self.failures.insert(key);
+                return None;
+            }
+        };
+        let size = lut.size;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sequoia-lut3d"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: size,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let mut halves: Vec<u16> = Vec::with_capacity(lut.data.len());
+        for value in &lut.data {
+            halves.push(half::f16::from_f32(*value).to_bits());
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&halves),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size * 8),
+                rows_per_image: Some(size),
+            },
+            wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: size,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sequoia-lut3d-bg"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+        self.entries.insert(
+            key,
+            GpuVolume {
+                texture,
+                bind_group: bind_group.clone(),
+            },
+        );
+        Some(bind_group)
+    }
+}
+
+impl Drop for VolumeCache {
+    fn drop(&mut self) {
+        for (_, entry) in self.entries.drain() {
+            entry.texture.destroy();
+        }
+    }
+}
+
+fn volume_key(path: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash ^ 0x5d2f_1b3c_7a4e_90f1
+}
+
 /// Render pipelines and binding layout for one registered user shader.
 ///
 /// Pipelines are keyed by blend mode and color-target format so the same shader
@@ -441,6 +563,8 @@ impl Drop for ImageAtlas {
 pub(crate) struct UserShaderEntry {
     pub(crate) pipelines: HashMap<(BlendMode, wgpu::TextureFormat), wgpu::RenderPipeline>,
     pub(crate) bgl: wgpu::BindGroupLayout,
+    /// Dimension of each texture group, detected from the WGSL at registration.
+    pub(crate) kinds: Vec<sequoia_shader::TextureKind>,
     pub(crate) module: wgpu::ShaderModule,
 }
 

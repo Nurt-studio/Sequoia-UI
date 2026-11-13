@@ -18,6 +18,7 @@
 
 pub mod color;
 pub mod gpu;
+pub mod lut;
 pub mod pass;
 pub mod renderer;
 pub mod scene;

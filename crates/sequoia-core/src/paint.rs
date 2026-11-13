@@ -677,9 +677,22 @@ pub enum ImageSource {
 
         version: u64,
     },
+
+    /// Path to an Adobe/IRIDAS `.cube` 3D LUT.
+    ///
+    /// Only valid as a shader texture input bound to a `Sampler3D` parameter;
+    /// the renderer uploads it as a `texture_3d` and caches it by path. Image
+    /// draws skip this source.
+    Cube(String),
 }
 
 impl ImageSource {
+    /// Creates a 3D LUT source from a `.cube` file path.
+    #[must_use]
+    pub fn cube(path: impl Into<String>) -> Self {
+        Self::Cube(path.into())
+    }
+
     pub fn cache_key(&self) -> u64 {
         match self {
             Self::File(path) => {
@@ -690,6 +703,14 @@ impl ImageSource {
                 }
                 hash ^ 0x9e37_79b9_7f4a_7c15
             }
+            Self::Cube(path) => {
+                let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+                for byte in path.as_bytes() {
+                    hash ^= u64::from(*byte);
+                    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+                hash ^ 0x5d2f_1b3c_7a4e_90f1
+            }
             Self::Rgba { id, .. } => *id,
             Self::Dynamic { id, .. } => *id,
         }
@@ -698,13 +719,13 @@ impl ImageSource {
     pub fn dynamic_version(&self) -> Option<u64> {
         match self {
             Self::Dynamic { version, .. } => Some(*version),
-            Self::File(_) | Self::Rgba { .. } => None,
+            Self::File(_) | Self::Rgba { .. } | Self::Cube(_) => None,
         }
     }
 
     pub fn extent(&self) -> Option<(u32, u32)> {
         match self {
-            Self::File(_) => None,
+            Self::File(_) | Self::Cube(_) => None,
             Self::Rgba { width, height, .. } | Self::Dynamic { width, height, .. } => {
                 Some((*width, *height))
             }

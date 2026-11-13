@@ -14,6 +14,7 @@ sequoia-shader = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-view = { workspace = true }
 bytemuck = { workspace = true }
+half = "2.7"
 image = { workspace = true }
 log = { workspace = true }
 pollster = { workspace = true }
