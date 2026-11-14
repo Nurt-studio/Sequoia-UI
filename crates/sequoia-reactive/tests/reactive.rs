@@ -580,6 +580,68 @@ fn effect_survives_panic_and_retries() {
 }
 
 #[test]
+fn effect_panic_does_not_strand_the_rest_of_the_flush() {
+    let trigger = Signal::new(0i32);
+    let other = Signal::new(0i32);
+    let boom = Rc::new(Cell::new(false));
+    let first_runs = Rc::new(Cell::new(0u32));
+    let second_runs = Rc::new(Cell::new(0u32));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+
+    let _first = {
+        let (trigger, boom, first_runs) = (trigger.clone(), boom.clone(), first_runs.clone());
+        effect(move || {
+            first_runs.set(first_runs.get() + 1);
+            trigger.get();
+            if boom.get() {
+                panic!("boom w pierwszym efekcie");
+            }
+        })
+    };
+    let _second = {
+        let (trigger, other) = (trigger.clone(), other.clone());
+        let (second_runs, seen) = (second_runs.clone(), seen.clone());
+        effect(move || {
+            second_runs.set(second_runs.get() + 1);
+            trigger.get();
+            seen.borrow_mut().push(other.get());
+        })
+    };
+    assert_eq!(first_runs.get(), 1);
+    assert_eq!(second_runs.get(), 1);
+    assert_eq!(seen.borrow().as_slice(), &[0]);
+
+    boom.set(true);
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| trigger.set(1)));
+    std::panic::set_hook(hook);
+    assert!(r.is_err(), "panic z efektu leci do wywołującego");
+    assert_eq!(first_runs.get(), 2);
+    assert_eq!(
+        second_runs.get(),
+        1,
+        "drugi efekt stał za panikującym w tej samej kolejce"
+    );
+
+    flush_effects();
+    assert_eq!(
+        second_runs.get(),
+        2,
+        "ogon flusha wrócił do PENDING po unwindzie — nie zawisa z queued=true"
+    );
+
+    boom.set(false);
+    other.set(7);
+    assert_eq!(
+        second_runs.get(),
+        3,
+        "drugi efekt nadal reaguje na zmianę własnego sygnału"
+    );
+    assert_eq!(*seen.borrow().last().unwrap(), 7);
+}
+
+#[test]
 fn bind_syncs_both_ways_and_stops_on_drop() {
     let a = Signal::new(1i32);
     let b = Signal::new(1i32);

@@ -237,6 +237,81 @@ pub fn untracked<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// Effects taken out of [`PENDING`] for the current flush that have not run yet.
+///
+/// The tail is never dropped on the floor: a node that was lifted out of the
+/// queue but did not get to run still has `queued = true`, so leaving it
+/// behind would silence every later write to its dependencies (`mark_dirty`
+/// only re-enqueues on a `false -> true` transition). On unwind the tail goes
+/// back to the front of `PENDING`, in its original order, so the next flush
+/// still runs it.
+struct PendingTail {
+    nodes: VecDeque<Rc<EffectNode>>,
+}
+
+impl PendingTail {
+    fn take() -> Self {
+        let nodes = PENDING.with_borrow_mut(|pending| {
+            pending
+                .drain(..)
+                .filter_map(|weak| weak.upgrade())
+                .collect()
+        });
+        Self { nodes }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Hands out the next node with its `queued` flag cleared, so that a signal
+    /// write inside its own body enqueues it again.
+    fn next(&mut self) -> Option<Rc<EffectNode>> {
+        let node = self.nodes.pop_front()?;
+        node.clear_queued();
+        Some(node)
+    }
+
+    fn clear_queued(&mut self) {
+        for node in self.nodes.drain(..) {
+            node.clear_queued();
+        }
+    }
+}
+
+impl Drop for PendingTail {
+    fn drop(&mut self) {
+        if self.nodes.is_empty() {
+            return;
+        }
+        if !std::thread::panicking() {
+            // The cycle guard cut the flush short on purpose: drop the tail
+            // instead of leaving stale `queued` flags behind.
+            self.clear_queued();
+            return;
+        }
+
+        let mut restored: Vec<Weak<EffectNode>> = Vec::new();
+        for node in self.nodes.drain(..) {
+            if node.is_disposed() {
+                node.clear_queued();
+            } else {
+                restored.push(Rc::downgrade(&node));
+            }
+        }
+        if restored.is_empty() {
+            return;
+        }
+        PENDING.with_borrow_mut(|pending| {
+            // The tail was queued before anything the panicking effect added
+            // while it ran, so it goes back to the front.
+            let mut queue = restored;
+            queue.append(pending);
+            *pending = queue;
+        });
+    }
+}
+
 pub fn flush_effects() {
     if FLUSHING.with(Cell::get) {
         return;
@@ -252,16 +327,11 @@ pub fn flush_effects() {
 
     let mut runs: u32 = 0;
     'flush: loop {
-        let ready: Vec<Rc<EffectNode>> = PENDING.with_borrow_mut(|p| {
-            let ready: Vec<_> = p.iter().filter_map(|w| w.upgrade()).collect();
-            p.clear();
-            ready
-        });
-        if ready.is_empty() {
+        let mut tail = PendingTail::take();
+        if tail.is_empty() {
             break;
         }
-        for (i, node) in ready.iter().enumerate() {
-            node.clear_queued();
+        while let Some(node) = tail.next() {
             if node.is_disposed() {
                 continue;
             }
@@ -273,13 +343,9 @@ pub fn flush_effects() {
                      dropping the rest of the queue"
                 );
 
-                for rest in &ready[i..] {
-                    rest.clear_queued();
-                }
+                tail.clear_queued();
                 let stale: Vec<Rc<EffectNode>> = PENDING.with_borrow_mut(|p| {
-                    let stale: Vec<_> = p.iter().filter_map(|w| w.upgrade()).collect();
-                    p.clear();
-                    stale
+                    p.drain(..).filter_map(|w| w.upgrade()).collect()
                 });
                 for node in stale {
                     node.clear_queued();

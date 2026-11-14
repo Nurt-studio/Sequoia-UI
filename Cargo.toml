@@ -29,7 +29,6 @@ members = [
     "crates/sequoia-buffer",
     "docs/verify",
     "example/paint",
-    "example/vision-design",
 ]
 
 [workspace.package]
