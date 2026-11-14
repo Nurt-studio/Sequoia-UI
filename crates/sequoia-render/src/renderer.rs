@@ -1385,6 +1385,16 @@ impl GpuRenderer {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Returns the shader limits in force on this adapter.
+    ///
+    /// Engine limits (256 B of uniforms, 6 textures) are already applied, so
+    /// the result is what [`GpuRenderer::register_shader`] accepts. The values are
+    /// read from the device on every call.
+    #[must_use]
+    pub fn shader_caps(&self) -> crate::ShaderCaps {
+        crate::ShaderCaps::from_device_limits(&self.device.limits())
+    }
+
     /// Registers a user shader from a complete WGSL module.
     ///
     /// The source must define `vs_main` and `fs_main` entry points matching the
@@ -1407,6 +1417,11 @@ impl GpuRenderer {
         let name = name.into();
         let wgsl = wgsl.as_ref();
         validate_user_shader(wgsl)?;
+
+        let kinds = shader_texture_kinds(wgsl);
+        if let Err(message) = self.shader_caps().limits.check_textures(kinds.len()) {
+            return Err(RenderError::ShaderCompile(message));
+        }
 
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = self
@@ -1431,7 +1446,7 @@ impl GpuRenderer {
             UserShaderEntry {
                 pipelines: HashMap::new(),
                 bgl: self.shader_bgl.clone(),
-                kinds: shader_texture_kinds(wgsl),
+                kinds,
                 module,
             },
         );
@@ -1639,7 +1654,10 @@ impl GpuRenderer {
         if list.has_backdrops() || list.has_filters() || opacity {
             self.ensure_backdrop_pipelines();
         }
-        if use_offscreen {
+        // The backdrop and filter paths also blit their intermediate texture to
+        // the swapchain through the present pipeline, so it is needed whenever
+        // either of them may composite.
+        if use_offscreen || list.has_backdrops() || list.has_filters() {
             self.ensure_present_pipeline();
         }
     }

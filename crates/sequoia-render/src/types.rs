@@ -82,6 +82,8 @@ pub(crate) struct RenderTargetTexture {
     pub(crate) size: (u32, u32),
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) last_used: u64,
+    /// Target keeps its contents across frames and must not be evicted.
+    pub(crate) persistent: bool,
 }
 
 /// Pipelines that write into one offscreen target format.
@@ -137,9 +139,10 @@ pub(crate) struct ShaderGroupData {
 
 /// Returns the fixed-function blend state used by a user-shader pipeline.
 ///
-/// Stage 1 supports the five blend modes expressible with fixed-function
-/// hardware. Advanced Photoshop modes are built as separate pipelines with the
-/// normal blend state and are replaced by read-back compositing in stage 4.
+/// Fixed-function hardware covers `Normal`, `Add`, `Multiply`, `Screen`,
+/// `Subtract`, and the min/max pair `Darken`/`Lighten`. The remaining Photoshop
+/// modes need to sample the destination, so they are drawn as `Normal` until the
+/// read-back compositing pass lands and log a warning when that happens.
 pub(crate) fn blend_component(mode: BlendMode) -> wgpu::BlendComponent {
     use wgpu::{BlendFactor as Factor, BlendOperation as Op};
 
@@ -170,10 +173,23 @@ pub(crate) fn blend_component(mode: BlendMode) -> wgpu::BlendComponent {
             dst_factor: Factor::One,
             operation: Op::Subtract,
         },
+        BlendMode::Darken => wgpu::BlendComponent {
+            src_factor: Factor::One,
+            dst_factor: Factor::One,
+            operation: Op::Min,
+        },
+        BlendMode::Lighten => wgpu::BlendComponent {
+            src_factor: Factor::One,
+            dst_factor: Factor::One,
+            operation: Op::Max,
+        },
         _ => {
             debug_assert!(
                 !blend_mode_is_advanced(mode),
                 "advanced blend mode {mode:?} has no fixed-function mapping and falls back to Normal"
+            );
+            log::warn!(
+                "sequoia-render: blend mode {mode:?} needs destination read-back and is drawn as Normal"
             );
             normal
         }
@@ -181,6 +197,9 @@ pub(crate) fn blend_component(mode: BlendMode) -> wgpu::BlendComponent {
 }
 
 /// Returns `true` when `mode` needs destination read-back compositing.
+///
+/// Min/max modes (`Darken`, `Lighten`) are hardware blend operations, so they do
+/// not need a scratch layer.
 pub(crate) fn blend_mode_is_advanced(mode: BlendMode) -> bool {
     !matches!(
         mode,
@@ -189,6 +208,8 @@ pub(crate) fn blend_mode_is_advanced(mode: BlendMode) -> bool {
             | BlendMode::Multiply
             | BlendMode::Screen
             | BlendMode::Subtract
+            | BlendMode::Darken
+            | BlendMode::Lighten
     )
 }
 
@@ -820,6 +841,37 @@ pub(crate) fn resolve_present_mode(
     }
 }
 
+/// What the current adapter supports for custom shaders.
+///
+/// Engine limits are folded in, so [`ShaderCaps::limits`] is always a hard
+/// upper bound for a shader registered on this device, even when the adapter
+/// reports more headroom. Query `Renderer::shader_caps` to decide whether an
+/// effect fits before uploading it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShaderCaps {
+    /// Shader limits in force, with adapter limits applied.
+    pub limits: sequoia_shader::ShaderLimits,
+    /// Largest 2D texture the adapter can sample.
+    pub max_texture_dimension_2d: u32,
+    /// Largest 3D texture the adapter can sample (LUTs, volumes).
+    pub max_texture_dimension_3d: u32,
+}
+
+impl ShaderCaps {
+    /// Derives shader caps from an adapter's `wgpu` limits.
+    #[must_use]
+    pub fn from_device_limits(limits: &wgpu::Limits) -> Self {
+        Self {
+            limits: sequoia_shader::ShaderLimits::ENGINE.narrowed(
+                limits.max_uniform_buffer_binding_size as usize,
+                limits.max_sampled_textures_per_shader_stage as usize,
+            ),
+            max_texture_dimension_2d: limits.max_texture_dimension_2d,
+            max_texture_dimension_3d: limits.max_texture_dimension_3d,
+        }
+    }
+}
+
 /// Errors reported while creating or using the renderer.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -895,6 +947,26 @@ mod tests {
             ..MemoryUsage::default()
         };
         assert!(usage.over(&budget));
+    }
+
+    #[test]
+    fn shader_caps_never_exceed_engine_limits() {
+        let caps = ShaderCaps::from_device_limits(&wgpu::Limits::default());
+        assert_eq!(caps.limits.abi_version, sequoia_shader::ABI_VERSION);
+        assert!(caps.limits.max_uniform_bytes <= 256);
+        assert!(caps.limits.max_textures <= 6);
+        assert!(caps.max_texture_dimension_2d >= 2048);
+    }
+
+    #[test]
+    fn narrow_adapter_shrinks_texture_slots() {
+        let device = wgpu::Limits {
+            max_sampled_textures_per_shader_stage: 2,
+            ..wgpu::Limits::default()
+        };
+        let caps = ShaderCaps::from_device_limits(&device);
+        assert_eq!(caps.limits.max_textures, 2);
+        assert!(caps.limits.check_textures(3).is_err());
     }
 
     #[test]

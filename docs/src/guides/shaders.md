@@ -257,6 +257,14 @@ Targets are ordered: a target must be finished before a later draw samples it.
 `group` records the target bounds in the render list and returns its
 `RenderTargetId`; keep the id only for draws that follow it.
 
+Targets are cleared every frame unless you ask for a persistent one.
+`begin_persistent_target` takes the id from the caller, so the same texture is
+addressed on every frame, and the renderer only clears it the first time it sees
+it. Persistent targets are exempt from the frame-local target cache, which makes
+them the place to accumulate paint strokes or any other edit that should survive
+into the next frame. To reset one, draw a full-rect fill with the layer's
+background colour inside its pass.
+
 ## Arrays and 3D LUTs
 
 Two uniform shapes are meant for tables: `[f32; N]` and `[Vec4; N]`. WGSL

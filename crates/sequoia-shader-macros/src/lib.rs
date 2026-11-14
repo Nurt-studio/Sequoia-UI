@@ -6,13 +6,12 @@ use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use sequoia_shader_wgsl::{WGSL_EPILOGUE as EPILOGUE, WGSL_PRELUDE as PRELUDE, WGSL_STD};
+use sequoia_shader_wgsl::{
+    MAX_TEXTURES, MAX_UNIFORM_BYTES, WGSL_EPILOGUE as EPILOGUE, WGSL_PRELUDE as PRELUDE, WGSL_STD,
+};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Attribute, Ident, Pat, Signature, Type, Visibility, braced, parse_macro_input};
-
-const MAX_UNIFORM_BYTES: usize = 256;
-const MAX_TEXTURES: usize = 6;
 
 struct ShaderItem {
     attrs: Vec<Attribute>,

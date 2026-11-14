@@ -31,6 +31,7 @@ pub use bytemuck;
 pub use sequoia_shader_macros::shader;
 
 mod builtin;
+mod limits;
 mod math;
 mod registry;
 mod sampler;
@@ -39,7 +40,9 @@ mod traits;
 mod wgsl;
 
 pub use builtin::{ApplyMask, BUILTINS};
+pub use limits::ShaderLimits;
 pub use math::{Color, Vec2, Vec3, Vec4};
+pub use sequoia_shader_wgsl::{ABI_VERSION, MAX_UNIFORM_BYTES};
 pub use registry::ShaderRegistry;
 pub use sampler::{Sampler2D, Sampler3D};
 pub use traits::{

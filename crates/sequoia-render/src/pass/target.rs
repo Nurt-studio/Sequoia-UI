@@ -14,20 +14,30 @@ use crate::renderer::GpuRenderer;
 use crate::scene::grouping::group_runs_with_opacity;
 use crate::types::*;
 use crate::utils::index_image_sources;
-use sequoia_core::{PassNode, RenderList, RenderTargetId, TexInput};
+use sequoia_core::{PassNode, RenderList, RenderTargetId, TargetPersistence, TexInput};
 use sequoia_shader::TextureKind;
 
 impl GpuRenderer {
     /// Returns the pooled texture for `target`, creating it at `size` (physical
     /// pixels) when missing or resized.
-    pub(crate) fn ensure_render_target(&mut self, target: RenderTargetId, size: (u32, u32)) {
+    ///
+    /// The return value reports whether the texture already held pixels, so a
+    /// `Preserve` pass knows whether to load or clear. A freshly created or
+    /// resized texture is never loadable.
+    pub(crate) fn ensure_render_target(
+        &mut self,
+        target: RenderTargetId,
+        size: (u32, u32),
+        persistent: bool,
+    ) -> bool {
         let size = (size.0.max(1), size.1.max(1));
         let format = self.target_texture_format(target);
         if let Some(entry) = self.render_targets.get_mut(&target) {
             if entry.size == size {
                 entry.last_used = self.frame_index;
+                entry.persistent = persistent;
                 self.target_reuses += 1;
-                return;
+                return true;
             }
         }
         if let Some(old) = self.render_targets.remove(&target) {
@@ -71,13 +81,17 @@ impl GpuRenderer {
                 size,
                 format,
                 last_used: self.frame_index,
+                persistent,
             },
         );
         self.target_allocs += 1;
+        // Persistent layers are owned by the caller and keep their pixels, so
+        // they sit outside the frame-local LRU budget.
         while self.render_targets.len() > self.target_cache {
             let oldest = self
                 .render_targets
                 .iter()
+                .filter(|(_, entry)| !entry.persistent || entry.last_used != self.frame_index)
                 .min_by_key(|(_, entry)| entry.last_used)
                 .map(|(id, _)| *id);
             let Some(oldest) = oldest else { break };
@@ -85,6 +99,7 @@ impl GpuRenderer {
                 old.texture.destroy();
             }
         }
+        false
     }
 
     /// Renders every target pass in `list`, returning the encoder for the rest
@@ -109,6 +124,8 @@ impl GpuRenderer {
                 target,
                 size,
                 items,
+                persistence,
+                damage,
                 ..
             } = node
             else {
@@ -116,7 +133,18 @@ impl GpuRenderer {
             };
             let px = ((size.width * scale).ceil() as u32).clamp(1, max.0);
             let py = ((size.height * scale).ceil() as u32).clamp(1, max.1);
-            self.ensure_render_target(target, (px, py));
+            let damage = damage.and_then(|rect| {
+                let x = (rect.left() * scale).floor().max(0.0) as u32;
+                let y = (rect.top() * scale).floor().max(0.0) as u32;
+                let w = ((rect.size.width * scale).ceil() as u32).min(px.saturating_sub(x));
+                let h = ((rect.size.height * scale).ceil() as u32).min(py.saturating_sub(y));
+                (w > 0 && h > 0).then_some((x, y, w, h))
+            });
+            let kept = self.ensure_render_target(
+                target,
+                (px, py),
+                persistence == TargetPersistence::Preserve,
+            );
             let Some((view, format)) = self
                 .render_targets
                 .get(&target)
@@ -124,7 +152,20 @@ impl GpuRenderer {
             else {
                 continue;
             };
-            if !self.render_target_items(&mut encoder, list, items, &view, format, scale) {
+            // An empty clearing pass is how a persistent layer is reset, so it
+            // must reach the GPU even when it contains no items.
+            let reset = kept && persistence == TargetPersistence::Clear;
+            if !self.render_target_items(
+                &mut encoder,
+                list,
+                items,
+                &view,
+                format,
+                scale,
+                kept,
+                damage,
+                reset,
+            ) {
                 continue;
             }
             self.queue.submit(Some(encoder.finish()));
@@ -148,6 +189,9 @@ impl GpuRenderer {
         view: &wgpu::TextureView,
         format: wgpu::TextureFormat,
         scale: f32,
+        load_previous: bool,
+        damage: Option<(u32, u32, u32, u32)>,
+        reset: bool,
     ) -> bool {
         let items = &list.items()[range.clone()];
         let clips = &list.item_clips()[range.clone()];
@@ -179,7 +223,7 @@ impl GpuRenderer {
             &mut runs,
             Some(&mut shader_data),
         );
-        if runs.is_empty() {
+        if runs.is_empty() && !reset {
             return false;
         }
         let has_shaders = !shader_data.instances.is_empty();
@@ -402,12 +446,16 @@ impl GpuRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.0,
-                        }),
+                        load: if load_previous {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 0.0,
+                            })
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -416,6 +464,12 @@ impl GpuRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            // A dirty rect only narrows the viewport: the clear still covers the
+            // whole attachment, and the preserved pixels outside the rect are
+            // left alone because the pass does not touch them.
+            if let Some((x, y, w, h)) = damage {
+                pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+            }
             Self::draw_gui_runs(
                 &mut pass,
                 &pipelines.quad,

@@ -1152,6 +1152,13 @@ pub enum PassNode {
         /// Pixel format of the target texture.
         format: TargetFormat,
 
+        /// Whether the pass clears the target or keeps its previous pixels.
+        persistence: TargetPersistence,
+
+        /// Part of a preserved target that changed this frame, in logical
+        /// coordinates. `None` means the whole target.
+        damage: Option<Rect>,
+
         /// Items to render, as indices into the render list.
         items: std::ops::Range<usize>,
     },
@@ -1182,6 +1189,28 @@ pub struct BlitDraw {
 /// Maximum number of uniform bytes available to one shader draw.
 pub const MAX_SHADER_UNIFORM_BYTES: usize = 16 * 4 * 4;
 
+/// Upper bound for render target ids.
+///
+/// The renderer packs a target's format into the two highest bits of its texture
+/// key, so ids must stay below the remaining space.
+pub const TARGET_ID_LIMIT: u64 = 1 << 62;
+
+/// Whether an offscreen target pass starts from a cleared texture or keeps the
+/// pixels earlier frames left in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TargetPersistence {
+    /// Clear the target before drawing. This is the right choice for frame-local
+    /// intermediates, which must not smear between frames.
+    #[default]
+    Clear,
+
+    /// Keep previous contents, so repeated frames accumulate into the target.
+    ///
+    /// Use this for layers that outlive one frame, such as a painted canvas.
+    /// The first pass that uses a target starts from a cleared texture.
+    Preserve,
+}
+
 /// Marker that starts drawing into an offscreen target.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TargetBegin {
@@ -1193,6 +1222,9 @@ pub struct TargetBegin {
 
     /// Pixel format of the target texture.
     pub format: TargetFormat,
+
+    /// Whether the pass clears the target or keeps its previous pixels.
+    pub persistence: TargetPersistence,
 }
 
 /// Marker that finishes drawing into an offscreen target.
@@ -1234,6 +1266,7 @@ pub enum RenderItem {
         size: Size,
         blend: BlendMode,
         format: TargetFormat,
+        persistence: TargetPersistence,
     },
 
     /// Ends an offscreen pass.
@@ -1367,6 +1400,13 @@ pub struct RenderList {
 
     next_target: u64,
 
+    /// Damage rectangles recorded by [`RenderList::damage_target`], keyed by
+    /// target id. Ids are unique per frame, so a plain list is enough.
+    target_damage: Vec<(RenderTargetId, Rect)>,
+
+    /// Targets that are currently open, innermost last.
+    open_targets: Vec<RenderTargetId>,
+
     target_count: u32,
 
     shader_count: u32,
@@ -1404,6 +1444,8 @@ impl RenderList {
         self.backdrops.clear();
         self.filters.clear();
         self.next_target = 0;
+        self.target_damage.clear();
+        self.open_targets.clear();
         self.target_count = 0;
         self.shader_count = 0;
     }
@@ -1525,7 +1567,14 @@ impl RenderList {
     /// own pass, but its items also stay inside the enclosing target's range.
     pub fn target_plan(&self) -> Vec<PassNode> {
         let mut nodes = Vec::new();
-        let mut open: Vec<(RenderTargetId, Size, BlendMode, TargetFormat, usize)> = Vec::new();
+        let mut open: Vec<(
+            RenderTargetId,
+            Size,
+            BlendMode,
+            TargetFormat,
+            TargetPersistence,
+            usize,
+        )> = Vec::new();
         let mut segment = 0usize;
         for (index, item) in self.items.iter().enumerate() {
             match item {
@@ -1534,26 +1583,43 @@ impl RenderList {
                     size,
                     blend,
                     format,
+                    persistence,
                 } => {
                     if open.is_empty() && segment < index {
                         nodes.push(PassNode::Present {
                             items: segment..index,
                         });
                     }
-                    open.push((*id, *size, *blend, *format, index + 1));
+                    open.push((
+                        *id,
+                        *size,
+                        *blend,
+                        *format,
+                        *persistence,
+                        index + 1,
+                    ));
                 }
                 RenderItem::TargetEnd { id } => {
                     let Some(position) = open.iter().rposition(|(open_id, ..)| open_id == id)
                     else {
                         continue;
                     };
-                    let (target, size, blend, format, start) = open.remove(position);
+                    let (target, size, blend, format, persistence, start) = open.remove(position);
                     if start <= index {
                         nodes.push(PassNode::Render {
                             target,
                             size,
                             blend,
                             format,
+                            persistence,
+                            damage: if persistence == TargetPersistence::Preserve {
+                                self.target_damage
+                                    .iter()
+                                    .find(|(id, _)| *id == target)
+                                    .map(|(_, rect)| *rect)
+                            } else {
+                                None
+                            },
                             items: start..index,
                         });
                     }
@@ -2075,12 +2141,49 @@ impl RenderList {
         format: TargetFormat,
     ) -> RenderTargetId {
         let id = RenderTargetId::with_format(self.next_target, format);
-        self.next_target += 1;
+        self.begin_target_at(id, size, blend, format, TargetPersistence::Clear)
+    }
+
+    /// Starts an offscreen pass that keeps the pixels earlier frames left in
+    /// `id`.
+    ///
+    /// Unlike [`RenderList::begin_target`], the caller supplies the handle, so
+    /// the same texture is addressed on every frame. The renderer clears a
+    /// target the first time it sees it and loads it afterwards, which is what
+    /// turns a target into a persistent layer for painting.
+    ///
+    /// `id` must stay below the renderer's target-key encoding space, which is
+    /// what [`RenderList::begin_target`] allocates from.
+    #[must_use]
+    pub fn begin_persistent_target(
+        &mut self,
+        id: RenderTargetId,
+        size: Size,
+        format: TargetFormat,
+    ) -> RenderTargetId {
+        self.begin_target_at(id, size, BlendMode::Normal, format, TargetPersistence::Preserve)
+    }
+
+    fn begin_target_at(
+        &mut self,
+        id: RenderTargetId,
+        size: Size,
+        blend: BlendMode,
+        format: TargetFormat,
+        persistence: TargetPersistence,
+    ) -> RenderTargetId {
+        debug_assert!(
+            id.get() < crate::TARGET_ID_LIMIT,
+            "render target ids must stay below the key encoding space"
+        );
+        self.next_target = self.next_target.max(id.get() + 1);
+        self.open_targets.push(id);
         self.items.push(RenderItem::TargetBegin {
             id,
             size,
             blend,
             format,
+            persistence,
         });
         self.item_clips.push(None);
         self.item_transforms.push(Transform::default());
@@ -2103,7 +2206,39 @@ impl RenderList {
     }
 
     /// Ends an offscreen pass started with [`RenderList::begin_target`].
+    /// Clears `id` this frame without drawing anything into it.
+    ///
+    /// This is the reset for a persistent layer: the pass covers no items, so
+    /// the renderer only clears the texture. Frame-local targets never need
+    /// this because they are cleared on every pass anyway.
+    pub fn clear_target(&mut self, id: RenderTargetId, size: Size, format: TargetFormat) {
+        self.begin_target_at(id, size, BlendMode::Normal, format, TargetPersistence::Clear);
+        self.end_target(id);
+    }
+
+    /// Marks the part of the innermost open target that changed this frame.
+    ///
+    /// The renderer narrows the target pass to the union of these rectangles, so
+    /// a persistent layer that received a few new strokes does not shade its
+    /// whole texture. Damage is ignored outside a target and for frame-local
+    /// targets, which are cleared and redrawn in full anyway.
+    pub fn damage_target(&mut self, rect: Rect) {
+        if rect.is_empty() {
+            return;
+        }
+        let Some(&target) = self.open_targets.last() else {
+            return;
+        };
+        match self.target_damage.iter_mut().find(|(id, _)| *id == target) {
+            Some((_, existing)) => *existing = existing.union(rect),
+            None => self.target_damage.push((target, rect)),
+        }
+    }
+
     pub fn end_target(&mut self, id: RenderTargetId) {
+        if let Some(position) = self.open_targets.iter().rposition(|open| *open == id) {
+            self.open_targets.remove(position);
+        }
         self.items.push(RenderItem::TargetEnd { id });
         self.item_clips.push(None);
         self.item_transforms.push(Transform::default());
@@ -2440,6 +2575,8 @@ impl RenderList {
                 })
                 .collect(),
             next_target: self.next_target,
+            target_damage: self.target_damage.clone(),
+            open_targets: Vec::new(),
             target_count: self.target_count.saturating_sub(mark.target_count),
             shader_count: self.shader_count.saturating_sub(mark.shader_count),
         })
@@ -2457,6 +2594,12 @@ impl RenderList {
                 && other.opacity_stack.is_empty(),
             "append expects a replayable layer suffix"
         );
+        for (target, rect) in &other.target_damage {
+            match self.target_damage.iter_mut().find(|(id, _)| id == target) {
+                Some((_, existing)) => *existing = existing.union(*rect),
+                None => self.target_damage.push((*target, *rect)),
+            }
+        }
         let base = self.items.len();
         self.items.extend_from_slice(&other.items);
         self.item_clips.extend_from_slice(&other.item_clips);
@@ -3566,6 +3709,106 @@ mod tests {
             RenderItem::Blit { target: id, blend: BlendMode::Screen, .. } if id == target
         ));
         assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn persistent_targets_plan_as_preserved_passes() {
+        let mut list = RenderList::new();
+        let layer = RenderTargetId::new(9);
+        list.begin_persistent_target(layer, Size::new(64.0, 64.0), TargetFormat::Rgba8);
+        list.end_target(layer);
+
+        assert!(matches!(
+            list.items()[0],
+            RenderItem::TargetBegin {
+                id,
+                persistence: TargetPersistence::Preserve,
+                ..
+            } if id == layer
+        ));
+        assert!(matches!(
+            list.target_plan().as_slice(),
+            [PassNode::Render {
+                target,
+                persistence: TargetPersistence::Preserve,
+                ..
+            }] if *target == layer
+        ));
+    }
+
+    #[test]
+    fn target_damage_is_merged_and_only_planned_for_persistent_targets() {
+        let mut list = RenderList::new();
+        let layer = RenderTargetId::new(3);
+        list.begin_persistent_target(layer, Size::new(100.0, 100.0), TargetFormat::Rgba8);
+        list.damage_target(Rect::from_xywh(10.0, 10.0, 20.0, 20.0));
+        list.damage_target(Rect::from_xywh(50.0, 40.0, 10.0, 10.0));
+        list.end_target(layer);
+
+        assert!(matches!(
+            list.target_plan().as_slice(),
+            [PassNode::Render { damage: Some(rect), .. }]
+                if *rect == Rect::from_xywh(10.0, 10.0, 50.0, 40.0)
+        ));
+
+        let mut list = RenderList::new();
+        let target = list.begin_target(Size::new(8.0, 8.0), BlendMode::Normal);
+        list.damage_target(Rect::from_xywh(0.0, 0.0, 4.0, 4.0));
+        list.end_target(target);
+        // Frame-local targets are cleared, so damage must not narrow them.
+        assert!(matches!(
+            list.target_plan().as_slice(),
+            [PassNode::Render { damage: None, .. }]
+        ));
+    }
+
+    #[test]
+    fn clear_target_emits_an_empty_clearing_pass() {
+        let mut list = RenderList::new();
+        let layer = RenderTargetId::new(4);
+        list.clear_target(layer, Size::new(64.0, 64.0), TargetFormat::Rgba8);
+
+        assert!(matches!(
+            list.target_plan().as_slice(),
+            [PassNode::Render {
+                target,
+                persistence: TargetPersistence::Clear,
+                items,
+                ..
+            }] if *target == layer && items.is_empty()
+        ));
+    }
+
+    #[test]
+    fn damage_outside_a_target_is_ignored() {
+        let mut list = RenderList::new();
+        list.damage_target(Rect::from_xywh(0.0, 0.0, 10.0, 10.0));
+        assert!(!list.has_targets());
+        assert!(list.target_plan().is_empty());
+    }
+
+    #[test]
+    fn frame_targets_still_clear() {
+        let mut list = RenderList::new();
+        let target = list.begin_target(Size::new(8.0, 8.0), BlendMode::Normal);
+        list.end_target(target);
+        assert!(matches!(
+            list.target_plan().as_slice(),
+            [PassNode::Render {
+                persistence: TargetPersistence::Clear,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn explicit_target_ids_do_not_collide_with_allocated_ones() {
+        let mut list = RenderList::new();
+        let layer = RenderTargetId::new(9);
+        list.begin_persistent_target(layer, Size::new(8.0, 8.0), TargetFormat::Rgba8);
+        list.end_target(layer);
+        let next = list.begin_target(Size::new(8.0, 8.0), BlendMode::Normal);
+        assert_eq!(next.get(), 10, "allocated ids skip the explicit handle");
     }
 
     #[test]

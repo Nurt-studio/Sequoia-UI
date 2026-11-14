@@ -68,6 +68,19 @@ fn fixed_function_blend_modes_get_distinct_states() {
     assert!(blend_mode_is_advanced(BlendMode::Hue));
     assert!(!blend_mode_is_advanced(BlendMode::Normal));
     assert!(!blend_mode_is_advanced(BlendMode::Subtract));
+    assert!(!blend_mode_is_advanced(BlendMode::Darken));
+    assert!(!blend_mode_is_advanced(BlendMode::Lighten));
+}
+
+#[test]
+fn min_max_blend_modes_use_hardware_blend_operations() {
+    let darken = blend_component(BlendMode::Darken);
+    let lighten = blend_component(BlendMode::Lighten);
+
+    assert_eq!(darken.operation, wgpu::BlendOperation::Min);
+    assert_eq!(lighten.operation, wgpu::BlendOperation::Max);
+    assert_ne!(darken, blend_component(BlendMode::Normal));
+    assert_ne!(lighten, blend_component(BlendMode::Normal));
 }
 
 #[test]

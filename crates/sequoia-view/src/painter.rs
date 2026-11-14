@@ -594,6 +594,49 @@ impl<'a, 'b> Painter<'a, 'b> {
         (target, result)
     }
 
+    /// Renders `f` into a persistent target the caller owns.
+    ///
+    /// Unlike [`Painter::group`], the handle is supplied by the caller and the
+    /// target keeps its pixels between frames: the renderer clears it the first
+    /// time it sees `target` and loads it afterwards. Draw the result with
+    /// [`Painter::blit`]. Use this for layers that accumulate edits, such as
+    /// brush strokes.
+    pub fn persistent_group<R>(
+        &mut self,
+        target: sequoia_core::RenderTargetId,
+        size: Size,
+        format: TargetFormat,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let _ = self.ctx.list.begin_persistent_target(target, size, format);
+        let result = f(self);
+        self.ctx.list.end_target(target);
+        result
+    }
+
+    /// Clears a persistent target without drawing into it this frame.
+    ///
+    /// Use it to reset a layer created with [`Painter::persistent_group`]; the
+    /// next frame starts from a transparent texture again.
+    pub fn clear_layer(
+        &mut self,
+        target: sequoia_core::RenderTargetId,
+        size: Size,
+        format: TargetFormat,
+    ) {
+        self.ctx.list.clear_target(target, size, format);
+    }
+
+    /// Marks the part of the innermost open target that changed this frame.
+    ///
+    /// The renderer narrows the target pass to this rectangle, so a persistent
+    /// layer that received a few new strokes does not shade its whole texture.
+    /// Only persistent targets use damage; frame-local targets are cleared and
+    /// fully redrawn anyway. Damage from several calls is merged.
+    pub fn damage(&mut self, rect: Rect) {
+        self.ctx.list.damage_target(self.to_global_rect(rect));
+    }
+
     /// Copies a finished offscreen target into the current pass.
     ///
     /// `uv` is `[u0, v0, u1, v1]`; `[0.0, 0.0, 1.0, 1.0]` copies the whole

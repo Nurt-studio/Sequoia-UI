@@ -1,5 +1,19 @@
 #![forbid(unsafe_code)]
 
+/// Version of the vertex/fragment ABI defined by the WGSL sources in this crate.
+///
+/// Bump it whenever the vertex inputs, the [`WGSL_PRELUDE`] `ShaderVarying`
+/// members, or the uniform block layout change: the sources here and the
+/// renderer's bind group layouts must be updated together, and shaders authored
+/// against an older ABI would otherwise silently read the wrong inputs.
+pub const ABI_VERSION: u32 = 1;
+
+/// Maximum size of one shader's uniform payload, in bytes.
+pub const MAX_UNIFORM_BYTES: usize = 256;
+
+/// Maximum number of texture inputs a shader may declare.
+pub const MAX_TEXTURES: usize = 6;
+
 pub const WGSL_PRELUDE: &str = include_str!("../wgsl/prelude.wgsl");
 pub const WGSL_ARRAY_UNIFORMS: &str = include_str!("../wgsl/array_uniforms.wgsl");
 pub const WGSL_EPILOGUE: &str = include_str!("../wgsl/epilogue.wgsl");

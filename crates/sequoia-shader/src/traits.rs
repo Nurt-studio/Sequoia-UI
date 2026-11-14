@@ -2,7 +2,7 @@
 pub const TEXTURE_GROUP_BASE: u32 = 1;
 
 /// Maximum number of textures a generated shader can declare.
-pub const MAX_TEXTURES: usize = 6;
+pub const MAX_TEXTURES: usize = sequoia_shader_wgsl::MAX_TEXTURES;
 
 /// Dimension of a texture input declared in a shader signature.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

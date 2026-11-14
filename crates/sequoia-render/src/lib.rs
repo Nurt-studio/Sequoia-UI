@@ -37,7 +37,7 @@ pub use shared::SharedGpu;
 pub use surface::{PendingFrames, Revision, WgpuFrame, WgpuRenderer, WgpuSurface};
 pub use types::{
     FrameSkip, GpuBackend, GpuOptions, MemoryBudget, MemoryUsage, PowerPreference, PresentMode,
-    QualityLevel, Region, RenderError, RenderStats,
+    QualityLevel, Region, RenderError, RenderStats, ShaderCaps,
 };
 
 pub use wgpu;
