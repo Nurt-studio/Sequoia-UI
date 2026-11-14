@@ -37,6 +37,12 @@ pub(crate) enum AppTheme {
     Light,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CodeFormat {
+    Svelte,
+    Seq,
+}
+
 #[derive(Clone)]
 pub(crate) struct EditorState {
     pub(crate) theme_mode: Signal<AppTheme>,
@@ -185,6 +191,7 @@ pub(crate) struct EditorState {
     pub(crate) sel_self_pad_left: Signal<f32>,
     pub(crate) sel_parent_layout: Signal<String>,
 
+    pub(crate) code_format: Signal<CodeFormat>,
     pub(crate) code_source: Signal<String>,
     pub(crate) code_editing: Signal<bool>,
     pub(crate) code_error: Signal<Option<String>>,
@@ -352,6 +359,7 @@ impl EditorState {
             sel_self_pad_left: Signal::new(0.0),
             sel_parent_layout: Signal::new("NONE".to_string()),
 
+            code_format: Signal::new(CodeFormat::Svelte),
             code_source: Signal::new(String::new()),
             code_editing: Signal::new(false),
             code_error: Signal::new(None),
@@ -958,21 +966,27 @@ impl EditorState {
             }));
         }
 
-        // ── EFFECT 3: root → code_source ──
+        // ── EFFECT 3: root + code_format → code_source ──
         {
             let root = state.root.clone();
+            let code_format = state.code_format.clone();
             let code = state.code_source.clone();
             let buffer = state.code_buffer.clone();
             let dirty = state.code_dirty.clone();
+            let mut last_format = code_format.get_untracked();
             state.bindings.borrow_mut().push(effect(move || {
                 let r = root.get();
-                let new = crate::codegen::to_svelte(&r);
-                if code.get_untracked() != new {
-                    code.set(new.clone());
-                    // With no unsaved changes in the editor, the preview follows the document.
-                    if !dirty.get_untracked() {
-                        buffer.set(new);
-                    }
+                let fmt = code_format.get();
+                let new = match fmt {
+                    CodeFormat::Svelte => crate::codegen::to_svelte(&r),
+                    CodeFormat::Seq => crate::codegen::to_seq(&r),
+                };
+                code.set(new.clone());
+                let format_changed = last_format != fmt;
+                last_format = fmt;
+                if format_changed || !dirty.get_untracked() {
+                    buffer.set(new);
+                    dirty.set(false);
                 }
             }));
         }

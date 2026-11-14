@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 image = { workspace = true }
 sequoia-ui = { workspace = true }
+sequoia-seq = { workspace = true }
 
 [dev-dependencies]
 sequoia-test = { workspace = true }

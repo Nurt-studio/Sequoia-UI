@@ -29,6 +29,8 @@ impl View for CodePanel {
             .background(colors::active().surface)
             // header: status dot + title
             .child(self.status_row())
+            // Format toggle (Svelte / Seq)
+            .child(self.format_row())
             // Preview / Edit toggle
             .child(self.mode_row())
             // actions

@@ -95,12 +95,20 @@ impl EditorState {
     /// Parses the editor buffer and replaces the document with it.
     pub(crate) fn apply_code_buffer(&self) {
         let src = self.code_buffer.get_untracked();
-        match crate::codegen::from_svelte(&src) {
+        let fmt = self.code_format.get();
+        let res = match fmt {
+            crate::state::CodeFormat::Svelte => crate::codegen::from_svelte(&src),
+            crate::state::CodeFormat::Seq => crate::codegen::from_seq(&src),
+        };
+        match res {
             Ok(new_root) => {
                 self.push_history();
                 self.root.set(new_root);
                 // The normalized code (generated from the AST) goes back into the buffer.
-                let normalized = crate::codegen::to_svelte(&self.root.get_untracked());
+                let normalized = match fmt {
+                    crate::state::CodeFormat::Svelte => crate::codegen::to_svelte(&self.root.get_untracked()),
+                    crate::state::CodeFormat::Seq => crate::codegen::to_seq(&self.root.get_untracked()),
+                };
                 self.code_buffer.set(normalized.clone());
                 self.code_source.set(normalized);
                 self.code_error.set(None);
@@ -122,16 +130,20 @@ impl EditorState {
         self.toast("Code restored from document");
     }
 
-    /// Copies the current Svelte code to the system clipboard.
+    /// Copies the current code to the system clipboard.
     pub(crate) fn copy_code_to_clipboard(&self, env: &Environment) {
         let code = self.code_buffer.get_untracked();
+        let fmt = self.code_format.get();
         if code.is_empty() {
             self.toast_warn("Code is empty");
             return;
         }
         if let Some(clip) = env.get::<SharedClipboard>() {
             clip.0.set_text(&code);
-            self.toast("Svelte code copied to clipboard");
+            match fmt {
+                crate::state::CodeFormat::Svelte => self.toast("Svelte code copied to clipboard"),
+                crate::state::CodeFormat::Seq => self.toast("Seq code copied to clipboard"),
+            }
         } else {
             self.toast_warn("System clipboard unavailable");
         }
@@ -143,6 +155,15 @@ impl EditorState {
         match std::fs::write("component.svelte", &code) {
             Ok(_) => self.toast("Saved component.svelte"),
             Err(_) => self.toast_error("Could not save component.svelte"),
+        }
+    }
+
+    /// Saves the current Seq code to the `app.seq` file.
+    pub(crate) fn save_seq_file(&self) {
+        let code = self.code_buffer.get_untracked();
+        match std::fs::write("app.seq", &code) {
+            Ok(_) => self.toast("Saved app.seq"),
+            Err(_) => self.toast_error("Could not save app.seq"),
         }
     }
 
