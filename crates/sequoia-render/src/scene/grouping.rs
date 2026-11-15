@@ -442,9 +442,7 @@ pub(crate) fn group_runs_with_opacity(
                 }
                 let start = data.instances.len() as u32;
                 let uniform_offset = data.uniforms.len() as u32;
-                data.uniforms.extend_from_slice(&s.uniforms);
-                data.uniforms
-                    .resize(uniform_offset as usize + SHADER_UNIFORM_STRIDE, 0);
+                pack_shader_uniforms(&mut data.uniforms, &s.uniforms);
                 data.instances.push(GpuShaderInstance {
                     rect: [
                         s.rect.left() * scale,

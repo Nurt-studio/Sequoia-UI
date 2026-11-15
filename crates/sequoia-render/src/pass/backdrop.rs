@@ -74,24 +74,9 @@ impl crate::renderer::GpuRenderer {
             },
             copy_extent,
         );
+        // `b` always receives the scene copy above, so the no-blur path samples
+        // it directly; it used to copy a→b a second time for nothing.
         let blurred = blur_px >= 0.5;
-        if !blurred {
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &bufs.a_tex,
-                    mip_level: 0,
-                    origin: copy_origin,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &bufs.b_tex,
-                    mip_level: 0,
-                    origin: copy_origin,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                copy_extent,
-            );
-        }
         if blurred {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sequoia-backdrop-blur-h"),

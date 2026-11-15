@@ -13,7 +13,7 @@
 use crate::renderer::GpuRenderer;
 use crate::scene::grouping::group_runs_with_opacity;
 use crate::types::*;
-use crate::utils::index_image_sources;
+use crate::utils::{index_image_sources, target_damage_scissor};
 use sequoia_core::{PassNode, RenderList, RenderTargetId, TargetPersistence, TexInput};
 use sequoia_shader::TextureKind;
 
@@ -133,13 +133,7 @@ impl GpuRenderer {
             };
             let px = ((size.width * scale).ceil() as u32).clamp(1, max.0);
             let py = ((size.height * scale).ceil() as u32).clamp(1, max.1);
-            let damage = damage.and_then(|rect| {
-                let x = (rect.left() * scale).floor().max(0.0) as u32;
-                let y = (rect.top() * scale).floor().max(0.0) as u32;
-                let w = ((rect.size.width * scale).ceil() as u32).min(px.saturating_sub(x));
-                let h = ((rect.size.height * scale).ceil() as u32).min(py.saturating_sub(y));
-                (w > 0 && h > 0).then_some((x, y, w, h))
-            });
+            let damage = damage.and_then(|rect| target_damage_scissor(rect, scale, (px, py)));
             let kept = self.ensure_render_target(
                 target,
                 (px, py),
@@ -162,6 +156,7 @@ impl GpuRenderer {
                 &view,
                 format,
                 scale,
+                (px, py),
                 kept,
                 damage,
                 reset,
@@ -189,6 +184,7 @@ impl GpuRenderer {
         view: &wgpu::TextureView,
         format: wgpu::TextureFormat,
         scale: f32,
+        target: (u32, u32),
         load_previous: bool,
         damage: Option<(u32, u32, u32, u32)>,
         reset: bool,
@@ -236,34 +232,42 @@ impl GpuRenderer {
         }
         let pipelines = self.pipelines_for_format(format);
 
-        Self::ensure_capacity(
+        if !Self::ensure_capacity(
             &self.device,
             &mut self.quad_buf,
             &mut self.capacity,
             quads.len(),
             QUAD_BYTES,
-        );
-        Self::ensure_capacity(
+        ) {
+            return false;
+        }
+        if !Self::ensure_capacity(
             &self.device,
             &mut self.glyph_buf,
             &mut self.glyph_capacity,
             glyphs.len(),
             GLYPH_BYTES,
-        );
-        Self::ensure_capacity(
+        ) {
+            return false;
+        }
+        if !Self::ensure_capacity(
             &self.device,
             &mut self.image_buf,
             &mut self.image_cap,
             images.len(),
             BLIT_BYTES,
-        );
-        Self::ensure_capacity(
+        ) {
+            return false;
+        }
+        if !Self::ensure_capacity(
             &self.device,
             &mut self.gradient_buf,
             &mut self.gradient_cap,
             gradients.len(),
             GRADIENT_BYTES,
-        );
+        ) {
+            return false;
+        }
         if !quads.is_empty() {
             self.queue
                 .write_buffer(&self.quad_buf, 0, bytemuck::cast_slice(&quads));
@@ -435,6 +439,10 @@ impl GpuRenderer {
         }
 
         {
+            // Positions are converted to clip space with this uniform, so it
+            // must describe the target, not the window. Build it before the
+            // immutable borrows below.
+            let screen_bg = self.target_screen_bind_group(target);
             let atlas_bg = self.atlas_tex.as_ref().map(|(_, bg)| bg);
             let shader_bg = shader_bind_group
                 .as_ref()
@@ -464,11 +472,12 @@ impl GpuRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            // A dirty rect only narrows the viewport: the clear still covers the
-            // whole attachment, and the preserved pixels outside the rect are
-            // left alone because the pass does not touch them.
+            // A dirty rect only clips the pass. The viewport stays at the full
+            // attachment: shrinking it would remap NDC onto the damage rect
+            // and squeeze/translate the whole scene instead of clipping it, so
+            // preserved pixels outside the rect would show a warped image.
             if let Some((x, y, w, h)) = damage {
-                pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+                pass.set_scissor_rect(x, y, w, h);
             }
             Self::draw_gui_runs(
                 &mut pass,
@@ -477,7 +486,7 @@ impl GpuRenderer {
                 &pipelines.glyph,
                 &pipelines.blit,
                 &pipelines.gradient,
-                &self.bind_group,
+                &screen_bg,
                 atlas_bg,
                 None,
                 &self.quad_buf,

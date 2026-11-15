@@ -4,6 +4,7 @@
 //! conversion and planning paths.
 
 use crate::color::{ColorSpace, linear_to_srgb, srgb_to_linear};
+use crate::gpu::resources::{ImageRefresh, failure_is_current, image_refresh};
 use crate::gpu::shaders::SHADER;
 use crate::renderer::GpuRenderer;
 use crate::scene::grouping::*;
@@ -35,6 +36,97 @@ fn embedded_shader_parses_and_validates() {
     validator
         .validate(&module)
         .expect("Sequoia shader fails to validate");
+}
+
+#[test]
+fn image_cache_rebuilds_when_the_extent_changes() {
+    // A rebuilt image with new dimensions cannot be served by the cached
+    // texture: texture, view, and bind group are all sized at creation, so the
+    // entry must be dropped and uploaded again instead of reusing it.
+    assert_eq!(
+        image_refresh((64, 64, Some(1)), Some((128, 128)), Some(1)),
+        ImageRefresh::Rebuild,
+        "extent change must rebuild the texture"
+    );
+    assert_eq!(
+        image_refresh((64, 64, Some(1)), Some((64, 64)), Some(2)),
+        ImageRefresh::Reupload,
+        "same size, new pixels -> in-place upload"
+    );
+    assert_eq!(
+        image_refresh((64, 64, Some(1)), Some((64, 64)), Some(1)),
+        ImageRefresh::Reuse
+    );
+    assert_eq!(
+        image_refresh((64, 64, Some(1)), None, Some(1)),
+        ImageRefresh::Reuse,
+        "a source without a declared extent keeps the cached texture"
+    );
+}
+
+#[test]
+fn uniform_packer_truncates_to_the_abi_limit() {
+    let mut ring = Vec::new();
+    pack_shader_uniforms(&mut ring, &[7u8; 32]);
+    assert_eq!(ring.len(), SHADER_UNIFORM_STRIDE);
+    assert!(ring[..32].iter().all(|b| *b == 7));
+    assert!(ring[32..].iter().all(|b| *b == 0), "the slot is zero-padded");
+
+    let oversized = vec![1u8; SHADER_UNIFORM_STRIDE + 16];
+    let mut ring = Vec::new();
+    pack_shader_uniforms(&mut ring, &oversized);
+    assert_eq!(
+        ring.len(),
+        SHADER_UNIFORM_STRIDE,
+        "oversized uniforms are cut to one ABI block"
+    );
+}
+
+#[test]
+fn failed_images_are_retried_for_a_new_version() {
+    let mut failures = std::collections::HashMap::new();
+    failures.insert(7u64, Some(1u64));
+    assert!(failure_is_current(&failures, 7, Some(1)));
+    assert!(
+        !failure_is_current(&failures, 7, Some(2)),
+        "a new dynamic version must be retried"
+    );
+    failures.insert(8, None);
+    assert!(
+        failure_is_current(&failures, 8, None),
+        "static failures stay cached"
+    );
+}
+
+#[test]
+fn target_damage_scissor_clips_instead_of_rescaling() {
+    let rect = Rect::from_xywh(80.0, 40.0, 60.0, 40.0);
+    assert_eq!(
+        target_damage_scissor(rect, 2.0, (400, 300)),
+        Some((160, 80, 120, 80)),
+        "scale maps the rect 1:1, it does not stretch it to the target"
+    );
+    let over = Rect::from_xywh(190.0, 140.0, 40.0, 40.0);
+    assert_eq!(
+        target_damage_scissor(over, 1.0, (200, 150)),
+        Some((190, 140, 10, 10)),
+        "a rect hanging over the corner is clipped"
+    );
+    assert_eq!(
+        target_damage_scissor(Rect::from_xywh(250.0, 0.0, 10.0, 10.0), 1.0, (200, 150)),
+        None,
+        "a fully off-target rect yields no zero-size scissor"
+    );
+}
+
+#[test]
+fn target_screen_uniform_uses_the_target_size() {
+    assert_eq!(target_screen_uniform((320, 200)), [320.0, 200.0, 0.0, 0.0]);
+    assert_ne!(
+        target_screen_uniform((320, 200)),
+        target_screen_uniform((1280, 720)),
+        "a target pass must not reuse the window-sized uniform"
+    );
 }
 
 #[test]

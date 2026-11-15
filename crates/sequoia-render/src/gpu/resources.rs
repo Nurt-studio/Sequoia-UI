@@ -23,7 +23,9 @@ use sequoia_core::{BlendMode, ImageSource};
 pub(crate) struct ImageCache {
     entries: HashMap<u64, GpuImage>,
     order: VecDeque<u64>,
-    failures: HashSet<u64>,
+    /// Key -> version that failed to decode. A dynamic image is retried once
+    /// its version changes instead of staying broken for the process lifetime.
+    failures: HashMap<u64, Option<u64>>,
     bytes: u64,
     max_bytes: u64,
     max_textures: usize,
@@ -36,7 +38,7 @@ impl ImageCache {
         Self {
             entries: HashMap::new(),
             order: VecDeque::new(),
-            failures: HashSet::new(),
+            failures: HashMap::new(),
             bytes: 0,
             max_bytes,
             max_textures,
@@ -63,12 +65,25 @@ impl ImageCache {
         self.evictions
     }
 
-    pub(crate) fn get(&self, key: u64) -> Option<&GpuImage> {
+    /// Returns a cached image and marks it as most recently used.
+    ///
+    /// Only uploads and version changes used to refresh the order, so a texture
+    /// that was sampled every frame could still be the oldest entry and get
+    /// evicted before an image uploaded once and never drawn again.
+    pub(crate) fn get(&mut self, key: u64) -> Option<&GpuImage> {
+        if let Some(pos) = self.order.iter().position(|k| *k == key) {
+            self.order.remove(pos);
+            self.order.push_back(key);
+        }
         self.entries.get(&key)
     }
 
-    pub(crate) fn failed(&self, key: u64) -> bool {
-        self.failures.contains(&key)
+    /// Whether `key` failed to decode for this exact `version`.
+    ///
+    /// Static sources (`None`) stay failed; a dynamic source gets a retry when
+    /// its version advances, so one bad frame does not hide it forever.
+    pub(crate) fn failed(&self, key: u64, version: Option<u64>) -> bool {
+        failure_is_current(&self.failures, key, version)
     }
 
     /// Removes one cached texture and reports whether it existed.
@@ -142,25 +157,34 @@ impl ImageCache {
             self.order.push_back(key);
             let want_version = source.dynamic_version();
             let want_extent = source.extent();
-            let entry_version = entry.version;
-            let entry_extent = (entry.width, entry.height);
-            let same_extent = want_extent.is_none_or(|e| e == entry_extent);
-            if want_version.is_some() && same_extent && want_version != entry_version {
-                if let Some((w, h, data)) = decode_image(source)
-                    && w == entry.width
-                    && h == entry.height
-                {
-                    upload_rgba_levels(queue, &entry.texture, w, h, &data);
-                    entry.version = want_version;
-                    self.failures.remove(&key);
-                    return Some(entry.bind_group.clone());
+            match image_refresh(
+                (entry.width, entry.height, entry.version),
+                want_extent,
+                want_version,
+            ) {
+                ImageRefresh::Reuse => return Some(entry.bind_group.clone()),
+                ImageRefresh::Reupload => {
+                    if let Some((w, h, data)) = decode_image(source)
+                        && w == entry.width
+                        && h == entry.height
+                    {
+                        upload_rgba_levels(queue, &entry.texture, w, h, &data);
+                        entry.version = want_version;
+                        self.failures.remove(&key);
+                        return Some(entry.bind_group.clone());
+                    }
+                    // The decoded pixels no longer match the texture; rebuild
+                    // below instead of serving the stale one.
                 }
-                self.remove(key);
-            } else {
-                return Some(entry.bind_group.clone());
+                ImageRefresh::Rebuild => {}
             }
+            // The image changed size (or could not be re-uploaded in place):
+            // drop the entry so the texture and its bind group are recreated
+            // at the new extent. Returning the cached bind group here keeps
+            // the GPU sampling the old texture forever.
+            self.remove(key);
         }
-        if self.failures.contains(&key) {
+        if failure_is_current(&self.failures, key, source.dynamic_version()) {
             return None;
         }
         if !allow_new {
@@ -179,7 +203,7 @@ impl ImageCache {
             if self.failures.len() >= IMAGE_FAILURES_MAX {
                 self.failures.clear();
             }
-            self.failures.insert(key);
+            self.failures.insert(key, source.dynamic_version());
             return None;
         };
         let bytes = rgba8_bytes(w, h);
@@ -262,6 +286,49 @@ pub(crate) type SharedImageCache = Arc<Mutex<ImageCache>>;
 /// Locks a shared image cache, recovering from a poisoned mutex.
 pub(crate) fn lock_images(cache: &SharedImageCache) -> std::sync::MutexGuard<'_, ImageCache> {
     cache.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What a cached image texture needs before draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ImageRefresh {
+    /// The texture and bind group still match the source.
+    Reuse,
+    /// Same dimensions, new pixels: upload into the existing texture.
+    Reupload,
+    /// New dimensions: the texture, view, and bind group must be recreated.
+    Rebuild,
+}
+
+/// Decides how to refresh an existing cache entry.
+///
+/// An extent change can never be serviced by re-uploading: the texture, its
+/// view, and the bind group are sized at creation.
+/// Whether a decode failure recorded for `key` still applies to `version`.
+pub(crate) fn failure_is_current(
+    failed: &HashMap<u64, Option<u64>>,
+    key: u64,
+    version: Option<u64>,
+) -> bool {
+    failed
+        .get(&key)
+        .is_some_and(|failed_version| *failed_version == version)
+}
+
+pub(crate) fn image_refresh(
+    entry: (u32, u32, Option<u64>),
+    want_extent: Option<(u32, u32)>,
+    want_version: Option<u64>,
+) -> ImageRefresh {
+    let (entry_w, entry_h, entry_version) = entry;
+    if want_extent.is_some_and(|extent| extent != (entry_w, entry_h)) {
+        return ImageRefresh::Rebuild;
+    }
+    if let Some(version) = want_version
+        && Some(version) != entry_version
+    {
+        return ImageRefresh::Reupload;
+    }
+    ImageRefresh::Reuse
 }
 
 /// Fixed-size shelf-packed atlas for small static images.
@@ -447,10 +514,24 @@ pub(crate) struct GpuVolume {
 #[derive(Default)]
 pub(crate) struct VolumeCache {
     entries: HashMap<u64, GpuVolume>,
+    /// Least-recently-used order, so the cache stays bounded.
+    order: VecDeque<u64>,
     failures: HashSet<u64>,
 }
 
 impl VolumeCache {
+    /// Maximum number of live 3D LUT textures.
+    const MAX_VOLUMES: usize = 16;
+
+    /// Destroys every cached LUT texture.
+    pub(crate) fn clear(&mut self) {
+        for (_, entry) in self.entries.drain() {
+            entry.texture.destroy();
+        }
+        self.order.clear();
+        self.failures.clear();
+    }
+
     /// Returns a bind group for a 3D LUT, uploading it on first use.
     pub(crate) fn bind_group(
         &mut self,
@@ -461,8 +542,14 @@ impl VolumeCache {
         path: &str,
     ) -> Option<wgpu::BindGroup> {
         let key = volume_key(path);
-        if let Some(entry) = self.entries.get(&key) {
-            return Some(entry.bind_group.clone());
+        if self.entries.contains_key(&key) {
+            // Mark it most recently used so the LUT drawn every frame is not
+            // the one evicted when the cache is full.
+            if let Some(pos) = self.order.iter().position(|k| *k == key) {
+                self.order.remove(pos);
+            }
+            self.order.push_back(key);
+            return self.entries.get(&key).map(|e| e.bind_group.clone());
         }
         if self.failures.contains(&key) {
             return None;
@@ -535,6 +622,16 @@ impl VolumeCache {
                 bind_group: bind_group.clone(),
             },
         );
+        self.order.push_back(key);
+        // LUTs used to live for the whole process; bound them like images.
+        while self.entries.len() > Self::MAX_VOLUMES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(entry) = self.entries.remove(&oldest) {
+                entry.texture.destroy();
+            }
+        }
         Some(bind_group)
     }
 }
@@ -763,19 +860,23 @@ impl crate::renderer::GpuRenderer {
     }
 
     /// Grows `buf` to hold at least `len` instances of `item_bytes`.
+    ///
+    /// Returns `false` when the request exceeds `max_buffer_size`: the caller
+    /// must then skip the batch. Writing the full slice anyway failed wgpu
+    /// validation, because the buffer was left at its previous (smaller) size.
     pub(crate) fn ensure_capacity(
         device: &wgpu::Device,
         buf: &mut wgpu::Buffer,
         cap: &mut usize,
         len: usize,
         item_bytes: usize,
-    ) {
+    ) -> bool {
         if len <= *cap {
-            return;
+            return true;
         }
 
         if item_bytes == 0 {
-            return;
+            return true;
         }
         let want = len.max(cap.saturating_mul(2).max(1));
 
@@ -784,15 +885,15 @@ impl crate::renderer::GpuRenderer {
         if len > allowed {
             log::error!(
                 "sequoia-render: instance buffer {len} x {item_bytes}B \
-                 exceeds max_buffer_size ({max_bytes}B); dropping resize"
+                 exceeds max_buffer_size ({max_bytes}B); batch skipped"
             );
-            return;
+            return false;
         }
         let new_cap = want.min(allowed);
 
         let Some(bytes) = new_cap.checked_mul(item_bytes) else {
             log::error!("sequoia-render: instance buffer overflow (len={len}, item={item_bytes})");
-            return;
+            return false;
         };
         *buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sequoia-instances"),
@@ -801,6 +902,7 @@ impl crate::renderer::GpuRenderer {
             mapped_at_creation: false,
         });
         *cap = new_cap;
+        true
     }
 
     pub(crate) fn create_cached_surface(

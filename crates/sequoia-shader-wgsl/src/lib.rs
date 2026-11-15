@@ -6,7 +6,9 @@
 /// members, or the uniform block layout change: the sources here and the
 /// renderer's bind group layouts must be updated together, and shaders authored
 /// against an older ABI would otherwise silently read the wrong inputs.
-pub const ABI_VERSION: u32 = 1;
+/// Bumped to 2 when the renderer's user-shader prelude started using this
+/// crate's `ShaderVarying` (which carries `rect_size` at `@location(6)`).
+pub const ABI_VERSION: u32 = 2;
 
 /// Maximum size of one shader's uniform payload, in bytes.
 pub const MAX_UNIFORM_BYTES: usize = 256;

@@ -346,7 +346,32 @@ pub(crate) const GRADIENT_BYTES: usize = 44 * 4;
 
 pub(crate) const SHADER_BYTES: usize = 96;
 
+/// Bytes bound per shader draw for its uniform block.
+///
+/// The ABI binds exactly one 256-byte block per draw (`array<vec4<f32>, 16>`),
+/// so a longer payload cannot be uploaded and must be truncated at pack time.
 pub(crate) const SHADER_UNIFORM_STRIDE: usize = 256;
+
+/// Appends one draw's uniform payload to the ring, padded to
+/// [`SHADER_UNIFORM_STRIDE`].
+///
+/// Callers used to `extend` then `resize(offset + STRIDE)`, which silently cut
+/// anything past the ABI limit; now the truncation is explicit and reported.
+pub(crate) fn pack_shader_uniforms(dst: &mut Vec<u8>, uniforms: &[u8]) {
+    if uniforms.len() > SHADER_UNIFORM_STRIDE {
+        log::warn!(
+            "sequoia-render: shader uniforms are {} B but the ABI binds {SHADER_UNIFORM_STRIDE} B \
+             — truncating the extra {} B",
+            uniforms.len(),
+            uniforms.len() - SHADER_UNIFORM_STRIDE
+        );
+        dst.extend_from_slice(&uniforms[..SHADER_UNIFORM_STRIDE]);
+        return;
+    }
+    let start = dst.len();
+    dst.extend_from_slice(uniforms);
+    dst.resize(start + SHADER_UNIFORM_STRIDE, 0);
+}
 
 pub(crate) const INITIAL_SHADER_CAPACITY: usize = 64;
 

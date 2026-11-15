@@ -375,6 +375,33 @@ pub(crate) fn scissor_rect(rect: Rect, fb: (u32, u32)) -> Option<(u32, u32, u32,
     (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
 }
 
+/// Screen uniform for an offscreen target pass.
+///
+/// The shader divides by this size to reach clip space, so it has to be the
+/// target's own size. Feeding the window size shifted and squeezed the scene
+/// into the top-left of a differently sized target.
+pub(crate) fn target_screen_uniform(target: (u32, u32)) -> [f32; 4] {
+    [target.0 as f32, target.1 as f32, 0.0, 0.0]
+}
+
+/// Clips a target-pass damage rect (logical) to the attachment and converts it
+/// into a scissor rectangle in physical target pixels.
+///
+/// The result is used as a scissor, never as a viewport: a viewport would remap
+/// NDC onto the damage rect and so squeeze the scene instead of clipping it.
+pub(crate) fn target_damage_scissor(
+    rect: Rect,
+    scale: f32,
+    target: (u32, u32),
+) -> Option<(u32, u32, u32, u32)> {
+    let (px, py) = target;
+    let x = (rect.left() * scale).floor().max(0.0) as u32;
+    let y = (rect.top() * scale).floor().max(0.0) as u32;
+    let w = ((rect.size.width * scale).ceil() as u32).min(px.saturating_sub(x));
+    let h = ((rect.size.height * scale).ceil() as u32).min(py.saturating_sub(y));
+    (w > 0 && h > 0).then_some((x, y, w, h))
+}
+
 /// Maximum number of disjoint scissor regions recorded for one frame.
 pub(crate) const MAX_DAMAGE_REGIONS: usize = 8;
 

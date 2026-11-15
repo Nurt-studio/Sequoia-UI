@@ -631,91 +631,23 @@ fn fs_gradient(frag: VsGradient) -> @location(0) vec4<f32> {
 "#;
 
 /// WGSL declarations shared by every user shader module.
-pub(crate) const USER_SHADER_PRELUDE: &str = r#"
-struct Screen {
-    size: vec4<f32>,
-};
-@group(0) @binding(0) var<uniform> screen: Screen;
+///
+/// This is [`sequoia_shader::WGSL_PRELUDE`] plus the uniform block, so a
+/// hand-written module and the `shader!` macro describe exactly one ABI. The
+/// previous copy had a different `ShaderVarying` (no `rect_size`), which meant
+/// hand-written shaders could not compile against the same ABI version.
+pub(crate) const USER_SHADER_PRELUDE: &str = sequoia_shader::WGSL_PRELUDE;
 
+/// Uniform block bound at `@group(0) @binding(1)` for every user shader.
+const USER_SHADER_UNIFORMS: &str = r#"
 struct ShaderUniforms {
     values: array<vec4<f32>, 16>,
 };
 @group(0) @binding(1) var<uniform> uniforms: ShaderUniforms;
-
-struct ShaderVarying {
-    @builtin(position) position: vec4<f32>,
-    @location(0) local: vec2<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) world: vec2<f32>,
-    @location(3) clip_rect: vec4<f32>,
-    @location(4) clip_radius: f32,
-    @location(5) opacity: f32,
-};
-
-@vertex
-fn vs_main(
-    @builtin(vertex_index) vi: u32,
-    @location(0) rect: vec4<f32>,
-    @location(1) uv: vec4<f32>,
-    @location(2) clip_rect: vec4<f32>,
-    @location(3) clip_radius: f32,
-    @location(4) opacity: f32,
-    @location(5) transform_a: vec4<f32>,
-    @location(6) transform_b: vec2<f32>,
-    @location(7) shader_id: u32,
-    @location(8) uniform_offset: u32,
-) -> ShaderVarying {
-    let c = vec2<f32>(f32(vi & 1u), f32(vi >> 1u));
-    var world = rect.xy + c * rect.zw;
-    world = vec2<f32>(
-        transform_a.x * world.x + transform_a.z * world.y + transform_b.x,
-        transform_a.y * world.x + transform_a.w * world.y + transform_b.y,
-    );
-    var out: ShaderVarying;
-    out.position = vec4<f32>(
-        world.x / screen.size.x * 2.0 - 1.0,
-        1.0 - world.y / screen.size.y * 2.0,
-        0.0,
-        1.0
-    );
-    out.local = c * rect.zw;
-    out.uv = mix(uv.xy, uv.zw, c);
-    out.world = world;
-    out.clip_rect = clip_rect;
-    out.clip_radius = clip_radius;
-    out.opacity = opacity;
-    return out;
-}
-
-fn sequoia_clip_cover(world: vec2<f32>, clip_rect: vec4<f32>, clip_radius: f32) -> f32 {
-    let half = clip_rect.zw * 0.5;
-    if (half.x <= 0.0 || half.y <= 0.0) {
-        return 1.0;
-    }
-    let center = clip_rect.xy + half;
-    let p = abs(world - center);
-    let rr = clamp(clip_radius, 0.0, min(half.x, half.y));
-    let b = half - vec2<f32>(rr, rr);
-    let d = p - b;
-    let dist = length(max(d, vec2<f32>(0.0, 0.0))) + min(max(d.x, d.y), 0.0) - rr;
-    let aa = max(fwidth(dist), 0.0001);
-    return clamp(0.5 - dist / aa, 0.0, 1.0);
-}
 "#;
 
 /// WGSL wrapper that turns `fs_user` into a premultiplied fragment stage.
-pub(crate) const USER_SHADER_EPILOGUE: &str = r#"
-@fragment
-fn fs_main(frag: ShaderVarying) -> @location(0) vec4<f32> {
-    let clip = sequoia_clip_cover(frag.world, frag.clip_rect, frag.clip_radius);
-    if (clip <= 0.001) {
-        discard;
-    }
-    let color = fs_user(frag);
-    let alpha = clamp(color.a * frag.opacity * clip, 0.0, 1.0);
-    return vec4<f32>(color.rgb * alpha, alpha);
-}
-"#;
+pub(crate) const USER_SHADER_EPILOGUE: &str = sequoia_shader::WGSL_EPILOGUE;
 
 /// Detects the dimension of each texture group declared by a shader module.
 ///
@@ -758,7 +690,35 @@ pub(crate) fn texture_kinds(source: &str) -> Vec<TextureKind> {
 
 /// Composes a user fragment function with the engine vertex and uniform ABI.
 pub fn compose_user_shader(source: &str) -> String {
-    format!("{USER_SHADER_PRELUDE}\n{source}\n{USER_SHADER_EPILOGUE}")
+    format!(
+        "{USER_SHADER_PRELUDE}\n{USER_SHADER_UNIFORMS}\n{source}\n{USER_SHADER_EPILOGUE}"
+    )
+}
+
+/// Checks the one bind group entry every user shader module must declare.
+///
+/// Registration used to accept a module whose group 0 differed from the
+/// engine's ABI; the mismatch only surfaced later as a validation error while
+/// building a pipeline, with no draw and no link back to the shader.
+///
+/// Only `@group(0) @binding(0)` is required, because the prelude's `vs_main`
+/// always reads the screen size from it. Binding 1 and its shape belong to the
+/// shader: `shader!` declares a typed `SequoiaUniforms` struct, while uniform-free
+/// modules such as the built-in mask shader declare no block at all. Requiring
+/// the renderer's canonical `array<vec4<f32>, 16>` here rejected every typed
+/// shader at registration, and the draw was then dropped for lack of an id.
+///
+/// # Errors
+///
+/// Returns [`crate::RenderError::ShaderCompile`] naming the missing binding.
+pub fn validate_shader_abi(source: &str) -> Result<(), crate::RenderError> {
+    let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+    if !compact.contains("@group(0)@binding(0)") {
+        return Err(crate::RenderError::ShaderCompile(
+            "shader ABI: missing @group(0) @binding(0) `Screen` uniform".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Parses and validates a complete user shader module.
@@ -825,6 +785,35 @@ pub(crate) const PASSTHROUGH_FS: &str =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_typed_and_uniformless_group_zero_modules() {
+        let typed = format!(
+            "{}\nstruct SequoiaUniforms {{\n    amount: f32,\n}}\n\
+             @group(0) @binding(1) var<uniform> sequoia_u: SequoiaUniforms;\n\
+             fn fs_user(frag: ShaderVarying) -> vec4<f32> {{ return vec4<f32>(sequoia_u.amount); }}\n{}",
+            sequoia_shader::WGSL_PRELUDE,
+            sequoia_shader::WGSL_EPILOGUE
+        );
+        assert!(
+            validate_shader_abi(&typed).is_ok(),
+            "the `shader!` macro declares its own uniform struct, not array<vec4<f32>, 16>"
+        );
+        let uniformless = format!(
+            "{}\nfn fs_user(frag: ShaderVarying) -> vec4<f32> {{ return vec4<f32>(1.0); }}\n{}",
+            sequoia_shader::WGSL_PRELUDE,
+            sequoia_shader::WGSL_EPILOGUE
+        );
+        assert!(
+            validate_shader_abi(&uniformless).is_ok(),
+            "a shader that uses no uniforms needs no binding 1"
+        );
+    }
+
+    #[test]
+    fn rejects_a_module_without_the_screen_binding() {
+        assert!(validate_shader_abi("fn fs_main() {}").is_err());
+    }
 
     #[test]
     fn detects_texture_dimensions_per_group() {

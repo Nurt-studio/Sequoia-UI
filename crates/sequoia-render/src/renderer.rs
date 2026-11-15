@@ -55,6 +55,13 @@ pub struct GpuRenderer {
     pub(crate) atlas_bgl: wgpu::BindGroupLayout,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) uniform_buf: wgpu::Buffer,
+
+    /// Layout for the screen-size uniform, reused to build a per-target one.
+    pub(crate) screen_bgl: wgpu::BindGroupLayout,
+
+    /// Screen uniform + bind group sized to the offscreen target currently
+    /// being rendered (recreated when the size changes).
+    pub(crate) target_screen: Option<(wgpu::Buffer, wgpu::BindGroup, (u32, u32))>,
     pub(crate) quad_buf: wgpu::Buffer,
     pub(crate) glyph_buf: wgpu::Buffer,
     pub(crate) frame_buf: wgpu::Buffer,
@@ -818,6 +825,8 @@ impl GpuRenderer {
             atlas_bgl,
             bind_group,
             uniform_buf,
+            screen_bgl,
+            target_screen: None,
             quad_buf,
             glyph_buf,
             frame_buf,
@@ -928,6 +937,43 @@ impl GpuRenderer {
     /// Returns the swapchain format used by the window.
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.config.format
+    }
+
+    /// Returns the screen uniform bind group for an offscreen target pass.
+    ///
+    /// The vertex shader converts positions to clip space with the bound screen
+    /// size. Binding the window's uniform here put the whole scene into the
+    /// top-left corner whenever the target was not window-sized.
+    pub(crate) fn target_screen_bind_group(&mut self, target: (u32, u32)) -> wgpu::BindGroup {
+        let recreate = self
+            .target_screen
+            .as_ref()
+            .is_none_or(|(_, _, size)| *size != target);
+        if recreate {
+            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("sequoia-target-screen"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sequoia-target-screen-bg"),
+                layout: &self.screen_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }],
+            });
+            self.target_screen = Some((buffer, bind_group, target));
+        }
+        let (buffer, bind_group, _) = self
+            .target_screen
+            .as_ref()
+            .expect("target screen was just created");
+        let screen = crate::utils::target_screen_uniform(target);
+        self.queue
+            .write_buffer(buffer, 0, bytemuck::cast_slice(&screen));
+        bind_group.clone()
     }
 
     /// Returns the format used by render pipelines and offscreen targets.
@@ -1352,6 +1398,8 @@ impl GpuRenderer {
             layer.texture.destroy();
         }
         self._shader_white_tex.destroy();
+        self._shader_white_volume_tex.destroy();
+        self.volumes.clear();
         if Arc::strong_count(&self.images) == 1 {
             lock_images(&self.images).clear();
         }
@@ -1417,6 +1465,9 @@ impl GpuRenderer {
         let name = name.into();
         let wgsl = wgsl.as_ref();
         validate_user_shader(wgsl)?;
+        // Catch a module whose group 0 layout does not match the engine ABI at
+        // registration, instead of failing later while building a pipeline.
+        crate::gpu::shaders::validate_shader_abi(wgsl)?;
 
         let kinds = shader_texture_kinds(wgsl);
         if let Err(message) = self.shader_caps().limits.check_textures(kinds.len()) {
@@ -1693,6 +1744,10 @@ impl GpuRenderer {
         }
         let layout =
             create_user_shader_pipeline_layout(&self.device, &bgl, &texture_layout_refs);
+        // Pipeline creation can fail validation (mismatched vertex layout,
+        // blend state, …). Without a scope the error only went to the log with
+        // no link to the shader, and a broken pipeline was cached.
+        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let pipeline = create_user_shader_pipeline(
             &self.device,
             &module,
@@ -1700,6 +1755,14 @@ impl GpuRenderer {
             format,
             blend_component(blend),
         );
+        if let Some(error) = pollster::block_on(error_scope.pop()) {
+            log::error!(
+                "sequoia-render: pipeline for shader {} ({blend:?}, {format:?}) failed validation: \
+                 {error}",
+                shader.get()
+            );
+            return false;
+        }
         if let Some(entry) = self.user_shaders.get_mut(&shader) {
             entry.pipelines.insert((blend, format), pipeline);
         }
@@ -2363,7 +2426,7 @@ impl GpuRenderer {
                 self.stats.frames += 1;
                 if dq + dg + di + dgrad > 0 {
                     log::error!(
-                        "sequoia-render: frame exceeds the device vertex-buffer limit Ä‚ËĂ˘â€šÂ¬Ă˘â‚¬ĹĄ \
+                        "sequoia-render: frame exceeds the device vertex-buffer limit — \
                      dropped quads={dq} glyphs={dg} images={di} gradients={dgrad} \
                      (paint items={}, quad ceiling={}, glyph ceiling={})",
                         list.items().len(),
@@ -2512,7 +2575,7 @@ impl GpuRenderer {
                         self.warned_filter_combo = true;
                         log::warn!(
                             "sequoia-render: {skipped} composite op(s) skipped \
-                             (backdrop marker inside a filter range or nested filter Ä‚ËĂ˘â€šÂ¬Ă˘â‚¬ĹĄ \
+                             (backdrop marker inside a filter range or nested filter — \
                              the outer filter wins)"
                         );
                     }
@@ -2635,34 +2698,45 @@ impl GpuRenderer {
             }
         }
 
-        Self::ensure_capacity(
+        let quad_ok = Self::ensure_capacity(
             &self.device,
             &mut self.quad_buf,
             &mut self.capacity,
             quads.len(),
             QUAD_BYTES,
         );
-        Self::ensure_capacity(
+        let glyph_ok = Self::ensure_capacity(
             &self.device,
             &mut self.glyph_buf,
             &mut self.glyph_capacity,
             glyphs.len(),
             GLYPH_BYTES,
         );
-        Self::ensure_capacity(
+        let image_ok = Self::ensure_capacity(
             &self.device,
             &mut self.image_buf,
             &mut self.image_cap,
             images.len(),
             BLIT_BYTES,
         );
-        Self::ensure_capacity(
+        let gradient_ok = Self::ensure_capacity(
             &self.device,
             &mut self.gradient_buf,
             &mut self.gradient_cap,
             gradients.len(),
             GRADIENT_BYTES,
         );
+        if !(quad_ok && glyph_ok && image_ok && gradient_ok) {
+            // The scene outgrew the largest buffer the device allows. Writing
+            // it anyway fails validation, so skip this frame instead.
+            log::error!("sequoia-render: scene exceeds the instance buffer limit — frame skipped");
+            quads.clear();
+            glyphs.clear();
+            images.clear();
+            image_keys.clear();
+            gradients.clear();
+            runs.clear();
+        }
         if !quads.is_empty() {
             self.queue
                 .write_buffer(&self.quad_buf, 0, bytemuck::cast_slice(quads));
@@ -2782,8 +2856,8 @@ impl GpuRenderer {
                     continue;
                 }
                 let needs_upload = {
-                    let cache = lock_images(&self.images);
-                    if cache.failed(*key) {
+                    let mut cache = lock_images(&self.images);
+                    if cache.failed(*key, src.dynamic_version()) {
                         continue;
                     }
                     match cache.get(*key) {
@@ -2812,7 +2886,7 @@ impl GpuRenderer {
                     );
                 }
             }
-            let cache = lock_images(&self.images);
+            let mut cache = lock_images(&self.images);
             for (i, key) in image_keys.iter().enumerate() {
                 if image_draws[i].is_some() || target_from_key(*key).is_some() {
                     continue;
