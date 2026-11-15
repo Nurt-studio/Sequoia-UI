@@ -196,7 +196,7 @@ fn report(name: &str, res: &ProbeResults) {
     let frame_skip = WARMUP.min(res.frame_times.len().saturating_sub(1));
     let frames = &res.frame_times[frame_skip..];
     if times.is_empty() && frames.is_empty() {
-        println!("{name}: brak próbek");
+        println!("{name}: no samples");
         return;
     }
     let p50 = median_u128(times);
@@ -329,13 +329,13 @@ fn main() {
         .collect();
     let mode = positional.first().copied().unwrap_or("cpu");
 
-    println!("sequoia-ui benchmark: {ROWS} wierszy\n");
+    println!("sequoia-ui benchmark: {ROWS} rows\n");
 
     match mode {
         "cpu" => {
-            println!("=== CPU Reactive Update (czysty silnik, bez GPU/okna) ===");
+            println!("=== CPU Reactive Update (pure engine, no GPU/window) ===");
             println!(
-                "(Mutacja POZA grafem; p50 = do ostatniej przebudowy, licznik = wywołania closure)\n"
+                "(Mutation OUTSIDE graph; p50 = to last rebuild, counter = closure calls)\n"
             );
             let only = positional.get(1).copied();
             if only.is_none() || only == Some("s1") {
@@ -347,7 +347,7 @@ fn main() {
             if only.is_none() || only == Some("s3") {
                 bench_cpu(Scenario::FineAll);
             }
-            println!("\nGPU bench (osobny proces dla każdego scenariusza):");
+            println!("\nGPU bench (separate process for each scenario):");
             println!("  cargo run --release --example row_update -- gpu s1 [--no-vsync]");
             println!("  cargo run --release --example row_update -- gpu s2");
             println!("  cargo run --release --example row_update -- gpu s3");
@@ -359,7 +359,7 @@ fn main() {
                 "s2" => Scenario::CoarseOne,
                 "s3" => Scenario::FineAll,
                 _ => {
-                    eprintln!("Użyj: s1, s2 lub s3");
+                    eprintln!("Use: s1, s2 or s3");
                     return;
                 }
             };
@@ -367,7 +367,7 @@ fn main() {
         }
         _ => {
             println!(
-                "Użycie: cargo run --release --example row_update [cpu [s1|s2|s3] | gpu s1|s2|s3] [--no-vsync]"
+                "Usage: cargo run --release --example row_update [cpu [s1|s2|s3] | gpu s1|s2|s3] [--no-vsync]"
             );
         }
     }

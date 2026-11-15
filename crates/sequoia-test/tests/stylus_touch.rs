@@ -124,7 +124,7 @@ fn pen_move_updates_pressure_without_click() {
     h.sync(400.0, 300.0);
     h.pen_move(10.0, 10.0, 0.3);
     assert_eq!(h.pointer_pressure(), 0.3);
-    assert!(log.borrow().is_empty(), "sam ruch nie klika");
+    assert!(log.borrow().is_empty(), "mere move does not click");
 }
 
 #[test]

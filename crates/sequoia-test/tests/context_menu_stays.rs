@@ -28,16 +28,16 @@ fn context_menu_stays_at_open_point() {
     h.layout(400.0, 300.0);
     h.paint();
     h.tick();
-    assert_eq!(h.overlay_ids().len(), 1, "PPM otwiera menu");
+    assert_eq!(h.overlay_ids().len(), 1, "RMB opens menu");
     let before = h.overlay_rect(h.overlay_ids()[0]).unwrap();
     h.pointer_move(320.0, 250.0);
     h.layout(400.0, 300.0);
     h.paint();
     h.tick();
-    assert_eq!(h.overlay_ids().len(), 1, "ruch nie zamyka menu");
+    assert_eq!(h.overlay_ids().len(), 1, "move does not close menu");
     let after = h.overlay_rect(h.overlay_ids()[0]).unwrap();
     assert!(
         (after.left() - before.left()).abs() < 1.0 && (after.top() - before.top()).abs() < 1.0,
-        "menu nie goni kursora: {before:?} -> {after:?}"
+        "menu does not chase cursor: {before:?} -> {after:?}"
     );
 }

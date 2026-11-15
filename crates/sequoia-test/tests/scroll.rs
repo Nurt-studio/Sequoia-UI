@@ -581,6 +581,6 @@ fn touch_horizontal_drag_ignored_in_vertical_mode() {
     assert_eq!(
         sequoia_view::ScrollView::offset(&scroll, &h.runtime(), scroll_el),
         0.0,
-        "poziomy ruch nie scrolluje pionu"
+        "horizontal move does not scroll vertically"
     );
 }
