@@ -325,6 +325,8 @@ struct Prepared {
     rt: Runtime,
     text: TextSystem,
     shaders: HashMap<ShaderId, Rc<dyn CpuShader>>,
+    /// Decoded `ImageSource::File` layers, reused across draws and frames.
+    images: HashMap<String, Rc<RgbaImage>>,
 }
 
 impl Exporter {
@@ -384,7 +386,12 @@ impl Exporter {
         }
         rt.mount(root);
 
-        Ok(Prepared { rt, text, shaders })
+        Ok(Prepared {
+            rt,
+            text,
+            shaders,
+            images: HashMap::new(),
+        })
     }
 
     fn paint_frame(
@@ -417,6 +424,7 @@ impl Exporter {
             scale,
             opts,
             &prepared.shaders,
+            &mut prepared.images,
         ))
     }
 
@@ -430,24 +438,50 @@ impl Exporter {
         self.paint_frame(&mut prepared, opts)
     }
 
+    /// Renders `anim_opts.total_frames()` frames, advancing the frame clock,
+    /// and hands each frame to `emit` as soon as it is ready.
+    ///
+    /// Prefer this over [`Self::render_animation`] for long or large clips:
+    /// collecting every frame first keeps the whole animation in memory, and 30
+    /// frames of 1080p RGBA is roughly 2.4 GB.
+    pub fn render_animation_each<F>(
+        &self,
+        root: impl View + 'static,
+        opts: &ExportOptions,
+        anim_opts: &AnimationOptions,
+        mut emit: F,
+    ) -> Result<(), ExportError>
+    where
+        F: FnMut(RgbaImage) -> Result<(), ExportError>,
+    {
+        let mut prepared = self.prepare(root, opts)?;
+        let total_frames = anim_opts.total_frames();
+        let dt = anim_opts.frame_duration();
+        for i in 0..total_frames {
+            if i > 0 {
+                prepared.rt.advance_for_test(dt);
+                prepared.rt.tick();
+            }
+            emit(self.paint_frame(&mut prepared, opts)?)?;
+        }
+        Ok(())
+    }
+
     /// Renders `anim_opts.total_frames()` frames, advancing the frame clock.
+    ///
+    /// Keeps every frame in memory; use [`Self::render_animation_each`] to
+    /// stream them to an encoder instead.
     pub fn render_animation(
         &self,
         root: impl View + 'static,
         opts: &ExportOptions,
         anim_opts: &AnimationOptions,
     ) -> Result<Vec<RgbaImage>, ExportError> {
-        let mut prepared = self.prepare(root, opts)?;
-        let total_frames = anim_opts.total_frames();
-        let dt = anim_opts.frame_duration();
-        let mut frames = Vec::with_capacity(total_frames);
-        for i in 0..total_frames {
-            if i > 0 {
-                prepared.rt.advance_for_test(dt);
-                prepared.rt.tick();
-            }
-            frames.push(self.paint_frame(&mut prepared, opts)?);
-        }
+        let mut frames = Vec::new();
+        self.render_animation_each(root, opts, anim_opts, |frame| {
+            frames.push(frame);
+            Ok(())
+        })?;
         Ok(frames)
     }
 
@@ -476,8 +510,20 @@ impl Exporter {
     ) -> Result<PathBuf, ExportError> {
         let path = path.as_ref().to_path_buf();
         ensure_parent(&path)?;
-        let frames = self.render_animation(root, opts, anim_opts)?;
-        write_gif(frames, anim_opts, &path)?;
+        let file = std::fs::File::create(&path)
+            .map_err(|e| ExportError::Io(format!("create gif {}: {e}", path.display())))?;
+        let mut encoder = image::codecs::gif::GifEncoder::new(file);
+        encoder
+            .set_repeat(image::codecs::gif::Repeat::Infinite)
+            .map_err(|e| ExportError::Io(format!("gif encoder repeat: {e}")))?;
+        let delay = image::Delay::from_saturating_duration(anim_opts.frame_duration());
+        // Encode each frame as it is rendered instead of buffering the whole
+        // animation in RAM.
+        self.render_animation_each(root, opts, anim_opts, |img| {
+            encoder
+                .encode_frame(image::Frame::from_parts(img, 0, 0, delay))
+                .map_err(|e| ExportError::Io(format!("encode gif frame: {e}")))
+        })?;
         Ok(path)
     }
 
@@ -511,8 +557,21 @@ impl Exporter {
         let dir_path = dir_path.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir_path)
             .map_err(|e| ExportError::Io(format!("mkdir {}: {e}", dir_path.display())))?;
-        let frames = self.render_animation(root, opts, anim_opts)?;
-        write_frames(frames, &dir_path)
+        let width_digits = anim_opts.total_frames().to_string().len().max(4);
+        let mut paths = Vec::new();
+        let mut index = 0usize;
+        // Write each frame as soon as it is rendered; holding the whole
+        // animation before saving was the same memory problem as the GIF path.
+        self.render_animation_each(root, opts, anim_opts, |img| {
+            let filename = format!("frame_{index:0width_digits$}.png");
+            let path = dir_path.join(filename);
+            img.save(&path)
+                .map_err(|e| ExportError::Io(format!("save frame {}: {e}", path.display())))?;
+            paths.push(path);
+            index += 1;
+            Ok(())
+        })?;
+        Ok(paths)
     }
 }
 
@@ -526,39 +585,6 @@ fn ensure_parent(path: &Path) -> Result<(), ExportError> {
     Ok(())
 }
 
-fn write_gif(
-    frames: Vec<RgbaImage>,
-    anim_opts: &AnimationOptions,
-    path: &Path,
-) -> Result<(), ExportError> {
-    let file = std::fs::File::create(path)
-        .map_err(|e| ExportError::Io(format!("create gif {}: {e}", path.display())))?;
-    let mut encoder = image::codecs::gif::GifEncoder::new(file);
-    encoder
-        .set_repeat(image::codecs::gif::Repeat::Infinite)
-        .map_err(|e| ExportError::Io(format!("gif encoder repeat: {e}")))?;
-    let delay = image::Delay::from_saturating_duration(anim_opts.frame_duration());
-    for img in frames {
-        let frame = image::Frame::from_parts(img, 0, 0, delay);
-        encoder
-            .encode_frame(frame)
-            .map_err(|e| ExportError::Io(format!("encode gif frame: {e}")))?;
-    }
-    Ok(())
-}
-
-fn write_frames(frames: Vec<RgbaImage>, dir_path: &Path) -> Result<Vec<PathBuf>, ExportError> {
-    let mut paths = Vec::with_capacity(frames.len());
-    let width_digits = frames.len().to_string().len().max(4);
-    for (i, img) in frames.into_iter().enumerate() {
-        let filename = format!("frame_{i:0width_digits$}.png");
-        let path = dir_path.join(filename);
-        img.save(&path)
-            .map_err(|e| ExportError::Io(format!("save frame {}: {e}", path.display())))?;
-        paths.push(path);
-    }
-    Ok(paths)
-}
 
 pub fn export_png(
     root: impl View + 'static,
@@ -664,6 +690,7 @@ fn rasterize(
     scale: f32,
     opts: &ExportOptions,
     shaders: &HashMap<ShaderId, Rc<dyn CpuShader>>,
+    images: &mut HashMap<String, Rc<RgbaImage>>,
 ) -> RgbaImage {
     let bg = opts.background.unwrap_or(opts.theme.background);
     let mut img = RgbaImage::new(pw, ph);
@@ -677,6 +704,7 @@ fn rasterize(
         atlas,
         scale,
         shaders,
+        images,
         targets: HashMap::new(),
         groups,
     };
@@ -723,6 +751,7 @@ struct Rasterizer<'a> {
     atlas: &'a GlyphAtlas,
     scale: f32,
     shaders: &'a HashMap<ShaderId, Rc<dyn CpuShader>>,
+    images: &'a mut HashMap<String, Rc<RgbaImage>>,
     targets: HashMap<RenderTargetId, RgbaImage>,
     groups: Vec<(usize, usize, f32)>,
 }
@@ -808,7 +837,7 @@ impl Rasterizer<'_> {
         end
     }
 
-    fn draw_item(&self, img: &mut RgbaImage, index: usize) {
+    fn draw_item(&mut self, img: &mut RgbaImage, index: usize) {
         let items = self.list.items();
         let Some(item) = items.get(index) else {
             return;
@@ -823,7 +852,7 @@ impl Rasterizer<'_> {
         match item {
             RenderItem::Quad(q) => draw_quad(img, *q, clip, self.scale),
             RenderItem::Text(t) => draw_text(img, t, self.atlas, clip, self.scale, transform),
-            RenderItem::Image(d) => draw_image(img, d, clip, self.scale),
+            RenderItem::Image(d) => draw_image(img, d, clip, self.scale, self.images),
             RenderItem::Shadow(s) => draw_shadow(img, *s, clip, self.scale),
             RenderItem::Waveform(w) => {
                 for bar in &w.bars {
@@ -1634,7 +1663,16 @@ fn image_file_allowed(path: &str) -> bool {
     }
 }
 
-fn draw_image(img: &mut RgbaImage, draw: &ImageDraw, clip: Option<RoundedClip>, scale: f32) {
+/// Upper bound on decoded file images kept for one export.
+const IMAGE_CACHE_MAX: usize = 64;
+
+fn draw_image(
+    img: &mut RgbaImage,
+    draw: &ImageDraw,
+    clip: Option<RoundedClip>,
+    scale: f32,
+    images: &mut HashMap<String, Rc<RgbaImage>>,
+) {
     match &draw.source {
         ImageSource::Rgba {
             width,
@@ -1655,14 +1693,37 @@ fn draw_image(img: &mut RgbaImage, draw: &ImageDraw, clip: Option<RoundedClip>, 
                 log::warn!("sequoia-export: image `{path}` past the size limits — skipped");
                 return;
             }
-            match image::open(path) {
-                Ok(loaded) => {
-                    let rgba = loaded.to_rgba8();
-                    let (w, h) = (rgba.width(), rgba.height());
-                    blit_rgba(img, draw, w, h, &rgba.into_raw(), clip, scale);
-                }
-                Err(e) => log::warn!("sequoia-export: cannot load image `{path}`: {e}"),
-            }
+            // Decoding the file on every draw (and therefore on every frame)
+            // dominated export time; keep the decoded layer for the export.
+            let rgba = match images.get(path) {
+                Some(cached) => cached.clone(),
+                None => match image::open(path) {
+                    Ok(loaded) => {
+                        let rgba = Rc::new(loaded.to_rgba8());
+                        if images.len() >= IMAGE_CACHE_MAX {
+                            images.clear();
+                        }
+                        images.insert(path.clone(), rgba.clone());
+                        rgba
+                    }
+                    Err(e) => {
+                        log::warn!("sequoia-export: cannot load image `{path}`: {e}");
+                        return;
+                    }
+                },
+            };
+            let (w, h) = (rgba.width(), rgba.height());
+            blit_rgba(img, draw, w, h, rgba.as_raw(), clip, scale);
+        }
+
+        ImageSource::Cube(path) => {
+            // A 3D LUT is a shader texture input, not a 2D layer. Skipping it
+            // silently made an exported frame look different from the GPU
+            // output with no hint why.
+            log::warn!(
+                "sequoia-export: 3D LUT `{path}` cannot be drawn as an image — skipped \
+                 (bind it as a shader texture instead)"
+            );
         }
 
         _ => {}
