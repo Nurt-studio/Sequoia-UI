@@ -173,12 +173,13 @@ Exporter::new()
 
 	const seqTypedHtml = `<span class="kw">use</span> sequoia_ui::include_seq;
 
-<span class="kw">let</span> loaded = include_seq!(<span class="str">"examples/seq_motion_lab.seq"</span>)
-    .prop_heading(heading)          <span class="cm">// prop heading: String -&gt; Signal&lt;String&gt;</span>
-    .prop_level(level)              <span class="cm">// prop level: Float   -&gt; Signal&lt;f64&gt;</span>
-    .prop_open(open)                <span class="cm">// prop open: Bool     -&gt; Signal&lt;bool&gt;</span>
-    .on_toggle(toggle)              <span class="cm">// on toggle()</span>
-    .on_nudge(nudge)                <span class="cm">// on nudge()</span>
+<span class="kw">let</span> loaded = include_seq!(<span class="str">"examples/seq_dashboard.seq"</span>)
+    .prop_title(title)              <span class="cm">// prop title: String    -&gt; Signal&lt;String&gt;</span>
+    .prop_owner(owner)              <span class="cm">// prop owner: String    -&gt; Signal&lt;String&gt;</span>
+    .prop_coverage(coverage)        <span class="cm">// prop coverage: Float  -&gt; Signal&lt;f64&gt;</span>
+    .prop_stable(stable)            <span class="cm">// prop stable: Bool     -&gt; Signal&lt;bool&gt;</span>
+    .on_refresh(refresh)            <span class="cm">// on refresh()</span>
+    .on_reset(reset)                <span class="cm">// on reset()</span>
     .configure(|b| b.env_str(<span class="str">"user"</span>, name))
     .load()?;                       <span class="cm">// parsed and type-checked at compile time</span>
 
@@ -566,8 +567,8 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 		</li>
 	</ul>
 	<p class="note">
-		The new example runs the whole set:
-		<span class="inline-code">cargo run --example seq_motion_lab -p sequoia-ui</span>.
+		The <span class="inline-code">seq_dashboard</span> example wires the typed host end to end:
+		<span class="inline-code">cargo run --example seq_dashboard -p sequoia-ui</span>.
 	</p>
 
 	<h2>Render the scene</h2>
@@ -651,9 +652,9 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<CodeBlock lang="Rust" code={photoHtml} />
 
 	<p class="note">
-		Run them with <span class="inline-code">cargo run --example hdr_layers -p sequoia-ui</span> and
-		<span class="inline-code">cargo run --example photo_shader -p sequoia-ui</span>. The photo example
-		accepts <span class="inline-code">--export &lt;path&gt;</span> to write the same scene headlessly.
+		The 0.1.6 figures were rendered headlessly. Run
+		<span class="inline-code">cargo run --example photo_lab -p sequoia-ui</span> for the current
+		shader and LUT demo.
 	</p>
 
 	<h2>3D LUTs on the GPU</h2>
@@ -679,10 +680,10 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<CodeBlock lang="Rust" code={lutHtml} />
 
 	<p class="note">
-		Run it with <span class="inline-code">cargo run --example lut_photo -p sequoia-ui</span>, or add
-		<span class="inline-code">-- --export lut-photo.png</span> to write the frame headlessly. Only 3D tables
-		with the default <span class="inline-code">DOMAIN_MIN/DOMAIN_MAX</span> are accepted; 1D and 2D LUTs are
-		rejected with a warning.
+		<span class="inline-code">cargo run --example photo_lab -p sequoia-ui</span> applies the same
+		<span class="inline-code">.cube</span> tables over a painting. Only 3D tables with the default
+		<span class="inline-code">DOMAIN_MIN/DOMAIN_MAX</span> are accepted; 1D and 2D LUTs are rejected with a
+		warning.
 	</p>
 
 	<h2>Performance notes</h2>

@@ -39,7 +39,7 @@ A short version: in a list of **3 000 rows**, changing one row updates one row
 and costs about **0.01 ms** of reactive work. Changing every row at once still
 fits comfortably in a single 60 fps frame, on integrated graphics.
 
-The benchmark (`crates/sequoia-ui/examples/row_update.rs`) builds the list once,
+The benchmark builds the list once,
 then changes row data for 110 frames. The first 10 frames are warm-up; the rest
 are reported as the median (p50), which is the typical frame, not the best one.
 
@@ -77,15 +77,8 @@ glyphs per frame. Vsync holds the average frame time at the display refresh rate
 so the last column means "the frame was ready and waited for the screen", not
 "the frame cost 14 ms". Add `--no-vsync` to see the raw cost.
 
-These numbers come from one modest laptop GPU, not from every machine. To
-reproduce them:
-
-```text
-cargo run --release --example row_update              # all CPU scenarios
-cargo run --release --example row_update -- gpu s1    # one row, fine-grained
-cargo run --release --example row_update -- gpu s2    # one row, whole list dirty
-cargo run --release --example row_update -- gpu s3    # all rows
-```
+These numbers come from one modest laptop GPU, not from every machine. The
+benchmark harness itself is not part of the current example set.
 
 ## Install
 
@@ -134,8 +127,8 @@ the value changes. There is no separate store to synchronize.
 
 The repository also contains an experimental declarative `.seq` format,
 available through `SeqLoader`. It is optional and still evolving; the Rust API
-is the supported path for production applications. The `seq_hello` example in
-`crates/sequoia-ui/examples` shows the current loader API.
+is the supported path for production applications. The `seq_dashboard` example
+in `crates/sequoia-ui/examples` pairs a `.seq` file with a typed Rust host.
 
 ## Layout and widgets
 
@@ -239,13 +232,14 @@ from the workspace root.
 ```text
 cargo run -p vision-design
 cargo run -p paint
+cargo run -p sequoia-ui --example counter
+cargo run -p sequoia-ui --example layout
 cargo run -p sequoia-ui --example showcase
 cargo run -p sequoia-ui --example form
-cargo run -p sequoia-ui --example todo
-cargo run -p sequoia-ui --example tabs
-cargo run -p sequoia-ui --example seq_hello
+cargo run -p sequoia-ui --example photo_lab
+cargo run -p sequoia-ui --example seq_dashboard
 cargo run -p sequoia-ui --example split-panel
-cargo run -p sequoia-ui --example shader_gallery
+cargo run -p sequoia-ui --example wgpu_surface
 ```
 
 - `vision-design` is the editor in the screenshot above: canvas, layers,
@@ -253,9 +247,11 @@ cargo run -p sequoia-ui --example shader_gallery
 - `paint` is a larger desktop app with a dock layout, toolbars, and canvas
   tools.
 - `showcase` is a broad tour of the widget library.
-- `form`, `todo`, and `tabs` are small, focused applications that show
-  validation, keyed lists, and tabbed navigation.
-- `seq_hello` loads a window from inline `.seq` source.
+- `form` and `photo_lab` are focused applications: typed validation and a
+  GPU photo pipeline with 3D LUTs.
+- `seq_dashboard` loads a declarative window from `.seq` source with typed
+  props and callbacks.
+- `wgpu_surface` and `wgpu_surface_cached` embed a raw `wgpu` pipeline.
 - Start from `counter` or `layout` when learning the API.
 
 ## Documentation

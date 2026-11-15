@@ -180,15 +180,17 @@ cargo run -p sequoia-ui --example counter
 cargo run -p sequoia-ui --example layout
 cargo run -p sequoia-ui --example showcase
 cargo run -p sequoia-ui --example form
-cargo run -p sequoia-ui --example todo
-cargo run -p sequoia-ui --example tabs
+cargo run -p sequoia-ui --example photo_lab
+cargo run -p sequoia-ui --example seq_dashboard
 cargo run -p sequoia-ui --example split-panel
-cargo run -p sequoia-ui --example shader_gallery
+cargo run -p sequoia-ui --example wgpu_surface
+cargo run -p sequoia-ui --example wgpu_surface_cached
 ```
 
-`showcase` is the broadest widget tour. `form`, `todo`, and `tabs` are smaller
-focused applications. The repository root also contains `vision-design` and
-`paint`, two complete desktop applications built with the same public API.
+`showcase` is the broadest widget tour. `form` and `photo_lab` are smaller
+focused applications, and `seq_dashboard` pairs a `.seq` declaration with a
+typed Rust host. The repository root also contains `vision-design` and `paint`,
+two complete desktop applications built with the same public API.
 
 ## Experimental `.seq` support
 

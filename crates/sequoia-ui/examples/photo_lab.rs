@@ -28,6 +28,10 @@ const LUT_BLEACH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/examples/assets/luts/bleach-bypass.cube"
 );
+const LUT_AMBER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/assets/luts/amber-film.cube"
+);
 
 const APP_BG: Color = Color::hex(0x14161B);
 const PANEL_BG: Color = Color::hex(0x1D2027);
@@ -117,7 +121,11 @@ fn preview(lab: &Lab, photo: &ImageSource, aspect: (f32, f32)) -> impl Fn(&mut P
             h,
         );
 
-        let lut = if preset.get() == 1 { LUT_BLEACH } else { LUT_TEAL };
+        let lut = match preset.get() {
+            1 => LUT_BLEACH,
+            2 => LUT_AMBER,
+            _ => LUT_TEAL,
+        };
         g.shader_at(
             PhotoLab {
                 strength: strength.get(),
@@ -187,7 +195,7 @@ fn main() {
                         .color(MUTED),
                 )
                 .child(
-                    RadioGroup::new(lab.preset.clone(), ["Teal Orange", "Bleach Bypass"])
+                    RadioGroup::new(lab.preset.clone(), ["Teal Orange", "Bleach Bypass", "Amber Film"])
                         .label("Look"),
                 )
                 .child(slider_row(

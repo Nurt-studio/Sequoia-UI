@@ -1,28 +1,24 @@
-//! A rotating object rendered by a `WgpuSurface` without any input events.
+//! A cached `WgpuSurface`: the host keeps an offscreen texture and only calls
+//! `render` again when `is_dirty` reports a change. Buttons update the tint
+//! through `surface.renderer()`.
 //!
-//! Run with:
-//!     cargo run --example spinning_object -p sequoia-ui
-//!
-//! The renderer calls `WgpuFrame::request_frame` on every draw. The platform
-//! forwards that request into the runtime, so `paint_if_dirty` keeps painting
-//! instead of skipping once the first frame is on screen.
+//! Run it:
+//!     cargo run --example wgpu_surface_cached -p sequoia-ui
 
 use sequoia_ui::platform::{WgpuFrame, WgpuRenderer, WgpuSurface};
 use sequoia_ui::prelude::*;
 use sequoia_ui::wgpu;
 
-const PANEL_BG: Color = Color::hex(0x090B10);
-const PANEL_BORDER: Color = Color::hex(0x232A33);
-const TEXT: Color = Color::hex(0xF3F3F5);
-const MUTED: Color = Color::hex(0x93939F);
+const BG: Color = Color::hex(0x0E1015);
+const PANEL: Color = Color::hex(0x171A21);
+const TEXT: Color = Color::hex(0xF2F4F8);
+const MUTED: Color = Color::hex(0x8A93A6);
 
 const SHADER: &str = r#"
-struct Uniforms {
-    // x: rotation angle (radians), y: surface aspect ratio (width / height)
-    data: vec4<f32>,
+struct Tint {
+    color: vec4<f32>,
 };
-
-@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(0) var<uniform> tint: Tint;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
@@ -49,65 +45,33 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let center = vec2<f32>(0.5, 0.5);
-
-    // Centered coordinates, corrected so the object stays square.
-    var p = in.uv - center;
-    p.x = p.x * u.data.y;
-
-    let c = cos(u.data.x);
-    let s = sin(u.data.x);
-    let r = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
-
-    // Rounded rectangle (signed distance field) that rotates with r.
-    let extent = vec2<f32>(0.24, 0.15);
-    let corner = 0.04;
-    let q = abs(r) - extent + vec2<f32>(corner);
-    let dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - corner;
-
-    let aa = 0.003;
-    let fill = 1.0 - smoothstep(-aa, aa, dist);
-
-    let vignette = 1.0 - 1.4 * length(in.uv - center);
-    var color = mix(
-        vec3<f32>(0.015, 0.020, 0.035),
-        vec3<f32>(0.050, 0.070, 0.120),
-        clamp(vignette, 0.0, 1.0),
-    );
-
-    // A faint orbit ring behind the object.
-    let d = length(p);
-    let ring = smoothstep(0.300, 0.306, d) * (1.0 - smoothstep(0.306, 0.312, d));
-    color = color + vec3<f32>(0.08, 0.13, 0.22) * ring;
-
-    let gradient = clamp(0.5 + r.x * 2.5, 0.0, 1.0);
-    var face = mix(vec3<f32>(0.16, 0.52, 0.98), vec3<f32>(0.98, 0.32, 0.52), gradient);
-
-    // Bright dot on the local +x axis makes the rotation unmistakable.
-    let marker = 1.0 - smoothstep(0.0, 0.022, length(r - vec2<f32>(0.165, 0.0)));
-    face = face + vec3<f32>(0.9, 0.85, 0.7) * marker;
-
-    let edge = 1.0 - smoothstep(0.0, 0.020, abs(dist));
-    let result = mix(color, face, fill) + vec3<f32>(0.35) * edge * fill;
-    return vec4<f32>(result, 1.0);
+    let shade = 0.35 + 0.65 * (1.0 - length(in.uv - vec2<f32>(0.5)));
+    return vec4<f32>(tint.color.rgb * shade, 1.0);
 }
 "#;
 
-struct Rotor {
+struct TintScene {
     pipeline: Option<wgpu::RenderPipeline>,
     uniform: Option<wgpu::Buffer>,
     bind_group: Option<wgpu::BindGroup>,
-    angle: f32,
+    color: [f32; 3],
+    dirty: bool,
 }
 
-impl Rotor {
-    fn new() -> Self {
+impl TintScene {
+    fn new(color: [f32; 3]) -> Self {
         Self {
             pipeline: None,
             uniform: None,
             bind_group: None,
-            angle: 0.0,
+            color,
+            dirty: true,
         }
+    }
+
+    fn set_color(&mut self, color: [f32; 3]) {
+        self.color = color;
+        self.dirty = true;
     }
 
     fn ensure_gpu(&mut self, frame: &WgpuFrame<'_>) {
@@ -118,7 +82,7 @@ impl Rotor {
         let layout = frame
             .device
             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("rotor-bgl"),
+                label: Some("tint-bgl"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -132,14 +96,14 @@ impl Rotor {
             });
 
         let uniform = frame.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rotor-uniform"),
+            label: Some("tint-uniform"),
             size: 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let bind_group = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rotor-bind-group"),
+            label: Some("tint-bind-group"),
             layout: &layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -155,7 +119,7 @@ impl Rotor {
             frame
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("rotor-pipeline-layout"),
+                    label: Some("tint-pipeline-layout"),
                     bind_group_layouts: &[Some(&layout)],
                     immediate_size: 0,
                 });
@@ -163,14 +127,14 @@ impl Rotor {
         let module = frame
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("rotor-shader"),
+                label: Some("tint-shader"),
                 source: wgpu::ShaderSource::Wgsl(SHADER.into()),
             });
 
         let pipeline = frame
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("rotor-pipeline"),
+                label: Some("tint-pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &module,
@@ -201,40 +165,31 @@ impl Rotor {
     }
 }
 
-impl WgpuRenderer for Rotor {
+impl WgpuRenderer for TintScene {
     fn render(&mut self, frame: &mut WgpuFrame) {
-        self.angle = (self.angle + frame.delta.as_secs_f32() * 1.1) % std::f32::consts::TAU;
-
-        // Ask the host for the next frame; without it the window returns to
-        // idle after the first paint.
-        frame.request_frame();
-
         self.ensure_gpu(frame);
 
-        let aspect = if frame.size.1 == 0 {
-            1.0
-        } else {
-            frame.size.0 as f32 / frame.size.1 as f32
-        };
-        let uniform = self.uniform.as_ref().expect("uniform buffer");
-        frame
-            .queue
-            .write_buffer(uniform, 0, &uniform_bytes(self.angle, aspect));
+        let mut bytes = [0u8; 16];
+        for (lane, value) in self.color.iter().chain([&1.0]).enumerate() {
+            let start = lane * 4;
+            bytes[start..start + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let uniform = self.uniform.as_ref().expect("uniform");
+        frame.queue.write_buffer(uniform, 0, &bytes);
 
+        let region = frame.region;
         let pipeline = self.pipeline.as_ref().expect("pipeline");
         let bind_group = self.bind_group.as_ref().expect("bind group");
-        let region = frame.region;
-
         let mut pass = frame
             .encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("rotor-pass"),
+                label: Some("tint-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: frame.target,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        // The host has already painted the rest of the UI.
+                        // Cached mode clears the offscreen texture for us.
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
@@ -244,7 +199,6 @@ impl WgpuRenderer for Rotor {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-
         pass.set_viewport(
             region.x as f32,
             region.y as f32,
@@ -258,45 +212,63 @@ impl WgpuRenderer for Rotor {
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
-}
 
-fn uniform_bytes(angle: f32, aspect: f32) -> [u8; 16] {
-    let mut bytes = [0u8; 16];
-    bytes[..4].copy_from_slice(&angle.to_le_bytes());
-    bytes[4..8].copy_from_slice(&aspect.to_le_bytes());
-    bytes
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
 }
 
 fn main() {
-    let surface = WgpuSurface::new(Rotor::new())
-        .background(PANEL_BG)
-        .border(1.0, PANEL_BORDER)
+    let surface = WgpuSurface::new(TintScene::new([0.93, 0.55, 0.30]))
+        .cached(true)
+        .background(PANEL)
+        .border(1.0, Color::hex(0x30363D))
         .radius(12.0)
         .expand();
 
-    let header = Row::new()
-        .fill_width()
-        .align_items(Align::Center)
-        .gap(12.0)
-        .child(Text::new("Spinning object").size(20.0).bold().color(TEXT))
-        .child(Spacer::flex(1.0))
-        .child(
-            Text::new("request_frame() keeps the window painting")
-                .size(12.0)
-                .color(MUTED),
-        );
+    let scene = surface.renderer();
+    let warm = scene.clone();
+    let cool = scene.clone();
+    let green = scene;
+
+    let buttons = Row::new()
+        .gap(10.0)
+        .child(Button::new("Amber").on_click(move || {
+            warm.borrow_mut().set_color([0.93, 0.55, 0.30]);
+        }))
+        .child(Button::new("Ocean").on_click(move || {
+            cool.borrow_mut().set_color([0.20, 0.45, 0.85]);
+        }))
+        .child(Button::new("Forest").on_click(move || {
+            green.borrow_mut().set_color([0.25, 0.70, 0.45]);
+        }));
 
     let view = Column::new()
         .fill_size()
-        .padding(16.0)
+        .background(BG)
+        .padding(20.0)
         .gap(12.0)
-        .child(header)
+        .child(
+            Text::new("Cached WgpuSurface")
+                .size(22.0)
+                .bold()
+                .color(TEXT),
+        )
+        .child(
+            Text::new("The offscreen texture is redrawn only when is_dirty is true.")
+                .size(13.0)
+                .color(MUTED),
+        )
+        .child(buttons)
         .child(surface);
 
     App::new()
-        .title("Spinning object")
-        .size(880.0, 620.0)
-        .min_size(520.0, 380.0)
+        .title("Cached GPU surface")
+        .size(760.0, 520.0)
         .root(view)
         .run()
         .expect("event loop failed");

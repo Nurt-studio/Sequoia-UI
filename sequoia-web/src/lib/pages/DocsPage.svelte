@@ -118,9 +118,12 @@ cargo run`;
 
 	const examplesHtml = `cargo run -p sequoia-ui --example showcase
 cargo run -p sequoia-ui --example form
-cargo run -p sequoia-ui --example todo
-cargo run -p sequoia-ui --example tabs
-cargo run -p sequoia-ui --example seq_hello
+cargo run -p sequoia-ui --example counter
+cargo run -p sequoia-ui --example layout
+cargo run -p sequoia-ui --example photo_lab
+cargo run -p sequoia-ui --example seq_dashboard
+cargo run -p sequoia-ui --example split-panel
+cargo run -p sequoia-ui --example wgpu_surface
 cargo run -p vision-design`;
 </script>
 
@@ -272,8 +275,9 @@ cargo run -p vision-design`;
 		<CodeBlock lang="Terminal" code={examplesHtml} />
 
 		<p>
-			<strong>showcase</strong> is a tour of the widget library, <strong>form</strong> and
-			<strong>todo</strong> are small complete apps, and <strong>vision-design</strong> is the editor in
+			<strong>showcase</strong> is a tour of the widget library; <strong>form</strong>,
+			<strong>photo_lab</strong> and <strong>seq_dashboard</strong> are small complete apps; and
+			<strong>vision-design</strong> is the editor in
 			the screenshot on the home page.
 		</p>
 

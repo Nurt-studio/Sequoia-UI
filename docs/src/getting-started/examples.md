@@ -1,166 +1,148 @@
 # Examples
 
-The repository contains runnable examples that exercise the framework without
-extra setup. Run them from the workspace root.
-
-## Counter
-
-A minimal reactive application with three buttons and a live label.
+All examples live in `crates/sequoia-ui/examples` and run from the workspace
+root. They need no extra setup beyond a working `wgpu` adapter.
 
 ```text
 cargo run -p sequoia-ui --example counter
+cargo run -p sequoia-ui --example layout
+cargo run -p sequoia-ui --example showcase
+cargo run -p sequoia-ui --example form
+cargo run -p sequoia-ui --example photo_lab
+cargo run -p sequoia-ui --example seq_dashboard
+cargo run -p sequoia-ui --example split-panel
+cargo run -p sequoia-ui --example wgpu_surface
+cargo run -p sequoia-ui --example wgpu_surface_cached
 ```
 
-The example is in
-[`crates/sequoia-ui/examples/counter.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/counter.rs).
+## Counter
+
+The smallest complete application: one `Signal<i32>`, a `Text` that reads it,
+and two buttons that write it. Use it as the template for a new project.
 
 ## Layout
 
-A single window that demonstrates `Column`, `Row`, flex weights, `Grid`,
-`Stack`, `Wrap`, and `DockArea`.
-
-```text
-cargo run -p sequoia-ui --example layout
-```
-
-The example is in
-[`crates/sequoia-ui/examples/layout.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/layout.rs).
+A tour of `Row`, `Column`, `Grid`, and flex sizing: fixed, fill, and content
+lengths, gaps, padding, alignment, and nesting. Everything is static, so it is
+the easiest example to edit while learning the box model.
 
 ## Showcase
 
-A broad tour of the widget library: forms, overlays, navigation, feedback, and
-theming in one window.
-
-```text
-cargo run -p sequoia-ui --example showcase
-```
+The broadest widget tour in the repository. It groups buttons, inputs,
+selection controls, progress indicators, navigation, collections, overlays,
+and typography on a single scrollable canvas. Start here when you are looking
+for the name of a widget or a style preset.
 
 ## Split panel
 
-A resizable two-level layout built on `SplitPanel`, with an outer horizontal
-split and an inner vertical split.
-
-```text
-cargo run -p sequoia-ui --example split-panel
-```
+A resizable two-pane layout. It shows how to keep a split ratio in a signal,
+clamp it while dragging, and rebuild only the panes that depend on it.
 
 ## Form
 
-A small account form with text and number fields, validation rules, a radio
-group, a slider, and a submit button. It shows how `Form` coordinates the
-fields it registers.
+A focused form application: text fields with validation, a checkbox, a slider,
+and a submit button that stays disabled until the input is valid. It shows how
+to derive `Memo` values from several signals and wire them into widget state.
+
+## Photo lab
+
+`photo_lab` loads `assets/starry-night.jpg`, samples it with a `Sampler2D`
+photo shader, and offers three 33³ `.cube` tables through a `Sampler3D`:
+**Teal Orange**, **Bleach Bypass**, and **Amber Film**. Sliders control curve,
+lift, saturation, and warmth; the preset picker restores the defaults.
 
 ```text
-cargo run -p sequoia-ui --example form
+cargo run -p sequoia-ui --example photo_lab
 ```
 
-The example is in
-[`crates/sequoia-ui/examples/form.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/form.rs).
+The LUTs are ordinary Adobe/IRIDAS `.cube` files under `examples/assets/luts`.
+Only 3D tables with the default `DOMAIN_MIN`/`DOMAIN_MAX` are accepted.
 
-## Todo
+## Seq release board
 
-A keyed list with stable IDs, toggling, removal, and derived counts. It shows
-how a `List` rebuilds from a `Signal<Vec<T>>` while keeping element state.
+`seq_dashboard` is a declarative example with **no animation**. The window is
+described in `examples/seq_dashboard.seq` and loaded with `include_seq!`, so the
+props and callbacks are type-checked when the example is built:
 
 ```text
-cargo run -p sequoia-ui --example todo
+cargo run -p sequoia-ui --example seq_dashboard
 ```
-
-The example is in
-[`crates/sequoia-ui/examples/todo.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/todo.rs).
-
-## Tabs
-
-A tabbed window built with `TabStrip` and a custom view that rebuilds its body
-when the active tab changes.
 
 ```text
-cargo run -p sequoia-ui --example tabs
+component Meter(label: String, value: Float) {
+  Column(gap: 8, flex: 1) {
+    Text(text: label, size: 12, color: #8A93A6)
+    Container(width: 48 + value * 240, height: 9, radius: 5) {}
+  }
+}
+
+app ReleaseBoard {
+  prop title: String
+  prop coverage: Float
+  on refresh()
+  window Main {
+    Column(padding: 24, gap: 16) {
+      Text(text: title, size: 20 + coverage * 12)
+      Meter(label: "Coverage", value: coverage)
+      Slider(value: coverage, min: 0, max: 1)
+    }
+  }
+}
 ```
 
-The example is in
-[`crates/sequoia-ui/examples/tabs.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/tabs.rs).
+The example is deliberately limited to the declarative feature set added in
+0.1.6: a parameterised component, reactive attribute expressions such as
+`size: 20 + coverage * 12`, two-way `TextField`/`Checkbox` bindings, `If`
+subtrees, and typed host callbacks. There are no `enter`, `exit`, `behavior`,
+spring, or tween declarations; every visual change comes from state.
 
-## Seq hello
+## GPU surfaces
 
-A window described entirely in `.seq` source and loaded with
-`SeqLoader::load_str_with`. The button calls a Rust action through
-`HostBindings`. The `.seq` format is experimental; the Rust API is the
-supported path.
+Two small examples embed a raw `wgpu` pipeline in an ordinary layout through
+`sequoia_ui::platform::{WgpuSurface, WgpuFrame, WgpuRenderer}`:
 
-```text
-cargo run -p sequoia-ui --example seq_hello
-```
-
-The example is in
-[`crates/sequoia-ui/examples/seq_hello.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/seq_hello.rs).
-
-## Wgpu surface
-
-A custom `wgpu` pipeline embedded in a normal `Column`/`Row` layout. The side
-panel pauses or resets the animation through `WgpuSurface::renderer()`, showing
-how application widgets and raw GPU drawing share state.
+- `wgpu_surface` draws a fullscreen-triangle gradient in direct mode.
+- `wgpu_surface_cached` keeps an offscreen texture and redraws it only when
+  `is_dirty` is true; three buttons change the tint through
+  `surface.renderer()`.
 
 ```text
 cargo run -p sequoia-ui --example wgpu_surface
+cargo run -p sequoia-ui --example wgpu_surface_cached
 ```
 
-The example is in
-[`crates/sequoia-ui/examples/wgpu_surface.rs`](https://github.com/Nurt-studio/Sequoia-UI/blob/main/crates/sequoia-ui/examples/wgpu_surface.rs).
-See [Embedded GPU surfaces](../guides/gpu-surfaces.md) for the render contract,
-cached mode, formats, and input handling.
+Both examples use `frame.region` for the viewport and scissor rectangle and
+load the existing frame with `wgpu::LoadOp::Load`. See
+[Embedded GPU surfaces](../guides/gpu-surfaces.md) for the full contract.
 
-## Shaders
+## Complete applications
 
-`shader_gallery` renders a blurred card over a background and shows a custom
-effect chain built with the `shader!` macro.
-
-```text
-cargo run -p sequoia-ui --example shader_gallery
-```
-
-See [Custom shaders](../guides/shaders.md) for the macro, registration, and
-offscreen passes it uses.
-
-## Paint
-
-A larger desktop application in `example/paint` with a dock layout, toolbars,
-file handling, and canvas tools.
+The workspace root also contains two larger applications:
 
 ```text
 cargo run -p paint
-```
-
-## Vision design
-
-A design-tool example in `example/vision-design` with a canvas editor,
-component tree, property inspector, and `.seq`/Svelte code generation.
-
-```text
 cargo run -p vision-design
 ```
 
+- `paint` is a desktop painting app with a dock layout, toolbars, and canvas
+  tools.
+- `vision-design` is the editor from the README screenshot: canvas, layers,
+  property inspector, and code generation.
+
 ## Read examples like documentation
 
-Examples are ordinary binaries, not snippets. When adapting one:
+Each example is a single `main.rs` (plus a `.seq` file for `seq_dashboard`).
+Read them in this order when learning the API:
 
-1. Copy only the part that demonstrates the API you need.
-2. Replace hard-coded colors and labels with your own values.
-3. Move state into signals or stores instead of keeping it in locals if it
-   must survive rebuilds.
-4. Run the example again after the change; layout and reactivity bugs are
-   easiest to spot in a running window.
+1. `counter` for signals and events.
+2. `layout` for the box model.
+3. `form` for derived state and validation.
+4. `showcase` for the widget inventory.
+5. `seq_dashboard` for the declarative language.
 
 ## Add your own example
 
-Cargo discovers files under `examples/` automatically:
-
-```text
-my-app/
-└── examples/
-    └── gallery.rs
-```
-
-Run it with `cargo run --example gallery`. Examples are a good place for
-reproductions and visual checks, because they do not affect the application
-binary.
+Drop a new file in `crates/sequoia-ui/examples/` and run it with
+`cargo run -p sequoia-ui --example <name>`. Cargo picks up the file
+automatically; no registration is needed. Keep examples self-contained and
+load assets from `examples/assets` through `env!("CARGO_MANIFEST_DIR")`.

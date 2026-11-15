@@ -1,0 +1,84 @@
+component Meter(label: String, value: Float) {
+  Column(gap: 8, flex: 1) {
+    Text(text: label, size: 12, color: #8A93A6)
+    Container(width: 48 + value * 240, height: 9, radius: 5, background: #E8A34D) {}
+  }
+}
+
+app ReleaseBoard {
+  title: "Seq Release Board"
+  size: (980, 620)
+  theme: dark
+  prop title: String
+  prop owner: String
+  prop coverage: Float
+  prop stable: Bool
+  on refresh()
+  on reset()
+
+  window Main {
+    Column(padding: 24, gap: 16, background: #0E1015) {
+      Row(align: center, gap: 12) {
+        Column(gap: 4, flex: 1) {
+          Text("SEQ · 0.1.6", size: 11, bold: true, color: #E8A34D)
+          Text(text: title, size: 20 + coverage * 12, bold: true, color: #F2F4F8)
+        }
+        Column(gap: 2) {
+          Text("OWNER", size: 10, bold: true, color: #6B7280)
+          Text(text: owner, size: 14, color: #C7CEDB)
+        }
+      }
+
+      Container(padding: 18, background: #171A21, radius: 14) {
+        Column(gap: 16) {
+          Row(align: center, gap: 24) {
+            Meter(label: "Coverage", value: coverage, flex: 2)
+            Meter(label: "Headroom", value: 1 - coverage, flex: 1)
+          }
+          Slider(value: coverage, min: 0, max: 1)
+          Text(
+            "Drag the slider: the title, the bars and the owner field are reactive attributes.",
+            size: 12,
+            color: #6B7280
+          )
+        }
+      }
+
+      Container(padding: 18, background: #171A21, radius: 14) {
+        Column(gap: 12) {
+          Text("Profile", size: 15, bold: true, color: #F2F4F8)
+          Row(align: center, gap: 12) {
+            Text("Owner", size: 12, color: #8A93A6, width: 64)
+            TextField(value: owner, placeholder: "Your name", flex: 1)
+          }
+          Checkbox(checked: stable, label: "Stable channel")
+          If(when: dynamic(stable)) {
+            Text(
+              "Stable channel enabled — this subtree is part of the declaration.",
+              size: 13,
+              color: #A8D5BA
+            )
+          }
+          If(when: coverage > 0.8) {
+            Text(
+              "Coverage is above 80%: ready to tag a release.",
+              size: 13,
+              color: #E8A34D
+            )
+          }
+        }
+      }
+
+      Row(gap: 12) {
+        Button("Refresh numbers", on_click: { refresh() })
+        Button("Reset", on_click: { reset() })
+      }
+
+      Text(
+        "Components · reactive attributes · two-way fields · typed include_seq! — no animation.",
+        size: 12,
+        color: #6B7280
+      )
+    }
+  }
+}

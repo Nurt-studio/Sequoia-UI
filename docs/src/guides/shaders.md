@@ -461,7 +461,7 @@ use additive or screen modes for glows and light effects.
 - Every shader draw is a quad with per-pixel work. Full-window effects at high
   device pixel ratios can be expensive; keep passes few and reuse targets.
 - A two-pass separable blur is much cheaper than a single large-kernel blur.
-  See `cargo run -p sequoia-ui --example progressive_blur`.
+  Build it from two `shader` draws with an intermediate target between them.
 - Shader draws are render items, so they follow the same damage tracking as
   other draws. Targets and filters used by a pass can still force a full
   repaint; see [Rendering](../concepts/rendering.md).
@@ -480,11 +480,9 @@ use additive or screen modes for glows and light effects.
 
 ## Complete examples
 
-- `cargo run -p sequoia-ui --example progressive_blur` builds a separable,
-  progressive blur with two shader passes and a UV-space ramp. It shows `group`,
-  `shader`, `screen.size`, and the `sq_hash21` dithering helper.
-- `cargo run -p sequoia-ui --example shader_gallery` renders a blurred card over
-  a background and shows how to keep the blur ramp aligned with a UI rectangle.
+- `cargo run -p sequoia-ui --example photo_lab` runs a photo through a
+  `Sampler2D` and a 33³ `Sampler3D` LUT, then applies curve, lift, saturation,
+  and warmth adjustments, with a live preview and three presets.
 
 See [Canvas](canvas.md) for the painter lifecycle and offscreen groups, and
 [Rendering](../concepts/rendering.md) for how shader draws fit into the render
