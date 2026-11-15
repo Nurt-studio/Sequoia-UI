@@ -39,7 +39,7 @@
 <style>
 	.hero {
 		display: grid;
-		/* Obrazek dostaje teraz więcej miejsca niż tekst */
+		/* Image now gets more space than text */
 		grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.35fr);
 		gap: var(--section-gap);
 		align-items: center;
@@ -73,7 +73,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		/* Delikatne wyjście poza prawą krawędź sekcji na dużych ekranach */
+		/* Gentle overflow beyond the right edge of the section on large screens */
 		margin-right: -40px;
 	}
 
@@ -82,7 +82,7 @@
 		position: relative;
 		z-index: 1;
 		width: 100%;
-		max-width: 760px;          /* ⬅ było 560px */
+		max-width: 760px;          /* ⬅ was 560px */
 		border-radius: 12px;
 		overflow: hidden;
 		background: #fff;
@@ -108,7 +108,7 @@
 		50%      { opacity: 1;   transform: scale(1.08); }
 	}
 
-	/* Tablety / wąskie desktopy — wracamy do wyśrodkowania */
+	/* Tablets / narrow desktops — back to centering */
 	@media (max-width: 1100px) {
 		.hero {
 			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -121,7 +121,7 @@
 		}
 	}
 
-	/* Mobile — stack + wyśrodkowanie */
+	/* Mobile — stack + centering */
 	@media (max-width: 900px) {
 		.hero {
 			grid-template-columns: 1fr;

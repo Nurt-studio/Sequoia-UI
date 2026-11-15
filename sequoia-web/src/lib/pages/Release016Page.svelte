@@ -133,7 +133,62 @@ Exporter::new()
   &#125;
 &#125;`;
 
-	const blockEditorHtml = `<span class="kw">use</span> sequoia_elements::BlockEditor;
+		const seqReactiveHtml = `<span class="kw">prop</span> level: Float
+
+<span class="cm">// Every attribute expression over a host value is now reactive.</span>
+<span class="fn">Text</span>(text: heading, size: <span class="num">18</span> + level * <span class="num">10</span>, bold: true)
+<span class="fn">Container</span>(width: <span class="num">140</span> + level * <span class="num">320</span>, padding: pad * <span class="num">2</span>) {
+  <span class="fn">Text</span>(text: label)
+}
+
+<span class="cm">// Writable controls keep two-way binding: the widget writes back.</span>
+<span class="fn">Checkbox</span>(checked: open, label: label)`;
+
+	const seqMotionHtml = `<span class="cm">// enter/exit work on any node, not only If.</span>
+<span class="fn">Container</span>(enter: fade().slide_y(<span class="num">14</span>) at <span class="num">280ms</span> ease_out_cubic,
+          padding: <span class="num">18</span>, background: #1D2027) {
+  <span class="fn">Text</span>("This card animates in")
+}
+
+<span class="fn">If</span>(when: dynamic(open),
+   enter: fade(<span class="num">0.2</span>).slide_x(<span class="num">-16</span>) at <span class="num">200ms</span> ease_out_back,
+   exit: fade() at <span class="num">120ms</span> ease_in) {
+  <span class="fn">Text</span>("Panel")
+}`;
+
+	const seqSpringsHtml = `<span class="cm">// Any animated value can run as a spring instead of a tween.</span>
+<span class="fn">Width</span>(value: <span class="num">170</span> + level * <span class="num">330</span>, behavior: spring(<span class="num">240</span>, <span class="num">18</span>)) {
+  <span class="fn">Text</span>("Panel")
+}
+
+<span class="fn">Scale</span>(value: <span class="num">0.88</span> + level * <span class="num">0.30</span>, behavior: bouncy) {
+  <span class="fn">Text</span>("Badge")
+}
+
+<span class="cm">// spring(k, c, m) sets mass; presets: snappy, bouncy, gentle, default.</span>
+<span class="fn">Translate</span>(x: <span class="num">0</span>, y: open ? <span class="num">0</span> : <span class="num">12</span>,
+          behavior: spring(<span class="num">180</span>, <span class="num">20</span>, <span class="num">1.2</span>)) {
+  <span class="fn">Text</span>("Toast")
+}`;
+
+	const seqTypedHtml = `<span class="kw">use</span> sequoia_ui::include_seq;
+
+<span class="kw">let</span> loaded = include_seq!(<span class="str">"examples/seq_motion_lab.seq"</span>)
+    .prop_heading(heading)          <span class="cm">// prop heading: String -&gt; Signal&lt;String&gt;</span>
+    .prop_level(level)              <span class="cm">// prop level: Float   -&gt; Signal&lt;f64&gt;</span>
+    .prop_open(open)                <span class="cm">// prop open: Bool     -&gt; Signal&lt;bool&gt;</span>
+    .on_toggle(toggle)              <span class="cm">// on toggle()</span>
+    .on_nudge(nudge)                <span class="cm">// on nudge()</span>
+    .configure(|b| b.env_str(<span class="str">"user"</span>, name))
+    .load()?;                       <span class="cm">// parsed and type-checked at compile time</span>
+
+App::new()
+    .title(loaded.meta.title)
+    .size(loaded.meta.size.0, loaded.meta.size.1)
+    .root(loaded.view)
+    .run()?;`;
+
+const blockEditorHtml = `<span class="kw">use</span> sequoia_elements::BlockEditor;
 <span class="kw">use</span> sequoia_reactive::Signal;
 <span class="kw">use</span> sequoia_text::&#123;BlockType, Document, HeadingLevel&#125;;
 
@@ -171,14 +226,14 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 			<span class="version">v0.1.6</span>
 			<span class="date">Not yet released (November 2026)</span>
 		</div>
-		<h1>Continuous export and block-based editing</h1>
+		<h1>Continuous export, block editing, and motion in .seq</h1>
 		<p class="lede">
 			<strong>sequoia-export</strong> can now render an animated scene without opening a window:
 			animated GIF, Motion JPEG AVI, or a numbered PNG sequence. The same pass runs custom shaders on
 			the CPU, so what you see on the GPU can be exported headlessly. This release also adds
 			<strong>BlockEditor</strong>, a complete block-based text surface with rich inline content.
-			The declarative <strong>.seq</strong> format also gains expressions in component arguments,
-			style blocks and signal-backed attributes.
+			The declarative <strong>.seq</strong> format also gains a motion language: reactive attribute expressions,
+			<strong>enter</strong>/<strong>exit</strong> chains on every node, spring behavior and compile-time typed bindings through <strong>include_seq!</strong>.
 		</p>
 		<a
 			class="bench-link"
@@ -273,7 +328,26 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 			accept arithmetic, ternaries and built-ins. Slots such as
 			<span class="inline-code">If(when:)</span>, <span class="inline-code">Width</span>,
 			<span class="inline-code">Progress</span> or <span class="inline-code">Slider</span>
-			re-evaluate their expression when the host signal changes.
+			re-evaluate their expression when the host signal changes. Since 0.1.6 every attribute expression over a host value is tracked, not only signal-backed slots, and writable controls keep their two-way binding.
+		</li>
+		<li>
+			<strong>Motion on every node.</strong> <span class="inline-code">enter</span> and
+			<span class="inline-code">exit</span> accept a preset or a chain such as
+			<span class="inline-code">fade().slide_y(14) at 280ms ease_out_cubic</span>, on any node and no
+			longer only on <span class="inline-code">If</span>.
+		</li>
+		<li>
+			<strong>Springs, not just tweens.</strong> <span class="inline-code">Width</span>,
+			<span class="inline-code">Height</span>, <span class="inline-code">Opacity</span>,
+			<span class="inline-code">Scale</span>, <span class="inline-code">Rotate</span> and
+			<span class="inline-code">Translate</span> take <span class="inline-code">behavior:</span> with
+			<span class="inline-code">spring(k, c[, m])</span> or a preset.
+		</li>
+		<li>
+			<strong>Typed <span class="inline-code">.seq</span> bindings.</strong>
+			<span class="inline-code">include_seq!</span> parses the file and its imports at compile time
+			and generates <span class="inline-code">prop_*</span>/<span class="inline-code">on_*</span>
+			methods with matching Rust types.
 		</li>
 	</ul>
 
@@ -399,11 +473,101 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<CodeBlock lang="Seq" code={seqExpressionHtml} />
 
 	<p class="note">
-		Reactivity is opt-in by widget: an attribute that takes a plain
-		<span class="inline-code">f32</span>, such as <span class="inline-code">Text(size:)</span>, still
-		evaluates once at load. Content set with <span class="inline-code">dynamic()</span> was already
-		live, and wrapping a subtree in <span class="inline-code">Width</span> or
-		<span class="inline-code">Scale</span> makes its geometry react.
+		Reactivity is no longer opt-in by widget. Any attribute expression that reads a host property,
+		an environment value or a row field is tracked, so <span class="inline-code">Text(size:)</span>,
+		<span class="inline-code">Container(padding:)</span> and similar attributes update in place.
+		Expressions made only of literals are folded once and stay static.
+	</p>
+
+	<CodeBlock lang="Seq" code={seqReactiveHtml} />
+
+	<h2>Motion on any node</h2>
+	<p>
+		<strong>enter</strong> and <strong>exit</strong> used to be an <span class="inline-code">If</span>
+		feature. They now apply to every node: a card can fade and slide in when it mounts, and an
+		<span class="inline-code">If</span> subtree can leave with its own chain. A value is either a preset
+		(<span class="inline-code">fast</span>, <span class="inline-code">smooth</span>,
+		<span class="inline-code">snappy</span>, <span class="inline-code">gentle</span>,
+		<span class="inline-code">slow</span>) or a chain of steps.
+	</p>
+	<ul>
+		<li>
+			<strong>Steps.</strong> <span class="inline-code">fade(from)</span>,
+			<span class="inline-code">slide_x(px)</span>, <span class="inline-code">slide_y(px)</span>
+			and <span class="inline-code">slide(dx, dy)</span>, chained with
+			<span class="inline-code">.</span>.
+		</li>
+		<li>
+			<strong>Timing.</strong> <span class="inline-code">at 220ms ease_out_cubic</span> sets duration and
+			easing; <span class="inline-code">delay 80ms</span> shifts the start. Bare numbers are seconds,
+			and <span class="inline-code">ms</span>/<span class="inline-code">s</span> suffixes are accepted.
+		</li>
+		<li>
+			<strong>Easing.</strong> <span class="inline-code">linear</span>,
+			<span class="inline-code">ease_in/out/in_out</span>, the
+			<span class="inline-code">ease_*_&#123;quad,cubic,quart,quint,expo,circ,sine,back&#125;</span> family and
+			<span class="inline-code">bounce_in/out</span>.
+		</li>
+		<li>
+			<strong>Exit needs presence.</strong> A node removed from an always-mounted parent unmounts
+			immediately; use <span class="inline-code">If</span> when you need a leave animation.
+		</li>
+	</ul>
+	<CodeBlock lang="Seq" code={seqMotionHtml} />
+
+	<h2>Springs instead of tweens</h2>
+	<p>
+		Every animated value — <span class="inline-code">Width</span>,
+		<span class="inline-code">Height</span>, <span class="inline-code">Opacity</span>,
+		<span class="inline-code">Scale</span>, <span class="inline-code">Rotate</span> and
+		<span class="inline-code">Translate</span> — accepts <span class="inline-code">behavior:</span>.
+		A tween follows a duration and a curve; a spring follows stiffness, damping and mass, so it settles
+		naturally and can overshoot.
+	</p>
+	<CodeBlock lang="Seq" code={seqSpringsHtml} />
+	<p class="note">
+		<span class="inline-code">spring(k, c)</span> uses mass 1 and
+		<span class="inline-code">spring(k, c, m)</span> sets it explicitly. Presets are
+		<span class="inline-code">snappy</span>, <span class="inline-code">bouncy</span>,
+		<span class="inline-code">gentle</span> and <span class="inline-code">default</span>.
+	</p>
+
+	<h2>Typed .seq bindings</h2>
+	<p>
+		<span class="inline-code">include_seq!</span> calls the parser at compile time and expands to a typed
+		builder. Every <span class="inline-code">prop</span> becomes a
+		<span class="inline-code">prop_*</span> method with the matching
+		<span class="inline-code">Signal&lt;T&gt;</span>, and every
+		<span class="inline-code">on</span> declaration becomes an
+		<span class="inline-code">on_*</span> method with matching arguments — a wrong name or signature is a
+		compile error, not a runtime load failure. Imports are parsed recursively and embedded with
+		<span class="inline-code">include_str!</span>, so editing any imported
+		<span class="inline-code">.seq</span> file rebuilds the crate.
+	</p>
+	<CodeBlock lang="Rust" code={seqTypedHtml} />
+	<ul>
+		<li>
+			<strong>Callbacks.</strong> <span class="inline-code">on_*</span> handles
+			<span class="inline-code">()</span>, a single
+			<span class="inline-code">Int</span>/<span class="inline-code">Float</span>/<span
+				class="inline-code">String</span
+			>/<span class="inline-code">Bool</span>, points, named points and wheel deltas; a
+			<span class="inline-code">(Float, Float, Float)</span> callback also gets an
+			<span class="inline-code">on_*_pinch</span> variant.
+		</li>
+		<li>
+			<strong>Escape hatch.</strong> <span class="inline-code">configure(|b| ...)</span> adds env values,
+			memos, rows and resources that are not declared in the file.
+		</li>
+		<li>
+			<strong>No extra crate needed.</strong> <span class="inline-code">sequoia-ui</span> re-exports the
+			macro as <span class="inline-code">sequoia_ui::include_seq</span> (also available from the
+			prelude).
+		</li>
+	</ul>
+	<p class="note">
+		The new example runs the whole set:
+		<span class="inline-code">cargo run --example seq_motion_lab -p sequoia-ui</span>.
 	</p>
 
 	<h2>Render the scene</h2>
@@ -548,9 +712,30 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 		<li>Animations still advance the frame clock between frames, so time-based scenes loop cleanly.</li>
 		<li>
 			<span class="inline-code">.seq</span> expressions now also resolve in component arguments and
-			<span class="inline-code">style</span> blocks. Only signal-backed attributes are reactive;
-			plain numeric attributes such as <span class="inline-code">Text(size:)</span> still evaluate
+			<span class="inline-code">style</span> blocks. Every attribute expression over a host value is
+			reactive, including plain numeric attributes such as
+			<span class="inline-code">Text(size:)</span>; expressions made only of literals still evaluate
 			once.
+		</li>
+		<li>
+			New motion syntax: <span class="inline-code">enter:</span>/<span class="inline-code">exit:</span>
+			chains on any node, and <span class="inline-code">behavior: spring(k, c[, m])</span> or the
+			<span class="inline-code">snappy</span>/<span class="inline-code">bouncy</span>/<span
+				class="inline-code">gentle</span
+			>
+			presets. When both <span class="inline-code">animate:</span> and
+			<span class="inline-code">behavior:</span> are set, the spring wins. An
+			<span class="inline-code">exit:</span> chain still needs a presence transition, so it applies
+			to <span class="inline-code">If</span> subtrees.
+		</li>
+		<li>
+			<span class="inline-code">include_seq!</span> is new
+			(<span class="inline-code">sequoia-seq-macros</span>, re-exported by
+			<span class="inline-code">sequoia-ui</span>). Declared props and callbacks become typed builder
+			methods; a mismatched name or signature is a compile error.
+		</li>
+		<li>
+			Parser, checker and lowering diagnostics are now reported in English instead of Polish.
 		</li>
 	</ul>
 

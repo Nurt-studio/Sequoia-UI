@@ -21,13 +21,13 @@
 
 	const rustCode = `<span class="kw">use</span> sequoia_ui::prelude::*;
 
-<span class="kw">let</span> label = Signal::new(<span class="ty">String</span>::from(<span class="str">"Kliknięto 0 razy"</span>));
+<span class="kw">let</span> label = Signal::new(<span class="ty">String</span>::from(<span class="str">"Clicked 0 times"</span>));
 <span class="kw">let</span> c_add = label.clone();
 
 <span class="kw">let</span> bindings = HostBindings::new()
     .prop_str(<span class="str">"count_label"</span>, label)
     .on(<span class="str">"add"</span>, <span class="kw">move</span> || &#123;
-        c_add.set(<span class="str">"Kliknięto!"</span>.into());
+        c_add.set(<span class="str">"Clicked!"</span>.into());
     &#125;);
 
 <span class="kw">let</span> loaded = SeqLoader::load_with(
