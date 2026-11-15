@@ -322,7 +322,11 @@ fn effect_writing_own_dependency_is_capped_not_panicking() {
         }
     });
 
-    assert_eq!(s.get(), 1000, "capped at MAX_EFFECT_RUNS_PER_FLUSH");
+    assert_eq!(
+        s.get(),
+        100,
+        "capped per node, not by a shared flush budget"
+    );
 }
 
 #[test]
@@ -480,7 +484,7 @@ fn batch_depth_recovers_after_panic() {
 }
 
 #[test]
-fn flush_cutoff_unsticks_dropped_tail() {
+fn flush_budget_is_per_node_not_global() {
     let sa = Signal::new(0i32);
     let sb = Signal::new(0i32);
     let counters: Vec<Rc<Cell<u32>>> = (0..1200).map(|_| Rc::new(Cell::new(0u32))).collect();
@@ -500,21 +504,38 @@ fn flush_cutoff_unsticks_dropped_tail() {
         "each effect starts once"
     );
 
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
     batch(|| {
         sa.set(1);
         sb.set(1);
     });
-    std::panic::set_hook(hook);
     assert_eq!(counters[0].get(), 2, "the front of the queue has arrived");
-    assert_eq!(counters[1199].get(), 1, "tail truncated (cycle-guard)");
+    assert_eq!(
+        counters[1199].get(),
+        2,
+        "1200 legitimate subscribers all run: the budget is per node"
+    );
+}
 
-    sb.set(2);
-    assert!(
-        counters[1000..].iter().all(|c| c.get() == 2),
-        "ogon wraca po kolejnej zmianie: {:?}",
-        counters[1000..].iter().map(|c| c.get()).collect::<Vec<_>>()
+#[test]
+fn cycle_capped_effect_is_not_left_queued() {
+    let s = Signal::new(0i32);
+    let runs = Rc::new(Cell::new(0u32));
+    let _e = effect({
+        let (s, runs) = (s.clone(), runs.clone());
+        move || {
+            let current = s.get();
+            runs.set(runs.get() + 1);
+            s.set(current + 1);
+        }
+    });
+    assert_eq!(runs.get(), 100, "cycle guard skips after the per-node cap");
+    assert_eq!(s.get(), 100);
+
+    s.set(1000);
+    assert_eq!(
+        runs.get(),
+        200,
+        "the capped effect was not left queued and runs again on the next flush"
     );
 }
 
@@ -616,19 +637,19 @@ fn effect_panic_does_not_strand_the_rest_of_the_flush() {
     std::panic::set_hook(Box::new(|_| {}));
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| trigger.set(1)));
     std::panic::set_hook(hook);
-    assert!(r.is_err(), "panic z efektu leci do wywołującego");
+    assert!(r.is_err(), "panic from effect propagates to caller");
     assert_eq!(first_runs.get(), 2);
     assert_eq!(
         second_runs.get(),
         1,
-        "drugi efekt stał za panikującym w tej samej kolejce"
+        "second effect stayed behind panicking one in the same queue"
     );
 
     flush_effects();
     assert_eq!(
         second_runs.get(),
         2,
-        "ogon flusha wrócił do PENDING po unwindzie — nie zawisa z queued=true"
+        "flush tail returned to PENDING after unwind — does not hang with queued=true"
     );
 
     boom.set(false);
@@ -636,7 +657,7 @@ fn effect_panic_does_not_strand_the_rest_of_the_flush() {
     assert_eq!(
         second_runs.get(),
         3,
-        "drugi efekt nadal reaguje na zmianę własnego sygnału"
+        "second effect still responds to change of its own signal"
     );
     assert_eq!(*seen.borrow().last().unwrap(), 7);
 }
@@ -660,4 +681,303 @@ fn bind_syncs_both_ways_and_stops_on_drop() {
     assert_eq!(b.get_untracked(), 9, "dropped binding no longer syncs");
     b.set(3);
     assert_eq!(a.get_untracked(), 2);
+}
+
+#[test]
+fn memo_panic_keeps_waking_its_dependents() {
+    let s = Signal::new(0i32);
+    let boom = Rc::new(Cell::new(false));
+    let runs = Rc::new(Cell::new(0u32));
+    let m = memo({
+        let (s, boom) = (s.clone(), boom.clone());
+        move || {
+            let v = s.get();
+            if boom.get() {
+                panic!("boom in memo");
+            }
+            v * 2
+        }
+    });
+    let _e = {
+        let (m, runs) = (m.clone(), runs.clone());
+        effect(move || {
+            runs.set(runs.get() + 1);
+            let _ = m.try_get();
+        })
+    };
+    assert_eq!(runs.get(), 1);
+
+    boom.set(true);
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.set(1)));
+    std::panic::set_hook(hook);
+    assert!(r.is_err(), "panika mema leci do efektu");
+    assert_eq!(runs.get(), 2);
+
+    boom.set(false);
+    s.set(2);
+    assert_eq!(
+        runs.get(),
+        3,
+        "after panic dependency change must still wake dependent effect"
+    );
+}
+
+#[test]
+fn memo_cycle_during_validation_settles_instead_of_overflowing() {
+    let asig = Signal::new(0i32);
+    let bsig = Signal::new(0i32);
+    let wired = Rc::new(Cell::new(false));
+    let b_slot: Rc<RefCell<Option<Memo<i32>>>> = Rc::new(RefCell::new(None));
+
+    let a = memo({
+        let (asig, wired, b_slot) = (asig.clone(), wired.clone(), b_slot.clone());
+        move || {
+            if wired.get() {
+                b_slot.borrow().as_ref().unwrap().get() + asig.get()
+            } else {
+                asig.get()
+            }
+        }
+    });
+    let b = memo({
+        let (a, bsig) = (a.clone(), bsig.clone());
+        move || a.get() + bsig.get()
+    });
+    *b_slot.borrow_mut() = Some(b.clone());
+
+    assert_eq!(a.get(), 0);
+    assert_eq!(b.get(), 0);
+
+    // Now A also depends on B: the two memos point at each other.
+    wired.set(true);
+    asig.set(1);
+    assert_eq!(a.get(), 1);
+
+    // B and A become dirty at the same time, so validating A validates B,
+    // which validates A again. Without the computing flag this recurses until
+    // the stack overflows.
+    bsig.set(1);
+    asig.set(2);
+    let first = a.try_get();
+    assert!(first.is_some(), "cycle in validation cannot overflow stack");
+    assert_eq!(a.try_get(), first, "cycle settled on stable value");
+    let _ = b.try_get();
+}
+
+#[test]
+fn effect_panic_keeps_previously_read_dependencies() {
+    let early = Signal::new(0i32);
+    let late = Signal::new(0i32);
+    let boom = Rc::new(Cell::new(false));
+    let runs = Rc::new(Cell::new(0u32));
+
+    let _e = {
+        let (early, late, boom, runs) = (
+            early.clone(),
+            late.clone(),
+            boom.clone(),
+            runs.clone(),
+        );
+        effect(move || {
+            runs.set(runs.get() + 1);
+            let _ = early.get();
+            if boom.get() {
+                panic!("boom po odczycie early");
+            }
+            let _ = late.get();
+        })
+    };
+    assert_eq!(runs.get(), 1);
+
+    boom.set(true);
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| early.set(1)));
+    std::panic::set_hook(hook);
+    assert!(r.is_err());
+    assert_eq!(runs.get(), 2);
+
+    boom.set(false);
+    late.set(1);
+    assert_eq!(
+        runs.get(),
+        3,
+        "dependency read only in previous run must be recorded"
+    );
+}
+
+#[test]
+fn many_effects_on_one_signal_all_run() {
+    let s = Signal::new(0i32);
+    let runs = Rc::new(Cell::new(0u32));
+    let mut handles = Vec::new();
+    for _ in 0..1200 {
+        let (s, runs) = (s.clone(), runs.clone());
+        handles.push(effect(move || {
+            let _ = s.get();
+            runs.set(runs.get() + 1);
+        }));
+    }
+    assert_eq!(runs.get(), 1200);
+
+    runs.set(0);
+    s.set(1);
+    assert_eq!(
+        runs.get(),
+        1200,
+        "a thousand legitimate subscribers must not lose the tail of the queue"
+    );
+}
+
+#[test]
+fn batch_still_flushes_when_the_body_panics() {
+    let s = Signal::new(0i32);
+    let runs = Rc::new(Cell::new(0u32));
+    let _e = effect({
+        let (s, runs) = (s.clone(), runs.clone());
+        move || {
+            let _ = s.get();
+            runs.set(runs.get() + 1);
+        }
+    });
+    assert_eq!(runs.get(), 1);
+
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sequoia_reactive::batch(|| {
+            s.set(1);
+            panic!("boom w batchu");
+        })
+    }));
+    std::panic::set_hook(hook);
+    assert!(r.is_err());
+    assert_eq!(
+        runs.get(),
+        2,
+        "effects queued before the panic must still run"
+    );
+}
+
+#[test]
+fn capture_reads_bind_and_unbind_observers() {
+    let a = Signal::new(0i32);
+    let hits = Rc::new(Cell::new(0u32));
+    let (_, reads) = sequoia_reactive::capture_reads(|| {
+        let _ = a.get();
+    });
+    assert_eq!(reads.len(), 1);
+
+    let watcher = sequoia_reactive::Watcher::new({
+        let hits = hits.clone();
+        move || hits.set(hits.get() + 1)
+    });
+    reads.bind(&watcher);
+    a.set(1);
+    assert_eq!(hits.get(), 1);
+
+    reads.unbind(&watcher);
+    a.set(2);
+    assert_eq!(hits.get(), 1, "unbind stops the watcher");
+
+    let (_, again) = sequoia_reactive::capture_reads(|| {
+        let _ = a.get();
+    });
+    assert!(reads.same_deps(&again), "same reads -> same deps");
+    let b = Signal::new(0i32);
+    let (_, other) = sequoia_reactive::capture_reads(|| {
+        let _ = b.get();
+    });
+    assert!(!reads.same_deps(&other));
+}
+
+#[test]
+fn watcher_writing_its_own_signal_does_not_recurse() {
+    let s = Signal::new(0i32);
+    let hits = Rc::new(Cell::new(0u32));
+    let (_, reads) = sequoia_reactive::capture_reads(|| {
+        let _ = s.get();
+    });
+    let watcher = sequoia_reactive::Watcher::new({
+        let (s, hits) = (s.clone(), hits.clone());
+        move || {
+            hits.set(hits.get() + 1);
+            s.set(s.get_untracked() + 1);
+        }
+    });
+    reads.bind(&watcher);
+    s.set(1);
+    assert_eq!(hits.get(), 1, "a re-entrant write is skipped, not looped");
+}
+
+#[test]
+fn panicking_watcher_does_not_block_the_rest_of_propagation() {
+    let s = Signal::new(0i32);
+    let after = Rc::new(Cell::new(0u32));
+    let (_, reads) = sequoia_reactive::capture_reads(|| {
+        let _ = s.get();
+    });
+    let bad = sequoia_reactive::Watcher::new(|| panic!("boom watcher"));
+    reads.bind(&bad);
+    let _e = effect({
+        let (s, after) = (s.clone(), after.clone());
+        move || {
+            let _ = s.get();
+            after.set(after.get() + 1);
+        }
+    });
+    assert_eq!(after.get(), 1);
+
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    s.set(1);
+    std::panic::set_hook(hook);
+    assert_eq!(
+        after.get(),
+        2,
+        "a panicking watcher is isolated from the other observers"
+    );
+}
+
+#[test]
+fn run_now_runs_that_effect_even_without_a_pending_flush() {
+    let s = Signal::new(0i32);
+    let runs = Rc::new(Cell::new(0u32));
+    let e = effect({
+        let (s, runs) = (s.clone(), runs.clone());
+        move || {
+            let _ = s.get();
+            runs.set(runs.get() + 1);
+        }
+    });
+    assert_eq!(runs.get(), 1);
+    s.set(1);
+    assert_eq!(runs.get(), 2);
+
+    // Nothing is queued now, so a plain flush would not run it: run_now has to
+    // target this node.
+    sequoia_reactive::flush_effects();
+    assert_eq!(runs.get(), 2);
+    e.run_now();
+    assert_eq!(runs.get(), 3, "run_now forces the effect to run");
+    sequoia_reactive::flush_effects();
+    assert_eq!(runs.get(), 3, "it is not left queued for the next flush");
+    s.set(2);
+    assert_eq!(runs.get(), 4, "and the effect stays subscribed");
+}
+
+#[test]
+fn store_rejects_undo_inside_a_transaction() {
+    let store = sequoia_reactive::Store::new(0i32);
+    store.set(1);
+    let (ok, value) = store.transact("edit", || {
+        let ok = store.undo();
+        (ok, store.get_untracked())
+    });
+    assert!(!ok, "undo inside a transaction is ignored");
+    assert_eq!(value, 1);
+    assert!(store.undo());
+    assert_eq!(store.get_untracked(), 0);
 }

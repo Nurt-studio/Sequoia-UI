@@ -1,21 +1,41 @@
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Debug, Default)]
+/// Default undo depth shared by every history-backed type.
+///
+/// `History` used to derive `Default` with a limit of zero, which silently
+/// disabled history, while `Store` kept 100 steps. One default keeps the
+/// semantics of `History`, `Store` and `UndoSignal` aligned.
+pub(crate) const DEFAULT_HISTORY_LIMIT: usize = 100;
+
+#[derive(Clone, Debug)]
 pub struct History<T> {
-    undo: Vec<T>,
-    redo: Vec<T>,
+    // Bounded stacks: dropping the oldest entry must not shift the rest, which
+    // made `checkpoint`/`undo` O(n) for a large limit.
+    undo: VecDeque<T>,
+    redo: VecDeque<T>,
     limit: usize,
 
     last_coalesced: Option<Instant>,
+    /// Tag of the step `last_coalesced` refers to. Steps with different tags
+    /// (typing vs. dragging) must never merge into one undo entry.
+    last_tag: Option<String>,
+}
+
+impl<T> Default for History<T> {
+    fn default() -> Self {
+        Self::new(DEFAULT_HISTORY_LIMIT)
+    }
 }
 
 impl<T> History<T> {
     pub fn new(limit: usize) -> Self {
         Self {
-            undo: Vec::new(),
-            redo: Vec::new(),
+            undo: VecDeque::new(),
+            redo: VecDeque::new(),
             limit,
             last_coalesced: None,
+            last_tag: None,
         }
     }
 
@@ -43,6 +63,7 @@ impl<T> History<T> {
         self.undo.clear();
         self.redo.clear();
         self.last_coalesced = None;
+        self.last_tag = None;
     }
 
     pub fn checkpoint(&mut self, value: T) {
@@ -50,48 +71,53 @@ impl<T> History<T> {
             return;
         }
         if self.undo.len() >= self.limit {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
-        self.undo.push(value);
+        self.undo.push_back(value);
         self.redo.clear();
         self.last_coalesced = None;
+        self.last_tag = None;
     }
 
-    pub fn checkpoint_coalesced(&mut self, value: T, window: Duration) {
+    pub fn checkpoint_coalesced(&mut self, tag: &str, value: T, window: Duration) {
         if self.limit == 0 {
             return;
         }
         if let Some(t) = self.last_coalesced
+            && self.last_tag.as_deref() == Some(tag)
             && t.elapsed() < window
         {
             self.last_coalesced = Some(Instant::now());
             return;
         }
         if self.undo.len() >= self.limit {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
-        self.undo.push(value);
+        self.undo.push_back(value);
         self.redo.clear();
         self.last_coalesced = Some(Instant::now());
+        self.last_tag = Some(tag.to_owned());
     }
 
     pub fn undo(&mut self, current: T) -> Option<T> {
-        let prev = self.undo.pop()?;
+        let prev = self.undo.pop_back()?;
         if self.redo.len() >= self.limit.max(1) {
-            self.redo.remove(0);
+            self.redo.pop_front();
         }
-        self.redo.push(current);
+        self.redo.push_back(current);
         self.last_coalesced = None;
+        self.last_tag = None;
         Some(prev)
     }
 
     pub fn redo(&mut self, current: T) -> Option<T> {
-        let next = self.redo.pop()?;
+        let next = self.redo.pop_back()?;
         if self.undo.len() >= self.limit.max(1) {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
-        self.undo.push(current);
+        self.undo.push_back(current);
         self.last_coalesced = None;
+        self.last_tag = None;
         Some(next)
     }
 }
@@ -134,13 +160,27 @@ mod tests {
     fn coalescing_collapses_rapid_checkpoints() {
         let mut h = History::new(60);
         let w = Duration::from_secs(3600);
-        h.checkpoint_coalesced(1, w);
-        h.checkpoint_coalesced(2, w);
-        h.checkpoint_coalesced(3, w);
+        h.checkpoint_coalesced("typing", 1, w);
+        h.checkpoint_coalesced("typing", 2, w);
+        h.checkpoint_coalesced("typing", 3, w);
 
         assert_eq!(h.depths(), (1, 0));
-        h.checkpoint_coalesced(4, Duration::from_nanos(0));
+        h.checkpoint_coalesced("typing", 4, Duration::from_nanos(0));
         assert_eq!(h.depths(), (2, 0));
+    }
+
+    #[test]
+    fn coalescing_respects_the_tag() {
+        let mut h = History::new(60);
+        let w = Duration::from_secs(3600);
+        h.checkpoint_coalesced("typing", 1, w);
+        h.checkpoint_coalesced("drag", 2, w);
+        h.checkpoint_coalesced("typing", 3, w);
+        assert_eq!(
+            h.depths(),
+            (3, 0),
+            "typing and drag in the same window are separate steps"
+        );
     }
 
     #[test]
@@ -155,6 +195,20 @@ mod tests {
 
         assert_eq!(h.depths(), (0, 2));
         assert!(h.redo(6).is_some());
+    }
+
+    #[test]
+    fn default_keeps_the_same_depth_as_the_other_histories() {
+        let mut h: History<i32> = History::default();
+        for v in 0..(DEFAULT_HISTORY_LIMIT as i32 + 10) {
+            h.checkpoint(v);
+        }
+        assert_eq!(
+            h.depths(),
+            (DEFAULT_HISTORY_LIMIT, 0),
+            "Default must not silently disable history"
+        );
+        assert_eq!(DEFAULT_HISTORY_LIMIT, 100);
     }
 
     #[test]

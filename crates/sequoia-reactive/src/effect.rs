@@ -2,7 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use crate::runtime::{
-    DepSlot, FrameGuard, Observer, batch_depth, enqueue_effect, flush_effects, unregister_all,
+    DepSlot, FrameGuard, Observer, batch_depth, dequeue_effect, enqueue_effect, flush_effects,
+    unregister_all,
 };
 
 pub fn effect(run: impl Fn() + 'static) -> Effect {
@@ -42,8 +43,13 @@ impl Effect {
         Self { inner }
     }
 
+    /// Runs this effect immediately instead of waiting for the next flush.
+    ///
+    /// The node is removed from the pending queue first, so a following flush
+    /// does not run it a second time. Reentrant calls (the effect is already
+    /// running) are ignored.
     pub fn run_now(&self) {
-        flush_effects();
+        self.inner.run_now();
     }
 
     pub fn dispose(self) {
@@ -78,9 +84,25 @@ impl EffectNode {
         self.disposed.get()
     }
 
+    pub(crate) fn run_now(self: &Rc<Self>) {
+        if self.disposed.get() {
+            return;
+        }
+        // Taking it out of `PENDING` and clearing `queued` keeps a running
+        // effect from being run twice: once now and once by the next flush.
+        dequeue_effect(self);
+        self.queued.set(false);
+        self.run();
+    }
+
     pub(crate) fn run(self: &Rc<Self>) {
         self.dirty.set(false);
-        unregister_all(&self.deps, self.id());
+        // Subscriptions are kept during the run and diffed afterwards. Tearing
+        // them down and re-registering every run scanned each dependency's
+        // observer list, so `n` effects watching one signal cost O(n^2); now
+        // only deps that appear or disappear do any work.
+        let previous: Vec<DepSlot> = self.deps.borrow().clone();
+        let known: Vec<usize> = previous.iter().map(|(id, _, _)| *id).collect();
 
         let taken = self.run.borrow_mut().take();
         let Some(f) = taken.as_ref() else {
@@ -90,7 +112,8 @@ impl EffectNode {
         let mut slots: Vec<DepSlot> = Vec::new();
         let outcome = {
             let observer: Rc<dyn Observer> = self.clone();
-            let _frame = FrameGuard::new(Some(Rc::downgrade(&observer)), &mut slots);
+            let _frame =
+                FrameGuard::new_known(Some(Rc::downgrade(&observer)), known, &mut slots);
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
         };
         if let Err(payload) = outcome {
@@ -99,6 +122,15 @@ impl EffectNode {
             }
             if self.run.borrow().is_none() {
                 *self.run.borrow_mut() = taken;
+            }
+            // Merge: keep what this run read and re-attach everything only the
+            // previous run had read. Those registrations were never dropped,
+            // so a signal write after the panic still finds this effect.
+            for (id, dep, version) in previous {
+                if slots.iter().any(|(read, _, _)| *read == id) {
+                    continue;
+                }
+                slots.push((id, dep, version));
             }
             *self.deps.borrow_mut() = slots;
             std::panic::resume_unwind(payload);
@@ -109,6 +141,58 @@ impl EffectNode {
 
         if self.run.borrow().is_none() {
             *self.run.borrow_mut() = taken;
+        }
+        self.rebind(previous, slots);
+        self.settle_self_enqueue();
+    }
+
+    /// Drops a re-run that the body triggered by reading a dependency that was
+    /// recomputing at the time.
+    ///
+    /// A lazy memo that recomputes inside `get` notifies its observers before
+    /// the read records the new version, so the effect is queued while the
+    /// value it just received is already current. Keeping that run would run
+    /// every memo-reading effect twice per update. A real self-write leaves the
+    /// recorded version behind, so it still needs (and gets) another run.
+    fn settle_self_enqueue(&self) {
+        if !self.queued.get() || self.disposed.get() {
+            return;
+        }
+        let stale = self
+            .deps
+            .borrow()
+            .iter()
+            .any(|(_, dep, version)| dep.upgrade().is_some_and(|d| d.version() != *version));
+        if !stale {
+            dequeue_effect(self);
+            self.dirty.set(false);
+        }
+    }
+
+    /// Stores the dependencies read by the last run, registering the new ones
+    /// and unregistering the ones that disappeared.
+    fn rebind(&self, previous: Vec<DepSlot>, slots: Vec<DepSlot>) {
+        let same = slots.len() == previous.len()
+            && slots
+                .iter()
+                .zip(previous.iter())
+                .all(|(a, b)| a.0 == b.0);
+        if same {
+            // Nothing changed: keep the existing registrations, refresh only
+            // the cached versions.
+            let mut deps = self.deps.borrow_mut();
+            for (old, new) in deps.iter_mut().zip(slots.iter()) {
+                old.2 = new.2;
+            }
+            return;
+        }
+        for (id, dep, _) in &previous {
+            if slots.iter().any(|(read, _, _)| read == id) {
+                continue;
+            }
+            if let Some(d) = dep.upgrade() {
+                d.unregister_observer(Observer::id(self));
+            }
         }
         *self.deps.borrow_mut() = slots;
     }
@@ -159,7 +243,9 @@ impl EffectHandle {
     }
 
     pub fn run_now(&self) {
-        flush_effects();
+        if let Some(effect) = self.inner.as_ref() {
+            effect.run_now();
+        }
     }
 
     pub fn is_alive(&self) -> bool {

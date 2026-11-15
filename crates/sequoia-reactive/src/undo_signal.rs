@@ -27,6 +27,11 @@ impl<T: Clone + PartialEq + 'static> UndoSignal<T> {
         self
     }
 
+    /// Returns the underlying signal for reading and tracking.
+    ///
+    /// Writing through it (`set`/`update`) bypasses the history and leaves
+    /// undo/redo out of sync with the value. Use [`UndoSignal::set`],
+    /// [`UndoSignal::update`] or [`UndoSignal::transact`] for edits.
     pub fn signal(&self) -> Signal<T> {
         self.signal.clone()
     }
@@ -79,13 +84,23 @@ impl<T: Clone + PartialEq + 'static> UndoSignal<T> {
             batch(|| self.signal.update(f));
         };
 
-        match window {
-            Some(w) => self.history.borrow_mut().checkpoint_coalesced(old, w),
-            None => self.history.borrow_mut().checkpoint(old),
-        }
         match tag {
             Some(t) => transaction(t, run),
             None => run(),
+        }
+
+        // Checkpoint only a change that actually happened. Recording first
+        // meant a no-op update added an undo step that undid nothing and, worse,
+        // refreshed the coalescing window so later edits merged into it. A
+        // panicking `f` also left a checkpoint behind; now it leaves none.
+        if self.signal.get_untracked() == old {
+            return;
+        }
+        match (window, tag) {
+            (Some(w), Some(t)) => {
+                self.history.borrow_mut().checkpoint_coalesced(t, old, w);
+            }
+            _ => self.history.borrow_mut().checkpoint(old),
         }
     }
 
@@ -155,6 +170,30 @@ mod tests {
         assert_eq!(doc.depths().0, 1, "szybkie pisanie = 1 wpis undo");
         assert!(doc.undo());
         assert_eq!(doc.get_untracked(), "");
+    }
+
+    #[test]
+    fn no_op_update_adds_no_step_and_keeps_the_window() {
+        let doc = UndoSignal::new(0i32, 60).with_coalesce_window(Duration::from_secs(60));
+        doc.transact_coalesced("typing", |v| *v += 1);
+        doc.update(|_| {});
+        assert_eq!(doc.depths(), (1, 0), "no-op update must not checkpoint");
+        doc.transact_coalesced("typing", |v| *v += 1);
+        assert_eq!(
+            doc.depths(),
+            (1, 0),
+            "a no-op must not refresh the coalescing window"
+        );
+        assert!(doc.undo());
+        assert_eq!(doc.get_untracked(), 0);
+    }
+
+    #[test]
+    fn different_tags_are_separate_undo_steps() {
+        let doc = UndoSignal::new(0i32, 60).with_coalesce_window(Duration::from_secs(60));
+        doc.transact_coalesced("typing", |v| *v += 1);
+        doc.transact_coalesced("drag", |v| *v += 1);
+        assert_eq!(doc.depths().0, 2);
     }
 
     #[test]

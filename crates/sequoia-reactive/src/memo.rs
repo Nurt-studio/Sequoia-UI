@@ -74,7 +74,10 @@ impl<T: Clone + PartialEq + 'static> Memo<T> {
 
 impl<T: Clone + PartialEq + 'static> MemoNode<T> {
     fn ensure_fresh(&self) {
-        if !self.dirty.get() {
+        // `retry` marks a compute that panicked: the value is stale and the
+        // node is no longer dirty, so it must still be refreshed here.
+        let retry = self.retry.get();
+        if !self.dirty.get() && !retry {
             return;
         }
         if self.computing.get() {
@@ -85,12 +88,22 @@ impl<T: Clone + PartialEq + 'static> MemoNode<T> {
             return;
         }
 
+        // Claim the node before walking dependency versions: validation calls
+        // `ensure_fresh` on other memos, and in a cycle (A -> B -> A) that walk
+        // would recurse into itself until the stack overflows. With the flag
+        // already set, the inner visit reports the cycle and keeps the stale
+        // value, so mutual validation settles instead of crashing.
+        let _cycle_guard = FlagGuard::new(&self.computing);
+
         let has_value = self.value.borrow().is_some();
 
-        let mut changed = self.retry.get() || !has_value;
+        let mut changed = retry || !has_value;
         if !changed {
-            let deps = self.deps.borrow();
-            for (_, dep, version) in deps.iter() {
+            // Copy the slots out first: validating a dependency can recompute
+            // another memo, and holding the `deps` borrow across that would
+            // panic if the graph leads back here.
+            let deps: Vec<DepSlot> = self.deps.borrow().clone();
+            for (_, dep, version) in &deps {
                 match dep.upgrade() {
                     Some(d) => {
                         d.validate();
@@ -115,9 +128,8 @@ impl<T: Clone + PartialEq + 'static> MemoNode<T> {
         let Some(this) = self.me.upgrade() else {
             return;
         };
-        self.computing.set(true);
-        let _cycle_guard = FlagGuard::new(&self.computing);
 
+        let previous: Vec<DepSlot> = self.deps.borrow().clone();
         unregister_all(&self.deps, Observer::id(self));
 
         let mut slots: Vec<DepSlot> = Vec::new();
@@ -141,7 +153,27 @@ impl<T: Clone + PartialEq + 'static> MemoNode<T> {
                 if self.compute.borrow().is_none() {
                     *self.compute.borrow_mut() = taken;
                 }
+                // A panic must not leave the memo dirty: `mark_dirty` only
+                // propagates on a clean -> dirty transition, so a memo stuck
+                // dirty would silently stop waking its observers. Clear the
+                // flag and let `retry` force the recompute on the next read.
+                //
+                // Dependencies the aborted compute never reached are attached
+                // again, otherwise a change to them would not even mark this
+                // memo dirty.
+                let observer: Rc<dyn Observer> = this.clone();
+                let weak = Rc::downgrade(&observer);
+                for (id, dep, version) in previous {
+                    if slots.iter().any(|(read, _, _)| *read == id) {
+                        continue;
+                    }
+                    if let Some(d) = dep.upgrade() {
+                        d.register_observer(weak.clone());
+                        slots.push((id, dep, version));
+                    }
+                }
                 *self.deps.borrow_mut() = slots;
+                self.dirty.set(false);
                 self.retry.set(true);
                 std::panic::resume_unwind(payload);
             }

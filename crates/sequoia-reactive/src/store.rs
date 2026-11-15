@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use crate::{Signal, transaction};
 
-pub(crate) const MAX_HISTORY: usize = 100;
+/// Bounded undo depth, shared with [`crate::history::History`] so the two
+/// implementations cannot drift apart again.
+pub(crate) const MAX_HISTORY: usize = crate::history::DEFAULT_HISTORY_LIMIT;
 
 struct History<T> {
     undo: Vec<T>,
@@ -153,6 +155,12 @@ impl<T: Clone + PartialEq + 'static> Store<T> {
     }
 
     pub fn undo(&self) -> bool {
+        if self.history.borrow().depth > 0 {
+            // Undoing mid-transaction would desync the snapshot taken at
+            // `begin_txn`, so the history would no longer describe the value.
+            log::warn!("sequoia-reactive: Store::undo inside a transaction is ignored");
+            return false;
+        }
         let prev = self.history.borrow_mut().undo.pop();
         let Some(prev) = prev else {
             return false;
@@ -164,6 +172,10 @@ impl<T: Clone + PartialEq + 'static> Store<T> {
     }
 
     pub fn redo(&self) -> bool {
+        if self.history.borrow().depth > 0 {
+            log::warn!("sequoia-reactive: Store::redo inside a transaction is ignored");
+            return false;
+        }
         let next = self.history.borrow_mut().redo.pop();
         let Some(next) = next else {
             return false;

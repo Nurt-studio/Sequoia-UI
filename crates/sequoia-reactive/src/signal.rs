@@ -60,6 +60,12 @@ impl<T: Clone + PartialEq + 'static> Signal<T> {
     }
 
     /// Reads the value by reference and tracks the read.
+    ///
+    /// # Panics
+    ///
+    /// The value is borrowed for the whole callback, so writing the signal
+    /// from inside `f` (`s.with(|_| s.set(x))`) panics on `borrow_mut`. Clone
+    /// the value with [`Signal::get`] first when the closure needs to mutate.
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         track_read(&self.inner);
         let borrowed = self.inner.value.borrow();
@@ -70,6 +76,11 @@ impl<T: Clone + PartialEq + 'static> Signal<T> {
     ///
     /// Use this in paint and event loops when the value is large (for example
     /// `Vec<Layer>`); `get_untracked()` clones the whole value on every call.
+    ///
+    /// # Panics
+    ///
+    /// Like [`Signal::with`], the borrow lasts for the whole callback, so a
+    /// `set`/`update` inside `f` panics. Write from a clone instead.
     pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         let borrowed = self.inner.value.borrow();
         f(&borrowed)

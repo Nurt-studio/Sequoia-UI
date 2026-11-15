@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use crate::runtime::{DepSlot, FrameGuard, Observer};
@@ -67,6 +67,9 @@ impl ReadSet {
 
 pub(crate) struct WatcherNode {
     callback: RefCell<Option<Box<dyn Fn()>>>,
+    /// Set while the callback runs. A callback that writes a signal it watches
+    /// would otherwise re-enter itself until the stack runs out.
+    dispatching: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -78,6 +81,7 @@ impl Watcher {
     pub fn new(callback: impl Fn() + 'static) -> Self {
         let node = Rc::new(WatcherNode {
             callback: RefCell::new(Some(Box::new(callback))),
+            dispatching: Cell::new(false),
         });
         Self { node }
     }
@@ -89,8 +93,28 @@ impl Observer for WatcherNode {
     }
 
     fn mark_dirty(&self) -> bool {
-        if let Some(f) = self.callback.borrow().as_ref() {
-            f();
+        if self.dispatching.replace(true) {
+            log::warn!(
+                "sequoia-reactive: watcher wrote a signal it observes — \
+                 skipping the re-entrant dispatch"
+            );
+            return false;
+        }
+        struct ResetGuard<'a>(&'a Cell<bool>);
+        impl Drop for ResetGuard<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        let _guard = ResetGuard(&self.dispatching);
+        let callback = self.callback.borrow();
+        let Some(f) = callback.as_ref() else {
+            return false;
+        };
+        // Panic isolation: one broken watcher must not stop the remaining
+        // observers in `propagate` from being notified.
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
+            log::error!("sequoia-reactive: watcher callback panicked — propagation continues");
         }
         false
     }
