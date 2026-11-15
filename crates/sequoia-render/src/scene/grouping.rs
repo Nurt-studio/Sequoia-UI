@@ -71,6 +71,50 @@ pub(crate) fn group_runs_with_opacity(
     runs: &mut Vec<GuiRun>,
     shaders: Option<&mut ShaderGroupData>,
 ) -> (usize, usize, usize, usize, usize) {
+    group_runs_with_surfaces(
+        items,
+        clips,
+        transforms,
+        opacities,
+        scale,
+        viewport,
+        quad_ceiling,
+        glyph_ceiling,
+        image_ceiling,
+        gradient_ceiling,
+        quads,
+        glyphs,
+        images,
+        image_keys,
+        gradients,
+        runs,
+        shaders,
+        &[],
+    )
+}
+
+/// Like [`group_runs_with_opacity`], inserting surface markers at paint positions.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn group_runs_with_surfaces(
+    items: &[RenderItem],
+    clips: &[Option<sequoia_core::RoundedClip>],
+    transforms: &[sequoia_core::Transform],
+    opacities: &[f32],
+    scale: f32,
+    viewport: Option<Rect>,
+    quad_ceiling: usize,
+    glyph_ceiling: usize,
+    image_ceiling: usize,
+    gradient_ceiling: usize,
+    quads: &mut Vec<GpuQuad>,
+    glyphs: &mut Vec<GpuGlyph>,
+    images: &mut Vec<BlitQuad>,
+    image_keys: &mut Vec<u64>,
+    gradients: &mut Vec<GpuGradient>,
+    runs: &mut Vec<GuiRun>,
+    shaders: Option<&mut ShaderGroupData>,
+    surface_marks: &[(usize, u32)],
+) -> (usize, usize, usize, usize, usize) {
     let opacity = |index: usize| opacities.get(index).copied().unwrap_or(1.0).clamp(0.0, 1.0);
     let mut shader_data = shaders;
     quads.clear();
@@ -124,7 +168,15 @@ pub(crate) fn group_runs_with_opacity(
         };
         cull_rect(r)
     };
+    let mut surface_mark = 0usize;
     for (index, item) in items.iter().enumerate() {
+        while let Some(&(at, surface)) = surface_marks.get(surface_mark) {
+            if at > index {
+                break;
+            }
+            runs.push(GuiRun::Surface(surface));
+            surface_mark += 1;
+        }
         match item {
             RenderItem::Quad(q) => {
                 if cull_rect_t(q.rect, index) {
@@ -511,6 +563,10 @@ pub(crate) fn group_runs_with_opacity(
             _ => {}
         }
     }
+    while let Some(&(_, surface)) = surface_marks.get(surface_mark) {
+        runs.push(GuiRun::Surface(surface));
+        surface_mark += 1;
+    }
     (
         dropped_quads,
         dropped_glyphs,
@@ -549,6 +605,7 @@ pub(crate) fn shift_gui_runs_with_shaders(
             GuiRun::Shader(start, len, shader, blend) => {
                 GuiRun::Shader(start + shader_base, len, shader, blend)
             }
+            GuiRun::Surface(surface) => GuiRun::Surface(surface),
         })
         .collect()
 }
@@ -563,6 +620,7 @@ pub(crate) fn gui_run_draws(
         match *run {
             GuiRun::Quads(_, _) | GuiRun::Glyphs(_, _) | GuiRun::Gradients(_, _) => draws += 1,
             GuiRun::Shader(_, _, _, _) => draws += 1,
+            GuiRun::Surface(_) => draws += 1,
             GuiRun::Images(start, len) => {
                 let end = (start + len) as usize;
                 let mut index = start as usize;

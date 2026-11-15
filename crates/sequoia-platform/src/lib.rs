@@ -1874,6 +1874,7 @@ impl PlatformApp {
                         && let Some(ws) = self.live.get_mut(wid)
                     {
                         ws.window.set_minimized(true);
+                        ws.gpu.release_scratch();
                     }
                 }
                 window::WindowRequest::ToggleMaximize(id) => {
@@ -2177,6 +2178,8 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                     ws.rt.mark_full_damage();
                     if size.width > 0 && size.height > 0 {
                         ws.draw_frame(wid);
+                    } else {
+                        ws.gpu.release_scratch();
                     }
                     ws.resize_present_until = Some(Instant::now() + RESIZE_PRESENT_TAIL);
                     ws.request_redraw();
@@ -2193,7 +2196,9 @@ impl ApplicationHandler<JobWake> for PlatformApp {
                 }
 
                 WindowEvent::Occluded(occluded) => {
-                    if !occluded {
+                    if occluded {
+                        ws.gpu.release_scratch();
+                    } else {
                         ws.rt.mark_full_damage();
                         ws.request_redraw();
                     }

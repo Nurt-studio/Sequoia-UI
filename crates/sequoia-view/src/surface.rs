@@ -10,6 +10,12 @@ pub struct SurfaceDraw {
 
     pub full: Rect,
 
+    /// Number of paint items recorded before this surface.
+    ///
+    /// The renderer uses it to composite the surface at its paint-order
+    /// position instead of above or below the whole scene.
+    pub order: usize,
+
     pub target: Rc<dyn Any>,
 }
 

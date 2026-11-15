@@ -440,6 +440,8 @@ pub(crate) enum GuiRun {
     Gradients(u32, u32),
     /// Shader instance range followed by shader handle and blend mode.
     Shader(u32, u32, sequoia_core::ShaderId, sequoia_core::BlendMode),
+    /// Embedded surface index in paint order.
+    Surface(u32),
 }
 
 /// Drawing plan for a scene segment followed by an optional backdrop marker.
@@ -516,18 +518,20 @@ impl Default for MemoryBudget {
 impl MemoryBudget {
     /// Splits `total` into per-category budgets.
     ///
-    /// The split keeps half of the budget for images, a quarter for cached
-    /// surfaces, an eighth each for the atlas and instance buffers. A total of
-    /// zero disables budget enforcement.
+    /// A quarter each for images and cached surfaces, an eighth each for the
+    /// atlas and instance buffers. Images are the cache that grows with
+    /// content, so they no longer get half of the budget; the unused quarter
+    /// stays as headroom for the categories that are measured separately. A
+    /// total of zero disables budget enforcement.
     pub fn for_total(total: u64) -> Self {
         Self {
             total,
-            images: total / 2,
+            images: total / 4,
             atlas: total / 8,
             surfaces: total / 4,
             buffers: total / 8,
-            max_images: 128,
-            max_targets: 8,
+            max_images: 64,
+            max_targets: 4,
         }
     }
 
@@ -944,12 +948,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_budget_splits_total() {
+    fn default_budget_stays_within_total() {
         let budget = MemoryBudget::default();
-        assert_eq!(
-            budget.images + budget.atlas + budget.surfaces + budget.buffers,
-            budget.total
+        assert!(
+            budget.images + budget.atlas + budget.surfaces + budget.buffers <= budget.total
         );
+        assert!(budget.images < budget.total / 2, "images no longer get half");
         assert!(!budget.is_unlimited());
         assert!(budget.max_images > 0);
     }

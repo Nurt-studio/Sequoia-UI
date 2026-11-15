@@ -420,7 +420,7 @@ impl Runtime {
                 live_anims: RefCell::new(HashMap::new()),
                 clock: Cell::new(FrameClock::new()),
                 damage: RefCell::new(crate::damage::DamageTracker::new()),
-                layers: RefCell::new(LayerCache::new(128)),
+                layers: RefCell::new(LayerCache::new(32)),
                 layer_hits: Cell::new(0),
                 layer_misses: Cell::new(0),
                 states: RefCell::new(HashMap::new()),
@@ -5887,6 +5887,7 @@ impl Runtime {
                 self.inner.surfaces.borrow_mut().push(SurfaceDraw {
                     rect: clipped,
                     full: rect,
+                    order: list.items().len(),
                     target,
                 });
             }

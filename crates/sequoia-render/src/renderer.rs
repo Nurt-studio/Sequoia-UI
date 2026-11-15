@@ -135,8 +135,7 @@ pub struct GpuRenderer {
     pub(crate) group_layers: Vec<GroupLayer>,
     pub(crate) scratch_image_draws: Vec<Option<ImageBinding>>,
     pub(crate) scratch_seen: Vec<usize>,
-    pub(crate) scratch_cached: Vec<CachedJob>,
-    pub(crate) scratch_regions: Vec<(Region, Rc<SurfaceBinding>)>,
+    pub(crate) scratch_surfaces: Vec<SurfaceJob>,
     pub(crate) atlas_scratch: Vec<u8>,
     pub(crate) user_shaders: HashMap<ShaderId, UserShaderEntry>,
     pub(crate) by_name: HashMap<String, ShaderId>,
@@ -882,8 +881,7 @@ impl GpuRenderer {
             group_layers: Vec::new(),
             scratch_image_draws: Vec::with_capacity(INITIAL_IMAGE_CAPACITY),
             scratch_seen: Vec::new(),
-            scratch_cached: Vec::new(),
-            scratch_regions: Vec::new(),
+            scratch_surfaces: Vec::new(),
             atlas_scratch: Vec::new(),
             user_shaders: passthrough_shaders,
             by_name: passthrough_names,
@@ -1403,6 +1401,31 @@ impl GpuRenderer {
         if Arc::strong_count(&self.images) == 1 {
             lock_images(&self.images).clear();
         }
+    }
+
+    /// Releases the full-window scratch textures.
+    ///
+    /// The partial-repaint target, the depth buffer and the backdrop ping-pong
+    /// textures are recreated lazily by the next frame. Called when the window
+    /// is minimized or occluded, where nothing is presented and the textures
+    /// would otherwise stay resident for as long as the window exists.
+    pub fn release_scratch(&mut self) {
+        if let Some(target) = self.frame_target.take() {
+            target.texture.destroy();
+        }
+        self.frame_target_valid = false;
+        if let Some((texture, _, _)) = self.depth_tex.take() {
+            texture.destroy();
+        }
+        if let Some(backdrop) = self.backdrop_tex.take() {
+            backdrop.a_tex.destroy();
+            backdrop.b_tex.destroy();
+            backdrop.c_tex.destroy();
+        }
+        self.scratch_frame.shrink_to_fit();
+        self.scratch_regions.shrink_to_fit();
+        self.scratch_cached.shrink_to_fit();
+        self.scratch_seen.shrink_to_fit();
     }
 
     /// Resizes the window surface; zero dimensions are clamped to one.
@@ -1966,57 +1989,69 @@ impl GpuRenderer {
         let clear_color = self.clear_color;
 
         let frame_quads = &mut self.scratch_frame;
-        let regions = &mut self.scratch_regions;
-        let cached = &mut self.scratch_cached;
+        let jobs = &mut self.scratch_surfaces;
         let seen = &mut self.scratch_seen;
         frame_quads.clear();
-        regions.clear();
-        cached.clear();
+        jobs.clear();
         seen.clear();
+        let mut cached_count = 0usize;
         for draw in surfaces {
             let Ok(binding) = draw.target.clone().downcast::<SurfaceBinding>() else {
                 continue;
             };
-            let before = frame_quads.len();
+            let deco_start = frame_quads.len();
             let region = surface_frame(draw.rect, &binding.frame, s, fb, frame_quads);
-            if frame_quads.len() > before && frame_quads.len() >= MAX_FRAME_QUADS {
+            let deco_len = frame_quads.len() - deco_start;
+            if deco_len > 0 && frame_quads.len() >= MAX_FRAME_QUADS {
                 self.stats.dropped_frame_quads +=
-                    (frame_quads.len() - before.max(MAX_FRAME_QUADS)) as u64;
+                    (frame_quads.len() - deco_start.max(MAX_FRAME_QUADS)) as u64;
                 log::debug!("sequoia-render: frame quad budget exceeded (max {MAX_FRAME_QUADS})");
             }
             let offscreen =
                 binding.cached || binding.format.is_some_and(|f| f != self.render_format);
-            if offscreen {
+            let content = if offscreen {
                 if !seen.contains(&binding.key) {
                     seen.push(binding.key);
                 }
 
-                let (Some(full), Some(screen)) = (
+                let full_screen = (
                     phys_rect(draw.full, s, fb.0, fb.1),
                     phys_rect(draw.rect, s, fb.0, fb.1),
-                ) else {
-                    continue;
-                };
-                let Some(size) = Region::from_phys(full).map(|r| (r.width, r.height)) else {
-                    continue;
-                };
-                if cached.len() >= MAX_BLITS {
-                    self.stats.dropped_surfaces += 1;
-                    log::debug!("sequoia-render: cached surface budget exceeded (max {MAX_BLITS})");
-                    continue;
+                );
+                if let (Some(full), Some(screen), Some(size)) = (
+                    full_screen.0,
+                    full_screen.1,
+                    full_screen
+                        .0
+                        .and_then(|r| Region::from_phys(r).map(|r| (r.width, r.height))),
+                ) {
+                    if cached_count >= MAX_BLITS {
+                        self.stats.dropped_surfaces += 1;
+                        log::debug!(
+                            "sequoia-render: cached surface budget exceeded (max {MAX_BLITS})"
+                        );
+                        SurfaceContent::Direct(None)
+                    } else {
+                        cached_count += 1;
+                        SurfaceContent::Cached {
+                            size,
+                            full,
+                            screen,
+                            blit: None,
+                        }
+                    }
+                } else {
+                    SurfaceContent::Direct(None)
                 }
-                cached.push(CachedJob {
-                    binding,
-                    size,
-                    full,
-                    screen,
-                });
             } else {
-                let Some(region) = region.and_then(Region::from_phys) else {
-                    continue;
-                };
-                regions.push((region, binding));
-            }
+                SurfaceContent::Direct(region.and_then(Region::from_phys))
+            };
+            jobs.push(SurfaceJob {
+                binding,
+                order: draw.order,
+                deco: (deco_start as u32, deco_len as u32),
+                content,
+            });
         }
 
         // Shadows and antialiasing reach beyond the painted rect, so the
@@ -2028,8 +2063,7 @@ impl GpuRenderer {
         // still offscreen.
         let partial_regions = if use_offscreen
             && self.frame_target_valid
-            && regions.is_empty()
-            && cached.is_empty()
+            && jobs.is_empty()
         {
             damage
                 .map(|regions| damage_scissors(regions, DAMAGE_MARGIN, s, fb))

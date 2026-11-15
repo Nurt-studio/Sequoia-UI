@@ -107,6 +107,7 @@ impl crate::renderer::GpuRenderer {
                         }
                     }
                 }
+                GuiRun::Surface(_) => {}
                 GuiRun::Shader(start, len, shader_id, blend) => {
                     let Some(entry) = user_shaders.get(&shader_id) else {
                         continue;

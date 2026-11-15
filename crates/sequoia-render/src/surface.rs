@@ -154,12 +154,25 @@ pub(crate) fn sanitize_samples(samples: u32) -> u32 {
     }
 }
 
-/// A cached surface that must be redrawn or blitted during the frame.
-pub(crate) struct CachedJob {
+/// A surface draw scheduled at its paint-order position.
+pub(crate) struct SurfaceJob {
     pub(crate) binding: Rc<SurfaceBinding>,
-    pub(crate) size: (u32, u32),
-    pub(crate) full: Rect,
-    pub(crate) screen: Rect,
+    pub(crate) order: usize,
+    pub(crate) deco: (u32, u32),
+    pub(crate) content: SurfaceContent,
+}
+
+/// Where a surface renders its content.
+pub(crate) enum SurfaceContent {
+    /// Draw directly into the current scene target, optionally with a content region.
+    Direct(Option<Region>),
+    /// Render offscreen and blit during the scene pass.
+    Cached {
+        size: (u32, u32),
+        full: Rect,
+        screen: Rect,
+        blit: Option<u32>,
+    },
 }
 
 /// A view that embeds a [`WgpuRenderer`] in the Sequoia layout.
