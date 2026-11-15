@@ -135,7 +135,7 @@ impl<'a> Eval<'a> {
         }
         let fns = self.rt.fns.borrow();
         let Some(f) = fns.get(name) else {
-            return Err(self.err(line, format!("nieznana funkcja '{name}'")));
+            return Err(self.err(line, format!("unknown function '{name}'")));
         };
         if f.params.len() != args.len() {
             return Err(self.err(
@@ -432,7 +432,7 @@ impl<'a> Eval<'a> {
                         format!("`-` requires a number (is {})", v.type_name()),
                     )),
                     (UnOp::Not, _) => {
-                        Err(self.err(e.line, format!("`!` wymaga Bool (jest {})", v.type_name())))
+                        Err(self.err(e.line, format!("`!` requires Bool (is {})", v.type_name())))
                     }
                 }
             }
@@ -460,7 +460,7 @@ impl<'a> Eval<'a> {
             SeqExprKind::Call { name, args } => {
                 if name == "Some" {
                     if args.len() != 1 {
-                        return Err(self.err(e.line, "Some: oczekiwano 1 argumentu"));
+                        return Err(self.err(e.line, "Some: expected 1 argument"));
                     }
                     let v = self.expr(&args[0])?;
                     return Ok(Value::Option(Some(Box::new(v))));
@@ -520,7 +520,7 @@ impl<'a> Eval<'a> {
                         }
                         let Some(sig) = row.fields.get(field) else {
                             return Err(
-                                self.err(line, format!("wiersz '{base}' nie ma pola '{field}'"))
+                                self.err(line, format!("row '{base}' has no field '{field}'"))
                             );
                         };
                         return Ok(match sig {
@@ -534,7 +534,7 @@ impl<'a> Eval<'a> {
                         let Ok(i) = field.parse::<usize>() else {
                             return Err(self.err(
                                 line,
-                                format!("pole krotki '{base}' to `.0`/`.1` (jest '.{field}')"),
+                                format!("tuple field '{base}' is `.0`/`.1` (is '.{field}')"),
                             ));
                         };
                         return items.get(i).cloned().ok_or_else(|| {
@@ -547,13 +547,13 @@ impl<'a> Eval<'a> {
                     other => {
                         return Err(self.err(
                             line,
-                            format!("'{base}' to {}, nie wiersz", other.type_name()),
+                            format!("'{base}' is {}, not a row", other.type_name()),
                         ));
                     }
                 }
             }
         }
-        Err(self.err(line, format!("nieznana zmienna '{base}'")))
+        Err(self.err(line, format!("unknown variable '{base}'")))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -575,7 +575,7 @@ impl<'a> Eval<'a> {
             BinOp::Div => {
                 if let (Value::Int(a), Value::Int(b)) = (&l, &r) {
                     if *b == 0 {
-                        return Err(self.err(line, "dzielenie przez zero"));
+                        return Err(self.err(line, "division by zero"));
                     }
                     return Ok(Value::Int(a / b));
                 }
@@ -594,7 +594,7 @@ impl<'a> Eval<'a> {
             BinOp::Rem => {
                 if let (Value::Int(a), Value::Int(b)) = (&l, &r) {
                     if *b == 0 {
-                        return Err(self.err(line, "reszta z dzielenia przez zero"));
+                        return Err(self.err(line, "remainder by zero"));
                     }
                     return Ok(Value::Int(a % b));
                 }
@@ -770,14 +770,14 @@ impl<'a> Eval<'a> {
                     } else {
                         a.min(b)
                     })),
-                    _ => Err(self.err(line, format!("{name}(a, b): wymaga liczb"))),
+                    _ => Err(self.err(line, format!("{name}(a, b): requires numbers"))),
                 }
             }
             _ => {
                 if self.rt.has_fn(name) {
                     self.call_fn(name, args, line)
                 } else {
-                    Err(self.err(line, format!("nieznana funkcja '{name}'")))
+                    Err(self.err(line, format!("unknown function '{name}'")))
                 }
             }
         }

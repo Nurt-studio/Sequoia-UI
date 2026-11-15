@@ -20,6 +20,7 @@ pub use ir::{
     SeqValue, SeqWindow, StateDecl, StyleDecl, ThemeName, UnOp, Visibility, resolve_seq_calls,
 };
 pub use loader::{AppMeta, LoadedApp, SeqLoader};
+pub use sequoia_reactive::{Memo, Signal};
 pub use lower::{
     BuiltStyles, SeqTextStyle, TextWeight, build_styles, check_decls, expand_components, lower,
     lower_window, lower_window_with, lower_with, resolve_theme,

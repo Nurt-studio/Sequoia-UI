@@ -51,6 +51,44 @@ the main file or an imported file changes.
 `*_map` variants take `&[(&str, &str)]` and resolve imports without touching the
 filesystem.
 
+### Typed bindings with `include_seq!`
+
+Add `sequoia-seq-macros` next to `sequoia-seq` to generate a typed builder from
+the `.seq` file at compile time:
+
+```toml
+[dependencies]
+sequoia-seq = "0.1.5"
+sequoia-seq-macros = "0.1.5"
+```
+
+```rust,ignore
+use sequoia_seq_macros::include_seq;
+
+let loaded = include_seq!("ui/Main.seq")
+    .prop_count(count)          // Signal<i64> for `prop count: Int`
+    .prop_label(label)          // Signal<String> for `prop label: String`
+    .on_save(move || save())    // Fn() for `on save()`
+    .on_open(|id| open(id))     // Fn(i64) for `on open(id: Int)`
+    .on_zoom(|x, y, d| zoom(x, y, d)) // wheel: (Float, Float, Float)
+    .configure(|b| b.env_str("title", title)) // env/memo/rows/resources
+    .load()?;
+```
+
+The macro parses the file and its transitive imports at compile time, then
+embeds all sources with `include_str!`, so rebuilding is triggered when any
+`.seq` file changes. Declared props become `prop_*` methods with the matching
+`Signal<T>` type, and declared callbacks become `on_*` methods with matching
+argument types. A callback declared as `(Float, Float, Float)` also gets an
+`on_<name>_pinch` variant. Incorrect names or signatures are compile errors.
+
+The macro still relies on `SeqLoader` at runtime, so unbound declarations are
+reported by `load()` as usual. Paths are resolved relative to `Cargo.toml`, and
+`configure` is the escape hatch for bindings that are not declared in the
+`.seq` file. `sequoia-ui` re-exports the macro as `sequoia_ui::include_seq!`
+(also available from the prelude), so a facade-only crate needs no extra
+dependency; the generated code then uses `sequoia_ui::seq`.
+
 ## App and window
 
 A file contains one `app` block. `title`, `size`, and at least one `window` are
@@ -130,6 +168,13 @@ Common value forms are:
 - `dynamic(name)` for a host property.
 - `item.field` inside a `List` or `VirtualList` template.
 
+Attribute expressions that read host properties, environment values, or row
+fields are reactive. The affected subtree is rebuilt when a tracked signal
+changes, including `dynamic(name)` and `env.name` used directly as attribute
+values. Expressions made only of literals are folded once and stay static.
+Declaration values such as `checked: flag` on `Checkbox` remain two-way: the
+widget writes back to the host signal instead of replacing it with a snapshot.
+
 The UI catalog includes `Column`, `Row`, `Container`, `Panel`, `ScrollView`,
 `Text`, `Button`, `Spacer`, `Icon`, `Image`, `List`, `VirtualList`, `Canvas`,
 `Stack`, `Grid`, `Wrap`, `Masonry`, `SplitPanel`, the input widgets, `If`,
@@ -141,6 +186,38 @@ are valid only inside a `Canvas`.
 `Panel` is a background/frame leaf. Use `Container` when the node needs
 children. A `Canvas` accepts shapes and `List`, not ordinary UI views or
 components.
+
+## Motion
+
+`enter:` and `exit:` accept a preset (`fast`, `smooth`, `snappy`, `gentle`,
+`slow`) or a motion chain with an optional `at` duration/easing and `delay`:
+
+```text
+Container(enter: fade().slide_y(16) at 220ms ease_out_cubic, exit: fade() at 120ms) {
+  Text("Saved")
+}
+```
+
+`fade()` takes an optional start opacity (`fade(0.2)`); slide steps are
+`slide_y(px)`, `slide_x(px)`, and `slide(dx, dy)`, chained with `.`.
+`enter` animates when the node mounts. `exit` needs a presence transition and
+currently applies to `If`; a node removed from an always-mounted parent is
+unmounted immediately. Durations are seconds by default, and `ms`/`s` suffixes
+are accepted. Easing names are `linear`, `ease_in`, `ease_out`, `ease_in_out`,
+and the `ease_{in,out,in_out}_{quad,cubic,quart,quint,expo,circ,sine,back}` family.
+
+Animated values (`Width`, `Height`, `Opacity`, `Scale`, `Rotate`, `Translate`)
+accept `behavior:` to switch from a tween to a spring:
+
+```text
+Width(value: open ? 320 : 64, behavior: spring(240, 18)) {
+  Text("Panel")
+}
+```
+
+`spring(stiffness, damping)` uses mass 1; `spring(k, c, m)` sets mass explicitly.
+Presets are `snappy`, `bouncy`, `gentle`, and `default`. When both `animate:` and
+`behavior:` are present, the spring wins.
 
 ## State and functions
 
@@ -250,13 +327,14 @@ variants expose derived and environment values; `dynamic(name)` can read them.
 An `on` name that matches a Seq `fn` does not need a host binding. A callback
 declared only for the host must have a matching binding, or loading fails.
 
-`Text(dynamic: name)` reads a host property. `Text(text: dynamic(name))` is the
-equivalent named-attribute form. Neither form accepts an arbitrary expression:
+`Text(dynamic: name)` reads a host property and subscribes to it.
+`Text(text: dynamic(name))` is the equivalent named-attribute form. Attribute
+expressions using host values are also reactive:
 
 ```text
 Text(dynamic: count)
 Text(text: dynamic(count))
-Text(t: "save")
+Text(text: label, size: count * 2 + 10)
 ```
 
 `Text(t: "key")` uses an `I18n` instance installed with `HostBindings::i18n`.

@@ -4,8 +4,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use sequoia_async::Resource;
-use sequoia_reactive::{I18n, Memo, Signal, memo};
-use sequoia_seq::{HostBindings, SeqLoader, check, parse};
+use sequoia_reactive::{memo, I18n, Memo, Signal};
+use sequoia_seq::{check, parse, HostBindings, SeqLoader};
 use sequoia_test::Harness;
 
 fn glyphs(h: &Harness) -> usize {
@@ -30,7 +30,7 @@ fn expression_when_reacts_to_host_value() {
     h.layout(200.0, 100.0);
     h.paint();
     h.tick();
-    assert_eq!(glyphs(&h), 0, "1 > 5 jest fałszem");
+    assert_eq!(glyphs(&h), 0, "1 > 5 is false");
     count.set(6.0);
     for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -38,7 +38,7 @@ fn expression_when_reacts_to_host_value() {
         h.layout(200.0, 100.0);
         h.paint();
     }
-    assert_eq!(glyphs(&h), 8, "wyrażenie ma być reaktywne");
+    assert_eq!(glyphs(&h), 8, "expression should be reactive");
 }
 
 #[test]
@@ -60,6 +60,95 @@ fn expression_value_reacts_for_animated_width() {
         h.paint();
     }
     assert!(last_text_left(&h) > 40.0, "width 50 po zmianie");
+}
+
+fn settle(h: &Harness) {
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.tick();
+        h.layout(200.0, 100.0);
+        h.paint();
+    }
+}
+
+#[test]
+fn plain_attribute_expression_reacts() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  prop count: Float\n  window M {\n    Row {\n      Container(width: count * 10) {\n        Text(\"a\")\n      }\n      Text(\"b\")\n    }\n  }\n}\n";
+    let count = Signal::new(1.0);
+    let b = HostBindings::new().prop_float("count", count.clone());
+    let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
+    let h = Harness::new(loaded.view);
+    h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
+    assert!(last_text_left(&h) < 30.0, "initial width is 10");
+    count.set(5.0);
+    settle(&h);
+    assert!(last_text_left(&h) > 40.0, "width becomes 50");
+}
+
+#[test]
+fn padding_expression_reacts() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  prop pad: Float\n  window M {\n    Container(padding: pad * 2) {\n      Text(\"a\")\n    }\n  }\n}\n";
+    let pad = Signal::new(1.0);
+    let b = HostBindings::new().prop_float("pad", pad.clone());
+    let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
+    let h = Harness::new(loaded.view);
+    h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
+    let before = last_text_left(&h);
+    pad.set(10.0);
+    settle(&h);
+    let after = last_text_left(&h);
+    assert!(
+        after > before + 10.0,
+        "padding should grow: {before} -> {after}"
+    );
+}
+
+#[test]
+fn env_attribute_reacts() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    Row {\n      Container(width: env.w) {\n        Text(\"a\")\n      }\n      Text(\"b\")\n    }\n  }\n}\n";
+    let width = Signal::new(10.0);
+    let b = HostBindings::new().env_float("w", width.clone());
+    let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
+    let h = Harness::new(loaded.view);
+    h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
+    assert!(last_text_left(&h) < 30.0, "env width is 10");
+    width.set(50.0);
+    settle(&h);
+    assert!(last_text_left(&h) > 40.0, "env width becomes 50");
+}
+
+#[test]
+fn writable_control_keeps_two_way_binding_with_reactive_label() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  prop flag: Bool\n  prop label: String\n  window M {\n    Checkbox(checked: flag, label: label)\n  }\n}\n";
+    let flag = Signal::new(false);
+    let label = Signal::new("Zgoda".to_string());
+    let b = HostBindings::new()
+        .prop_bool("flag", flag.clone())
+        .prop_str("label", label.clone());
+    let loaded = SeqLoader::load_str_with("Main.seq", src, &b).unwrap();
+    let h = Harness::new(loaded.view);
+    h.layout(200.0, 100.0);
+    h.paint();
+    h.tick();
+    let root = h.root().unwrap();
+    let el = h.children(root)[0];
+    let r = h.rect(el).unwrap();
+    h.click(r.left() + 10.0, r.top() + 10.0);
+    h.tick();
+    assert!(flag.get_untracked(), "click writes back through Rebuild");
+    label.set("Zgoda!".to_string());
+    settle(&h);
+    let el = h.children(root)[0];
+    let r = h.rect(el).unwrap();
+    h.click(r.left() + 10.0, r.top() + 10.0);
+    h.tick();
+    assert!(!flag.get_untracked(), "binding survives a wrapper rebuild");
 }
 
 fn last_text_left(h: &Harness) -> f32 {

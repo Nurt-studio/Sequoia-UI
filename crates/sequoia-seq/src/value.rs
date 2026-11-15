@@ -46,9 +46,9 @@ impl Value {
             Self::Float(_) => "Float",
             Self::Str(_) => "String",
             Self::Bool(_) => "Bool",
-            Self::Tuple(_) => "krotka",
+            Self::Tuple(_) => "tuple",
             Self::Option(_) => "Option",
-            Self::Row(_) => "wiersz",
+            Self::Row(_) => "row",
             Self::Null => "no value",
         }
     }

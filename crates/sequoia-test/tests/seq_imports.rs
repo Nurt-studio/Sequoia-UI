@@ -177,7 +177,7 @@ fn missing_import_reports_import_line() {
     let src = main_seq("    Text(\"x\")");
     let e = err_of("Main.seq", &src, &[]);
     assert!(e.message.contains("import \"./ui/card.seq\""), "{e}");
-    assert!(e.message.contains("brak pliku"), "{e}");
+    assert!(e.message.contains("file not found"), "{e}");
     assert_eq!(e.file, "Main.seq");
     assert_eq!(e.line, 1);
 }
@@ -191,7 +191,7 @@ fn import_cycle_rejected() {
         &main_seq_import("./ui/a.seq", "    A(t: \"x\")"),
         &[("ui/a.seq", a), ("ui/b.seq", b)],
     );
-    assert!(e.message.contains("cykliczny import"), "{e}");
+    assert!(e.message.contains("cyclic import"), "{e}");
     assert!(
         e.message.contains("ui/a.seq -> ui/b.seq -> ui/a.seq"),
         "{e}"
@@ -203,7 +203,7 @@ fn self_import_rejected() {
     let src =
         main_seq("    Text(\"x\")").replace("import \"./ui/card.seq\"", "import \"./Main.seq\"");
     let e = err_of("Main.seq", &src, &[("Main.seq", &src)]);
-    assert!(e.message.contains("cykliczny import"), "{e}");
+    assert!(e.message.contains("cyclic import"), "{e}");
 }
 
 #[test]

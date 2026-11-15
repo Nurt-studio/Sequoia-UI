@@ -179,6 +179,29 @@ pub enum SeqValue {
     Array(Vec<SeqValue>),
 
     Expr(SeqExpr),
+
+    Motion(MotionSpec),
+
+    Spring(SpringIr),
+}
+
+/// Declarative enter/exit motion (`enter:` / `exit:`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MotionSpec {
+    pub fade: bool,
+    pub fade_from: f32,
+    pub slide: (f32, f32),
+    pub duration_secs: Option<f32>,
+    pub delay_secs: f32,
+    pub easing: Option<String>,
+}
+
+/// Spring parameters (`behavior: spring(k, c[, m])`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpringIr {
+    pub stiffness: f32,
+    pub damping: f32,
+    pub mass: f32,
 }
 
 impl SeqValue {

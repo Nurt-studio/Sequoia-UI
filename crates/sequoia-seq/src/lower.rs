@@ -12,9 +12,9 @@ use sequoia_style::{BoxStyle, ButtonStyle, ShadowSpec, TextStyle, Theme};
 use sequoia_view::{
     Align, AnimSpec, AnimatedSize, AnyView, AsyncView, Axis, Canvas, Column, EventCtx, Grid,
     GridFlow, GridPlacement, Icon, Image, Indents, Justify, Live, LiveOffset, LiveOpacity,
-    MAX_ANIM_DT, Margined, Masonry, Motion, Overflow, Painter, Panel, Pulse, Rotated, Row, Scaled,
-    ScrollAxis, ScrollView, Shake, Spacer, SplitPanel, Stack, StackPos, Text, TextVAlign, Track,
-    View, VirtualList, Wrap, when,
+    MAX_ANIM_DT, Margined, Masonry, Motion, Overflow, Painter, Panel, Pulse, Rebuild, Rotated,
+    Row, Scaled, ScrollAxis, ScrollView, Shake, Spacer, SplitPanel, SpringSpec, Stack, StackPos,
+    Text, TextVAlign, Track, View, VirtualList, Wrap, when,
 };
 
 use crate::bindings::{ActionSig, FieldSignal, HostBindings, PropType, SeqRowData};
@@ -695,7 +695,7 @@ fn expr_signal_f32(
             file,
             line,
             1,
-            format!("'{what}' z wyrażenia wymaga hosta Rust"),
+            format!("'{what}' from expression requires Rust host"),
         ));
     };
     let start = match eval_seq_expr(file, line, expr, res, row, false)? {
@@ -705,7 +705,7 @@ fn expr_signal_f32(
                 file,
                 line,
                 1,
-                format!("'{what}' to liczba"),
+                format!("'{what}' must be a number"),
             ));
         }
     };
@@ -739,7 +739,7 @@ fn expr_signal_bool(
             file,
             line,
             1,
-            "'when' z wyrażenia wymaga hosta Rust",
+            "'when' from expression requires Rust host",
         ));
     };
     let start = match eval_seq_expr(file, line, expr, res, row, false)? {
@@ -749,7 +749,7 @@ fn expr_signal_bool(
                 file,
                 line,
                 1,
-                "'when' to true/false albo wyrażenie Bool",
+                "'when' must be true/false or Bool expression",
             ));
         }
     };
@@ -1436,7 +1436,282 @@ fn lower_window_res(
     Ok(AnyView::new(col))
 }
 
+thread_local! {
+    static IN_REBUILD_BODY: Cell<bool> = const { Cell::new(false) };
+}
+
+struct RebuildScope(bool);
+
+impl RebuildScope {
+    fn enter() -> Self {
+        Self(IN_REBUILD_BODY.with(|flag| flag.replace(true)))
+    }
+}
+
+impl Drop for RebuildScope {
+    fn drop(&mut self) {
+        let previous = self.0;
+        IN_REBUILD_BODY.with(|flag| flag.set(previous));
+    }
+}
+
 fn lower_node(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let view = if matches!(res, Resolver::Host(_)) && node_wants_rebuild(node, res) {
+        lower_rebuild_node(file, theme, styles, node, res, row)?
+    } else {
+        lower_node_inner(file, theme, styles, node, res, row)?
+    };
+    apply_node_motion(file, node, view)
+}
+
+/// `enter:` / `exit:` on any node. `If` has its own presence handling,
+/// so we don't wrap it a second time.
+fn apply_node_motion(file: &str, node: &SeqNode, view: AnyView) -> Result<AnyView, SeqError> {
+    if node.kind == "If" {
+        return Ok(view);
+    }
+    let enter = find_arg(node, "enter");
+    let exit = find_arg(node, "exit");
+    if enter.is_none() && exit.is_none() {
+        return Ok(view);
+    }
+    let mut out = when(Signal::new(true), view);
+    if let Some(arg) = enter {
+        out = out.enter(motion_of(file, arg)?);
+    }
+    if let Some(arg) = exit {
+        out = out.exit(motion_of(file, arg)?);
+    }
+    Ok(AnyView::new(out))
+}
+
+fn node_wants_rebuild(node: &SeqNode, res: &Resolver<'_>) -> bool {
+    if node_manages_reactivity(node) {
+        return false;
+    }
+    node.args.iter().any(|arg| {
+        !attr_is_symbol(&arg.name)
+            && !(attr_is_writable(&node.kind, &arg.name) && is_write_source(&arg.value))
+            && value_is_reactive(&arg.value, res)
+    })
+}
+
+fn node_manages_reactivity(node: &SeqNode) -> bool {
+    if node
+        .args
+        .iter()
+        .any(|arg| keeps_live_expr(&node.kind, &arg.name))
+    {
+        return true;
+    }
+    match node.kind.as_str() {
+        "If" | "Effect" | "Async" | "List" | "VirtualList" => true,
+        "Text" => node.args.iter().any(|arg| match arg.name.as_str() {
+            "dynamic" | "t" => true,
+            "text" => matches!(
+                arg.value,
+                SeqValue::Dynamic(_) | SeqValue::Env(_) | SeqValue::ItemField(_)
+            ),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+fn attr_is_symbol(name: &str) -> bool {
+    matches!(
+        name,
+        "style"
+            | "axis"
+            | "align"
+            | "align_y"
+            | "justify"
+            | "justify_y"
+            | "direction"
+            | "flow"
+            | "overflow"
+            | "scroll_axis"
+            | "cursor"
+            | "layer"
+            | "key"
+            | "items"
+            | "source"
+            | "name"
+            | "track"
+            | "t"
+            | "weight"
+            | "variant"
+            | "mode"
+            | "kind"
+            | "placement"
+            | "mark"
+            | "emoji"
+            | "enter"
+            | "exit"
+            | "behavior"
+    )
+}
+
+fn attr_is_writable(kind: &str, name: &str) -> bool {
+    match kind {
+        "Checkbox" | "Switch" => name == "checked",
+        "TextField" | "TextArea" | "Field" | "DateField" | "NumberField" | "MultiSelect"
+        | "Dropdown" => name == "value" || name == "selected",
+        _ => false,
+    }
+}
+
+fn is_write_source(value: &SeqValue) -> bool {
+    matches!(
+        value,
+        SeqValue::Ident(_) | SeqValue::Dynamic(_) | SeqValue::Env(_) | SeqValue::ItemField(_)
+    )
+}
+
+fn value_is_reactive(value: &SeqValue, res: &Resolver<'_>) -> bool {
+    match value {
+        SeqValue::Expr(_) | SeqValue::Dynamic(_) | SeqValue::Env(_) | SeqValue::ItemField(_) => true,
+        SeqValue::Ident(name) => resolve_binding(name, res, false).is_some(),
+        SeqValue::Tuple(items) | SeqValue::Array(items) => {
+            items.iter().any(|v| value_is_reactive(v, res))
+        }
+        SeqValue::Callback { args, .. } | SeqValue::CallSeq { args, .. } => {
+            args.iter().any(|v| value_is_reactive(v, res))
+        }
+        _ => false,
+    }
+}
+
+fn bind_node(
+    file: &str,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+    tracked: bool,
+) -> Result<SeqNode, SeqError> {
+    let mut out = node.clone();
+    for arg in &mut out.args {
+        let writable = attr_is_writable(&node.kind, &arg.name) && is_write_source(&arg.value);
+        if !attr_is_symbol(&arg.name) && !writable {
+            arg.value = bind_value(file, arg.line, &arg.value, res, row, tracked)?;
+        }
+    }
+    Ok(out)
+}
+
+fn bind_value(
+    file: &str,
+    line: usize,
+    value: &SeqValue,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+    tracked: bool,
+) -> Result<SeqValue, SeqError> {
+    match value {
+        SeqValue::Expr(expr) => eval_seq_expr(file, line, expr, res, row, tracked),
+        SeqValue::Dynamic(name) => resolve_binding(name, res, tracked).ok_or_else(|| {
+            SeqError::new(file, line, 1, format!("dynamic({name}): no host binding"))
+        }),
+        SeqValue::Env(name) => resolve_env(name, res, tracked).ok_or_else(|| {
+            SeqError::new(file, line, 1, format!("env.{name}: no environment value"))
+        }),
+        SeqValue::ItemField(field) => {
+            if row.is_none() {
+                return Err(SeqError::new(
+                    file,
+                    line,
+                    1,
+                    format!("item.{field} is only available inside List/VirtualList"),
+                ));
+            }
+            resolve_item(field, row, tracked)
+                .ok_or_else(|| SeqError::new(file, line, 1, format!("item: no field '{field}'")))
+        }
+        SeqValue::Tuple(items) => Ok(SeqValue::Tuple(
+            items
+                .iter()
+                .map(|v| bind_value(file, line, v, res, row, tracked))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        SeqValue::Array(items) => Ok(SeqValue::Array(
+            items
+                .iter()
+                .map(|v| bind_value(file, line, v, res, row, tracked))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        SeqValue::Callback { action, args } => Ok(SeqValue::Callback {
+            action: action.clone(),
+            args: args
+                .iter()
+                .map(|v| bind_value(file, line, v, res, row, tracked))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        SeqValue::CallSeq { name, args } => Ok(SeqValue::CallSeq {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|v| bind_value(file, line, v, res, row, tracked))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        SeqValue::Ident(name) => Ok(resolve_binding(name, res, tracked)
+            .unwrap_or_else(|| SeqValue::Ident(name.clone()))),
+        other => Ok(other.clone()),
+    }
+}
+
+fn lower_rebuild_node(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let node = node.clone();
+    let file_owned = file.to_string();
+    let theme_owned = *theme;
+    let styles_owned = styles.clone();
+    let row_owned = row.cloned();
+    let bindings = match res {
+        Resolver::Host(b) => (*b).clone(),
+        Resolver::Static => unreachable!("lower_rebuild_node requires host bindings"),
+    };
+
+    let initial = if IN_REBUILD_BODY.with(Cell::get) {
+        AnyView::new(Column::new())
+    } else {
+        let bound = bind_node(file, &node, res, row, false)?;
+        lower_node_inner(file, theme, styles, &bound, res, row)?
+    };
+
+    let build = move || -> AnyView {
+        let _scope = RebuildScope::enter();
+        let res = Resolver::Host(&bindings);
+        let result = bind_node(&file_owned, &node, &res, row_owned.as_ref(), true)
+            .and_then(|bound| {
+                lower_node_inner(
+                    &file_owned,
+                    &theme_owned,
+                    &styles_owned,
+                    &bound,
+                    &res,
+                    row_owned.as_ref(),
+                )
+            });
+        result.unwrap_or_else(|e| AnyView::new(Text::new(format!("seq: {e}"))))
+    };
+
+    Ok(AnyView::new(Rebuild::new(initial, build)))
+}
+
+fn lower_node_inner(
     file: &str,
     theme: &Theme,
     styles: &BuiltStyles,
@@ -1448,6 +1723,19 @@ fn lower_node(
     let node = if node.args.iter().any(|a| value_contains_expr(&a.value)) {
         prepared = prepare_node(file, node, res, row)?;
         &prepared
+    } else {
+        node
+    };
+    // `enter`/`exit` are handled by `lower_node` (or `lower_if`), so
+    // node dispatch cannot see them as unknown properties.
+    let motionless;
+    let node = if node.kind != "If"
+        && node.args.iter().any(|a| a.name == "enter" || a.name == "exit")
+    {
+        let mut n = node.clone();
+        n.args.retain(|a| a.name != "enter" && a.name != "exit");
+        motionless = n;
+        &motionless
     } else {
         node
     };
@@ -3138,12 +3426,10 @@ fn lower_if(
     let _ = cond.get();
     let mut view = when(cond, branch());
     if let Some(arg) = find_arg(node, "enter") {
-        let spec = anim_spec_of(file, arg)?;
-        view = view.enter(Motion::from(spec));
+        view = view.enter(motion_of(file, arg)?);
     }
     if let Some(arg) = find_arg(node, "exit") {
-        let spec = anim_spec_of(file, arg)?;
-        view = view.exit(Motion::from(spec));
+        view = view.exit(motion_of(file, arg)?);
     }
     Ok(AnyView::new(view))
 }
@@ -3167,6 +3453,105 @@ fn lower_animation_child(
             }
             Ok(AnyView::new(col))
         }
+    }
+}
+
+fn motion_of(file: &str, arg: &SeqArg) -> Result<Motion, SeqError> {
+    let SeqValue::Motion(spec) = &arg.value else {
+        return Ok(Motion::from(anim_spec_of(file, arg)?));
+    };
+    let mut motion = if spec.fade {
+        sequoia_view::fade()
+    } else {
+        sequoia_view::slide_y(spec.slide.1)
+    };
+    if spec.slide != (0.0, 0.0) {
+        motion = motion.slide(spec.slide.0, spec.slide.1);
+    }
+    if spec.fade && spec.fade_from > 0.0 {
+        motion = motion.fade_from(spec.fade_from);
+    }
+    if let Some(secs) = spec.duration_secs {
+        motion = motion.duration(std::time::Duration::from_secs_f32(secs));
+    }
+    if spec.delay_secs > 0.0 {
+        motion = motion.delay(std::time::Duration::from_secs_f32(spec.delay_secs));
+    }
+    if let Some(name) = &spec.easing {
+        motion = motion.easing(easing_of(file, arg.line, name)?);
+    }
+    Ok(motion)
+}
+
+fn easing_of(file: &str, line: usize, name: &str) -> Result<sequoia_view::Easing, SeqError> {
+    use sequoia_view::Easing;
+    Ok(match name {
+        "linear" => Easing::Linear,
+        "ease_in" => Easing::EaseIn,
+        "ease_out" => Easing::EaseOut,
+        "ease_in_out" => Easing::EaseInOut,
+        "ease_in_quad" => Easing::EaseInQuad,
+        "ease_out_quad" => Easing::EaseOutQuad,
+        "ease_in_out_quad" => Easing::EaseInOutQuad,
+        "ease_in_cubic" => Easing::EaseInCubic,
+        "ease_out_cubic" => Easing::EaseOutCubic,
+        "ease_in_out_cubic" => Easing::EaseInOutCubic,
+        "ease_in_quart" => Easing::EaseInQuart,
+        "ease_out_quart" => Easing::EaseOutQuart,
+        "ease_in_out_quart" => Easing::EaseInOutQuart,
+        "ease_in_quint" => Easing::EaseInQuint,
+        "ease_out_quint" => Easing::EaseOutQuint,
+        "ease_in_out_quint" => Easing::EaseInOutQuint,
+        "ease_in_expo" => Easing::EaseInExpo,
+        "ease_out_expo" => Easing::EaseOutExpo,
+        "ease_in_out_expo" => Easing::EaseInOutExpo,
+        "ease_in_circ" => Easing::EaseInCirc,
+        "ease_out_circ" => Easing::EaseOutCirc,
+        "ease_in_out_circ" => Easing::EaseInOutCirc,
+        "ease_in_sine" => Easing::EaseInSine,
+        "ease_out_sine" => Easing::EaseOutSine,
+        "ease_in_out_sine" => Easing::EaseInOutSine,
+        "ease_in_back" => Easing::EaseInBack,
+        "ease_out_back" => Easing::EaseOutBack,
+        "ease_in_out_back" => Easing::EaseInOutBack,
+        "bounce_out" => Easing::BounceOut,
+        "bounce_in" => Easing::BounceIn,
+        other => {
+            return Err(SeqError::new(
+                file,
+                line,
+                1,
+                format!("nieznany easing '{other}' (np. linear, ease_out_cubic, ease_in_out)"),
+            ));
+        }
+    })
+}
+
+fn spring_of(file: &str, arg: &SeqArg) -> Result<SpringSpec, SeqError> {
+    match &arg.value {
+        SeqValue::Spring(spec) => Ok(SpringSpec {
+            stiffness: spec.stiffness,
+            damping: spec.damping,
+            mass: spec.mass,
+        }),
+        SeqValue::Ident(name) => match name.as_str() {
+            "snappy" => Ok(SpringSpec::SNAPPY),
+            "bouncy" => Ok(SpringSpec::BOUNCY),
+            "gentle" => Ok(SpringSpec::GENTLE),
+            "default" => Ok(SpringSpec::DEFAULT),
+            other => Err(SeqError::new(
+                file,
+                arg.line,
+                1,
+                format!("nieznany preset behavior '{other}' (snappy/bouncy/gentle)"),
+            )),
+        },
+        _ => Err(SeqError::new(
+            file,
+            arg.line,
+            1,
+            "behavior: spring(stiffness, damping[, mass]) albo preset (snappy/bouncy/gentle)",
+        )),
     }
 }
 
@@ -3217,6 +3602,9 @@ fn lower_opacity(
     if let Some(arg) = find_arg(node, "animate") {
         v = v.animate(anim_spec_of(file, arg)?);
     }
+    if let Some(arg) = find_arg(node, "behavior") {
+        v = v.spring(spring_of(file, arg)?);
+    }
     Ok(AnyView::new(v))
 }
 
@@ -3237,6 +3625,9 @@ fn lower_scale(
     let mut v = Scaled::new(child, Live::from(sig));
     if let Some(arg) = find_arg(node, "animate") {
         v = v.animate(anim_spec_of(file, arg)?);
+    }
+    if let Some(arg) = find_arg(node, "behavior") {
+        v = v.spring(spring_of(file, arg)?);
     }
     Ok(AnyView::new(v))
 }
@@ -3259,6 +3650,9 @@ fn lower_rotate(
     if let Some(arg) = find_arg(node, "animate") {
         v = v.animate(anim_spec_of(file, arg)?);
     }
+    if let Some(arg) = find_arg(node, "behavior") {
+        v = v.spring(spring_of(file, arg)?);
+    }
     Ok(AnyView::new(v))
 }
 
@@ -3280,6 +3674,9 @@ fn lower_width(
     if let Some(arg) = find_arg(node, "animate") {
         v = v.animate(anim_spec_of(file, arg)?);
     }
+    if let Some(arg) = find_arg(node, "behavior") {
+        v = v.spring(spring_of(file, arg)?);
+    }
     Ok(AnyView::new(v))
 }
 
@@ -3300,6 +3697,9 @@ fn lower_height(
     let mut v = AnimatedSize::height(child, Live::from(sig));
     if let Some(arg) = find_arg(node, "animate") {
         v = v.animate(anim_spec_of(file, arg)?);
+    }
+    if let Some(arg) = find_arg(node, "behavior") {
+        v = v.spring(spring_of(file, arg)?);
     }
     Ok(AnyView::new(v))
 }
@@ -3329,6 +3729,9 @@ fn lower_translate(
     let mut v = LiveOffset::new(child, live);
     if let Some(arg) = find_arg(node, "animate") {
         v = v.animate(anim_spec_of(file, arg)?);
+    }
+    if let Some(arg) = find_arg(node, "behavior") {
+        v = v.spring(spring_of(file, arg)?);
     }
     Ok(AnyView::new(v))
 }

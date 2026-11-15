@@ -202,7 +202,7 @@ fn second_app_rejected() {
         Err(e) => e,
         Ok(_) => panic!("oczekiwano bledu"),
     };
-    assert!(err.message.contains("drugi blok"), "{err}");
+    assert!(err.message.contains("second `app` block"), "{err}");
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn missing_app_rejected() {
         Err(e) => e,
         Ok(_) => panic!("oczekiwano bledu"),
     };
-    assert!(err.message.contains("brak bloku"), "{err}");
+    assert!(err.message.contains("missing `app Name { }` block"), "{err}");
 }
 
 #[test]
@@ -225,7 +225,7 @@ fn component_inside_app_rejected() {
         Err(e) => e,
         Ok(_) => panic!("oczekiwano bledu"),
     };
-    assert!(err.message.contains("poza `app`"), "{err}");
+    assert!(err.message.contains("outside `app`"), "{err}");
 }
 
 #[test]

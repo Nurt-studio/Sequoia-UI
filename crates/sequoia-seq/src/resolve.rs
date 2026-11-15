@@ -53,7 +53,7 @@ impl SeqSource for MapSource {
         let key = normalize_display(&joined);
         match self.files.get(&key) {
             Some(src) => Ok((PathBuf::from(&key), src.clone())),
-            None => Err(format!("brak pliku '{key}'")),
+            None => Err(format!("file not found '{key}'")),
         }
     }
 }
@@ -78,7 +78,7 @@ pub fn resolve_imports(
     source: &dyn SeqSource,
 ) -> Result<ResolvedImports, SeqError> {
     let Some(mut app) = root.app else {
-        return Err(SeqError::new(file, 1, 1, "brak bloku `app Nazwa { }`"));
+        return Err(SeqError::new(file, 1, 1, "missing `app Name { }` block"));
     };
     let root_id = source.root(file);
     let mut r = Resolver {
@@ -132,7 +132,7 @@ impl Resolver<'_> {
                     parent_display,
                     imp.line,
                     1,
-                    format!("cykliczny import: {}", names.join(" -> ")),
+                    format!("cyclic import: {}", names.join(" -> ")),
                 ));
             }
             if self.seen.contains_key(&id) {

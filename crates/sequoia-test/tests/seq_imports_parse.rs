@@ -40,35 +40,35 @@ fn app_file_with_import_parses() {
 #[test]
 fn parse_still_requires_app() {
     let err = parse("ui/widgets.seq", LIB).unwrap_err();
-    assert!(err.message.contains("brak bloku"), "{err}");
+    assert!(err.message.contains("missing `app Name { }` block"), "{err}");
 }
 
 #[test]
 fn import_inside_app_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  import \"./x.seq\"\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let err = parse_seq_file("Main.seq", src).unwrap_err();
-    assert!(err.message.contains("poziomie pliku"), "{err}");
+    assert!(err.message.contains("only at file level"), "{err}");
     assert_eq!(err.line, 4);
 }
 
 #[test]
 fn pub_without_component_rejected() {
     let err = parse_seq_file("Main.seq", "pub app A {}\n").unwrap_err();
-    assert!(err.message.contains("tylko przed `component`"), "{err}");
+    assert!(err.message.contains("only before `component`"), "{err}");
 }
 
 #[test]
 fn pub_inside_app_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  pub component X() {\n    Text(\"x\")\n  }\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let err = parse_seq_file("Main.seq", src).unwrap_err();
-    assert!(err.message.contains("poza blokiem `app`"), "{err}");
+    assert!(err.message.contains("only before `component`"), "{err}");
 }
 
 #[test]
 fn unknown_top_level_rejected() {
     let err = parse_seq_file("Main.seq", "module Foo {}\n").unwrap_err();
     assert!(
-        err.message.contains("`app`, `component` albo `import`"),
+        err.message.contains("expected `app`, `component` or `import`"),
         "{err}"
     );
 }
@@ -76,5 +76,5 @@ fn unknown_top_level_rejected() {
 #[test]
 fn empty_file_rejected() {
     let err = parse_seq_file("Main.seq", "// tylko komentarz\n").unwrap_err();
-    assert!(err.message.contains("pusty plik"), "{err}");
+    assert!(err.message.contains("empty file"), "{err}");
 }

@@ -1,15 +1,16 @@
 use crate::error::SeqError;
 use crate::ir::{
     BinOp, CompParam, ComponentDef, DeferredDecl, DeferredKind, FnParam, ImportDecl, LengthVal,
-    MatchPat, SeqApp, SeqArg, SeqExpr, SeqExprKind, SeqFile, SeqFn, SeqMatchArm, SeqNode, SeqStmt,
-    SeqValue, SeqWindow, StateDecl, StyleDecl, ThemeName, UnOp, Visibility,
+    MatchPat, MotionSpec, SeqApp, SeqArg, SeqExpr, SeqExprKind, SeqFile, SeqFn, SeqMatchArm,
+    SeqNode, SeqStmt, SeqValue, SeqWindow, SpringIr, StateDecl, StyleDecl, ThemeName, UnOp,
+    Visibility,
 };
 
 pub fn parse(file: &str, src: &str) -> Result<SeqApp, SeqError> {
     let seq = parse_seq_file(file, src)?;
     let mut app = seq
         .app
-        .ok_or_else(|| SeqError::new(file, 1, 1, "brak bloku `app Nazwa { }`"))?;
+        .ok_or_else(|| SeqError::new(file, 1, 1, "missing `app Name { }` block"))?;
     app.components = seq.components;
     app.imports = seq.imports;
     Ok(app)
@@ -115,7 +116,7 @@ impl<'a> Parser<'a> {
             self.bump();
             Ok(())
         } else {
-            Err(self.err(line, col, format!("oczekiwano {what}")))
+            Err(self.err(line, col, format!("expected {what}")))
         }
     }
 
@@ -126,7 +127,7 @@ impl<'a> Parser<'a> {
             Some(c) if c.is_ascii_alphabetic() || c == '_' => {
                 self.bump();
             }
-            _ => return Err(self.err(line, col, "oczekiwano identyfikatora")),
+            _ => return Err(self.err(line, col, "expected identifier")),
         }
         while matches!(self.peek(), Some(c) if c.is_ascii_alphanumeric() || c == '_') {
             self.bump();
@@ -198,7 +199,7 @@ impl<'a> Parser<'a> {
         }
         let hex: String = self.chars[start..self.pos].iter().collect();
         if hex.len() != 6 && hex.len() != 8 {
-            return Err(self.err(line, col, "kolor to #RRGGBB lub #RRGGBBAA"));
+            return Err(self.err(line, col, "color must be #RRGGBB or #RRGGBBAA"));
         }
         Ok((hex, line, col))
     }
@@ -216,7 +217,7 @@ impl<'a> Parser<'a> {
             match kw.as_str() {
                 "app" => {
                     if app.is_some() {
-                        return Err(self.err(line, col, "drugi blok `app` (dozwolony jeden)"));
+                        return Err(self.err(line, col, "second `app` block (only one allowed)"));
                     }
                     app = Some(self.app_rest(line, col)?);
                 }
@@ -227,7 +228,7 @@ impl<'a> Parser<'a> {
                 "pub" => {
                     let (kw2, l2, c2) = self.ident()?;
                     if kw2 != "component" {
-                        return Err(self.err(l2, c2, "`pub` tylko przed `component`"));
+                        return Err(self.err(l2, c2, "`pub` only before `component`"));
                     }
                     components.push(self.component_rest(line, Visibility::Pub)?);
                 }
@@ -235,7 +236,7 @@ impl<'a> Parser<'a> {
                     components.push(self.component_rest(line, Visibility::Priv)?);
                 }
                 _ => {
-                    return Err(self.err(line, col, "oczekiwano `app`, `component` albo `import`"));
+                    return Err(self.err(line, col, "expected `app`, `component` or `import`"));
                 }
             }
         }
@@ -243,7 +244,7 @@ impl<'a> Parser<'a> {
             return Err(self.err(
                 1,
                 1,
-                "pusty plik: oczekiwano `app`, `component` albo `import`",
+                "empty file: expected `app`, `component` or `import`",
             ));
         }
         Ok(SeqFile {
@@ -256,7 +257,7 @@ impl<'a> Parser<'a> {
     fn app_rest(&mut self, line: usize, col: usize) -> Result<SeqApp, SeqError> {
         let (name, _, _) = self.ident()?;
         let _ = name;
-        self.expect('{', "'{' po `app Nazwa`")?;
+        self.expect('{', "'{' after `app Name`")?;
         let mut app = SeqApp {
             title: String::new(),
             size: (0.0, 0.0),
@@ -284,13 +285,13 @@ impl<'a> Parser<'a> {
             self.app_item(&mut app)?;
         }
         if !app.has_title {
-            return Err(self.err(line, col, "app wymaga `title: \"...\"`"));
+            return Err(self.err(line, col, "app requires `title: \"...\"`"));
         }
         if !app.has_size {
-            return Err(self.err(line, col, "app wymaga `size: (W, H)`"));
+            return Err(self.err(line, col, "app requires `size: (W, H)`"));
         }
         if app.windows.is_empty() {
-            return Err(self.err(line, col, "app wymaga min. 1 bloku `window`"));
+            return Err(self.err(line, col, "app requires at least 1 `window` block"));
         }
         Ok(app)
     }
@@ -301,7 +302,7 @@ impl<'a> Parser<'a> {
         visibility: Visibility,
     ) -> Result<ComponentDef, SeqError> {
         let (name, _, _) = self.ident()?;
-        self.expect('(', "'(' po nazwie component")?;
+        self.expect('(', "'(' after component name")?;
         let mut params = Vec::new();
         loop {
             self.skip_trivia();
@@ -309,7 +310,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let (pname, pline, _) = self.ident()?;
-            self.expect(':', "':' po nazwie parametru")?;
+            self.expect(':', "':' after parameter name")?;
             let (pty, _, _) = self.ident()?;
             params.push(CompParam {
                 name: pname,
@@ -317,7 +318,7 @@ impl<'a> Parser<'a> {
                 ty: pty,
             });
             if !self.eat(',') {
-                self.expect(')', "')' po parametrach `component`")?;
+                self.expect(')', "')' after `component` parameters")?;
                 break;
             }
         }
@@ -351,18 +352,18 @@ impl<'a> Parser<'a> {
         let (kw, line, col) = self.ident()?;
         match kw.as_str() {
             "title" => {
-                self.expect(':', "':' po `title`")?;
+                self.expect(':', "':' after `title`")?;
                 let (s, _, _) = self.string()?;
                 app.title = s;
                 app.has_title = true;
             }
             "size" => {
-                self.expect(':', "':' po `size`")?;
+                self.expect(':', "':' after `size`")?;
                 app.size = self.size_tuple()?;
                 app.has_size = true;
             }
             "theme" => {
-                self.expect(':', "':' po `theme`")?;
+                self.expect(':', "':' after `theme`")?;
                 app.theme = self.theme_name()?;
             }
             "window" => {
@@ -371,7 +372,7 @@ impl<'a> Parser<'a> {
             }
             "prop" => {
                 let (name, _, _) = self.ident()?;
-                self.expect(':', "':' po nazwie prop")?;
+                self.expect(':', "':' after prop name")?;
                 let (ty, _, _) = self.ident()?;
                 app.deferred.push(DeferredDecl {
                     kind: DeferredKind::Prop,
@@ -382,7 +383,7 @@ impl<'a> Parser<'a> {
             }
             "on" => {
                 let (name, _, _) = self.ident()?;
-                self.expect('(', "'(' po nazwie on")?;
+                self.expect('(', "'(' after on name")?;
                 let mut sig = Vec::new();
                 loop {
                     self.skip_trivia();
@@ -390,11 +391,11 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     let (_, _, _) = self.ident()?;
-                    self.expect(':', "':' po nazwie parametru")?;
+                    self.expect(':', "':' after parameter name")?;
                     let (ty, _, _) = self.ident()?;
                     sig.push(ty);
                     if !self.eat(',') {
-                        self.expect(')', "')' po parametrach `on`")?;
+                        self.expect(')', "')' after `on` parameters")?;
                         break;
                     }
                 }
@@ -407,9 +408,9 @@ impl<'a> Parser<'a> {
             }
             "state" => {
                 let (name, _, _) = self.ident()?;
-                self.expect(':', "':' po nazwie state")?;
+                self.expect(':', "':' after state name")?;
                 let ty = self.fn_type()?;
-                self.expect('=', "'=' po typie state")?;
+                self.expect('=', "'=' after state type")?;
                 let init = self.state_literal()?;
                 self.eat(';');
                 app.states.push(StateDecl {
@@ -425,7 +426,7 @@ impl<'a> Parser<'a> {
             }
             "style" => {
                 let (name, _, _) = self.ident()?;
-                self.expect(':', "':' po nazwie stylu")?;
+                self.expect(':', "':' after style name")?;
                 let (target, _, _) = self.ident()?;
                 let mut base = None;
                 let (save_pos, save_line, save_col) = (self.pos, self.line, self.col);
@@ -439,9 +440,9 @@ impl<'a> Parser<'a> {
                 } else {
                     (self.pos, self.line, self.col) = (save_pos, save_line, save_col);
                 }
-                self.expect('{', "'{' po `style Nazwa: Typ`")?;
+                self.expect('{', "'{' after `style Name: Type`")?;
                 let args = self.style_args()?;
-                self.expect('}', "'}' po polach stylu")?;
+                self.expect('}', "'}' after style fields")?;
                 app.styles.push(StyleDecl {
                     name,
                     line,
@@ -451,20 +452,20 @@ impl<'a> Parser<'a> {
                 });
             }
             "component" => {
-                return Err(self.err(line, col, "blok component poza `app` (definiuj obok `app`)"));
+                return Err(self.err(line, col, "component block outside `app` (define alongside `app`)"));
             }
             "import" => {
                 return Err(self.err(
                     line,
                     col,
-                    "`import` tylko na poziomie pliku (poza blokiem `app`)",
+                    "`import` only at file level (outside `app` block)",
                 ));
             }
             "pub" => {
                 return Err(self.err(
                     line,
                     col,
-                    "`pub` tylko przed `component` (poza blokiem `app`)",
+                    "`pub` only before `component` (outside `app` block)",
                 ));
             }
             _ => {
@@ -472,7 +473,7 @@ impl<'a> Parser<'a> {
                     line,
                     col,
                     format!(
-                        "nieznany element app '{kw}' (title/size/theme/window/prop/on/state/fn/style)"
+                        "unknown app element '{kw}' (title/size/theme/window/prop/on/state/fn/style)"
                     ),
                 ));
             }
@@ -1415,8 +1416,12 @@ impl<'a> Parser<'a> {
         let mut args = Vec::new();
         loop {
             let (name, line, _) = self.ident()?;
-            self.expect(':', format!("':' po atrybucie '{name}'").as_str())?;
-            let value = self.value()?;
+            self.expect(':', format!("':' after attribute '{name}'").as_str())?;
+            let value = match name.as_str() {
+                "enter" | "exit" => self.motion_value()?,
+                "behavior" => self.behavior_value()?,
+                _ => self.value()?,
+            };
             args.push(SeqArg { name, line, value });
             if !self.eat(',') {
                 break;
@@ -1427,6 +1432,194 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(args)
+    }
+
+    /// `enter:` / `exit:` — preset (`smooth`) or motion chain:
+    /// `fade().slide_y(16) at 220ms ease_out_cubic`.
+    fn motion_value(&mut self) -> Result<SeqValue, SeqError> {
+        self.skip_trivia();
+        let save = (self.pos, self.line, self.col);
+        let ident = self.ident();
+        let Ok((id, _, _)) = ident else {
+            (self.pos, self.line, self.col) = save;
+            return self.value();
+        };
+        if !matches!(id.as_str(), "fade" | "slide" | "slide_x" | "slide_y") || !self.peek_paren()
+        {
+            (self.pos, self.line, self.col) = save;
+            return self.value();
+        }
+        let mut spec = MotionSpec {
+            fade: false,
+            fade_from: 0.0,
+            slide: (0.0, 0.0),
+            duration_secs: None,
+            delay_secs: 0.0,
+            easing: None,
+        };
+        self.motion_step(&id, &mut spec)?;
+        loop {
+            self.skip_trivia();
+            if self.peek() != Some('.') {
+                break;
+            }
+            self.bump();
+            let (method, line, col) = self.ident()?;
+            if !matches!(method.as_str(), "fade" | "slide" | "slide_x" | "slide_y")
+                || !self.peek_paren()
+            {
+                return Err(self.err(
+                    line,
+                    col,
+                    "in motion after '.': fade()/slide(x, y)/slide_x(px)/slide_y(px)",
+                ));
+            }
+            self.motion_step(&method, &mut spec)?;
+        }
+        if self.keyword_next("at") {
+            self.consume_keyword("at")?;
+            spec.duration_secs = Some(self.motion_time("at")?);
+            self.skip_trivia();
+            let easing_save = (self.pos, self.line, self.col);
+            if matches!(self.peek(), Some(c) if c.is_ascii_alphabetic() || c == '_') {
+                let (easing, _, _) = self.ident()?;
+                if easing == "delay" {
+                    (self.pos, self.line, self.col) = easing_save;
+                } else {
+                    spec.easing = Some(easing);
+                }
+            }
+        }
+        if self.keyword_next("delay") {
+            self.consume_keyword("delay")?;
+            spec.delay_secs = self.motion_time("delay")?;
+        }
+        if !self.value_end() {
+            let (line, col) = (self.line, self.col);
+            return Err(self.err(line, col, "unexpected token in enter/exit motion"));
+        }
+        Ok(SeqValue::Motion(spec))
+    }
+
+    fn motion_step(&mut self, method: &str, spec: &mut MotionSpec) -> Result<(), SeqError> {
+        self.expect('(', &format!("'(' after `{method}` in enter/exit"))?;
+        self.skip_trivia();
+        match method {
+            "fade" => {
+                spec.fade = true;
+                if self.peek() != Some(')') {
+                    let (from, line, _) = self.number()?;
+                    if !(0.0..=1.0).contains(&from) {
+                        return Err(self.err(line, 1, "fade(from): from in range 0..=1"));
+                    }
+                    spec.fade_from = from;
+                }
+            }
+            "slide_y" => {
+                let (y, _, _) = self.number()?;
+                spec.slide = (spec.slide.0, y);
+            }
+            "slide_x" => {
+                let (x, _, _) = self.number()?;
+                spec.slide = (x, spec.slide.1);
+            }
+            "slide" => {
+                let (x, _, _) = self.number()?;
+                self.expect(',', "',' in slide(x, y)")?;
+                self.skip_trivia();
+                let (y, _, _) = self.number()?;
+                spec.slide = (x, y);
+            }
+            _ => {
+                return Err(self.err(self.line, self.col, "unknown motion step"));
+            }
+        }
+        self.expect(')', &format!("')' po `{method}`"))?;
+        Ok(())
+    }
+
+    /// `behavior:` — `spring(k, c[, m])` albo preset (`snappy`, `bouncy`, `gentle`).
+    fn behavior_value(&mut self) -> Result<SeqValue, SeqError> {
+        self.skip_trivia();
+        let save = (self.pos, self.line, self.col);
+        let ident = self.ident();
+        let Ok((id, _, _)) = ident else {
+            (self.pos, self.line, self.col) = save;
+            return self.value();
+        };
+        if id != "spring" || !self.peek_paren() {
+            (self.pos, self.line, self.col) = save;
+            return self.value();
+        }
+        self.bump();
+        self.skip_trivia();
+        let (stiffness, line, _) = self.number()?;
+        self.expect(',', "',' between stiffness and damping")?;
+        self.skip_trivia();
+        let (damping, _, _) = self.number()?;
+        self.skip_trivia();
+        let mass = if self.eat(',') {
+            self.skip_trivia();
+            let (mass, _, _) = self.number()?;
+            mass
+        } else {
+            1.0
+        };
+        self.expect(')', "')' after spring(stiffness, damping[, mass])")?;
+        if !(stiffness.is_finite()
+            && damping.is_finite()
+            && mass.is_finite()
+            && stiffness > 0.0
+            && damping > 0.0
+            && mass > 0.0)
+        {
+            return Err(self.err(line, 1, "spring: stiffness/damping/mass must be > 0"));
+        }
+        Ok(SeqValue::Spring(SpringIr {
+            stiffness,
+            damping,
+            mass,
+        }))
+    }
+
+    fn motion_time(&mut self, what: &str) -> Result<f32, SeqError> {
+        self.skip_trivia();
+        let (n, line, _) = self.number()?;
+        let secs = if self.keyword_next("ms") {
+            self.consume_keyword("ms")?;
+            n / 1000.0
+        } else if self.keyword_next("s") {
+            self.consume_keyword("s")?;
+            n
+        } else {
+            n
+        };
+        if !secs.is_finite() || secs < 0.0 {
+            return Err(self.err(line, 1, format!("{what}: time must be >= 0")));
+        }
+        Ok(secs)
+    }
+
+    fn keyword_next(&mut self, kw: &str) -> bool {
+        self.skip_trivia();
+        let start = self.pos;
+        for (i, ch) in kw.chars().enumerate() {
+            if self.chars.get(start + i) != Some(&ch) {
+                return false;
+            }
+        }
+        !matches!(
+            self.chars.get(start + kw.chars().count()),
+            Some(c) if c.is_ascii_alphanumeric() || *c == '_'
+        )
+    }
+
+    fn consume_keyword(&mut self, kw: &str) -> Result<(), SeqError> {
+        let (got, line, col) = self.ident()?;
+        if got != kw {
+            return Err(self.err(line, col, format!("expected `{kw}`, got `{got}`")));
+        }
+        Ok(())
     }
 
     fn peek_paren(&self) -> bool {

@@ -781,6 +781,7 @@ fn value_ty(
             Ok(Ty::Any)
         }
         SeqValue::CallSeq { .. } => Ok(Ty::Any),
+        SeqValue::Motion(_) | SeqValue::Spring(_) => Ok(Ty::Any),
         SeqValue::Length(_) => Ok(Ty::Float),
         SeqValue::Tuple(items) => {
             let mut tys = Vec::with_capacity(items.len());
@@ -818,6 +819,12 @@ fn check_arg(
     ctx: &CheckCtx<'_>,
 ) -> Result<(), SeqError> {
     let name = arg.name.as_str();
+
+    // Common to all nodes: enter/exit motion. Values are validated
+    // in lower (presets, units, easing).
+    if matches!(name, "enter" | "exit") {
+        return Ok(());
+    }
 
     if matches!(
         name,
@@ -1236,6 +1243,7 @@ fn check_arg(
         "Width" => &[
             "value",
             "animate",
+            "behavior",
             "width",
             "height",
             "flex",
@@ -1250,6 +1258,7 @@ fn check_arg(
         "Height" => &[
             "value",
             "animate",
+            "behavior",
             "width",
             "height",
             "flex",
@@ -1264,6 +1273,7 @@ fn check_arg(
         "Opacity" => &[
             "value",
             "animate",
+            "behavior",
             "width",
             "height",
             "flex",
@@ -1278,6 +1288,7 @@ fn check_arg(
         "Scale" => &[
             "value",
             "animate",
+            "behavior",
             "width",
             "height",
             "flex",
@@ -1292,6 +1303,7 @@ fn check_arg(
         "Rotate" => &[
             "value",
             "animate",
+            "behavior",
             "width",
             "height",
             "flex",
@@ -1307,6 +1319,7 @@ fn check_arg(
             "x",
             "y",
             "animate",
+            "behavior",
             "width",
             "height",
             "flex",
@@ -1831,7 +1844,7 @@ fn check_fns(
                 file,
                 f.line,
                 1,
-                format!("funkcja '{}' zdefiniowana dwa razy", f.name),
+                format!("function '{}' defined twice", f.name),
             ));
         }
         if !f
@@ -2186,7 +2199,7 @@ fn check_stmt(
                         ctx.file,
                         *line,
                         1,
-                        "funkcja bez `-> Typ` — tylko `return;`",
+                        "function without `-> Type` — only `return;`",
                     ));
                 }
                 (Some(rt), None) => {
@@ -2194,7 +2207,7 @@ fn check_stmt(
                         ctx.file,
                         *line,
                         1,
-                        format!("funkcja zwraca {} — `return expr;`", rt.name()),
+                        format!("function returns {} — `return expr;`", rt.name()),
                     ));
                 }
                 (Some(rt), Some(e)) => {
@@ -2212,7 +2225,7 @@ fn check_stmt(
                             ctx.file,
                             *line,
                             1,
-                            format!("return: oczekiwano {}, jest {}", rt.name(), ty.name()),
+                            format!("return: expected {}, got {}", rt.name(), ty.name()),
                         ));
                     }
                 }
@@ -2419,7 +2432,7 @@ fn expr_ty(
                         ctx.file,
                         a.line,
                         1,
-                        "argument nic nie zwraca (funkcja bez `-> Typ`?)",
+                        "argument returns nothing (function without `-> Type`?)",
                     ));
                 }
                 arg_tys.push(ty);
@@ -2432,7 +2445,7 @@ fn expr_ty(
                     ctx.file,
                     e.line,
                     1,
-                    format!("nieznana funkcja '{name}'"),
+                    format!("unknown function '{name}'"),
                 ));
             };
             if arg_tys.len() != sig.params.len() {
@@ -2751,7 +2764,7 @@ fn check_callback_call(
                 file,
                 arg.line,
                 1,
-                format!("{attr}: {{ {name}() }} albo {{ {name}(value) }}"),
+                format!("{attr}: {{ {name}() }} or {{ {name}(value) }}"),
             ));
         }
     } else if PLAIN_CALLBACKS.contains(&attr) {

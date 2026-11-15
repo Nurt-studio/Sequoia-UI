@@ -79,7 +79,7 @@ fn string_expression_where_number_expected_is_an_error() {
         Err(err) => err,
         Ok(_) => panic!("oczekiwano bledu"),
     };
-    assert!(err.message.contains("liczba"), "{err}");
+    assert!(err.message.contains("expected Float"), "{err}");
     assert_eq!(err.line, 5);
 }
 
