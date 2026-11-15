@@ -47,6 +47,7 @@ pub(crate) trait ErasedView: 'static {
     fn clip_radius_erased(&self) -> f32;
     fn paint_opacity_erased(&self) -> Option<f32>;
     fn cache_layer_erased(&self) -> bool;
+    fn frame_work_when_culled_erased(&self) -> bool;
     fn paint_offset_erased(&self) -> Vec2;
     fn paint_opacity_ctx_erased(&self, rt: &Runtime, el: ElementId) -> Option<f32>;
     fn paint_offset_ctx_erased(&self, rt: &Runtime, el: ElementId) -> Vec2;
@@ -170,6 +171,9 @@ impl<V: View + 'static> ErasedView for V {
     }
     fn cache_layer_erased(&self) -> bool {
         View::cache_layer(self)
+    }
+    fn frame_work_when_culled_erased(&self) -> bool {
+        View::frame_work_when_culled(self)
     }
     fn paint_offset_erased(&self) -> Vec2 {
         View::paint_offset(self)

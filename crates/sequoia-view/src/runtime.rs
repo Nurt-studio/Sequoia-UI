@@ -39,6 +39,12 @@ use crate::paint_region::CullCtx;
 use crate::surface::SurfaceDraw;
 use crate::view::{EventCtx, PaintCtx, View};
 
+/// Maximum element nesting the recursive walks (hit-test and paint) follow.
+///
+/// A cyclic or pathologically deep tree used to overflow the stack; past this
+/// depth the subtree is skipped and the error is logged.
+const MAX_TREE_WALK_DEPTH: usize = 128;
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct ElementId {
     pub(crate) index: u32,
@@ -533,11 +539,15 @@ impl Runtime {
     pub fn set_environment(&self, env: Environment) {
         *self.inner.environment.borrow_mut() = env.clone();
         self.inner.layout_dirty.set(true);
+        // `layout_style_ctx` reads the environment (theme font size, etc.), so
+        // every cached measurement is stale now.
+        self.inner.measures.borrow_mut().clear();
         self.mark_full_damage();
         let weak = Rc::downgrade(&self.inner);
         *self.inner.env_listener.borrow_mut() = Some(env.on_change(move || {
             if let Some(inner) = weak.upgrade() {
                 inner.layout_dirty.set(true);
+                inner.measures.borrow_mut().clear();
                 inner.layers.borrow_mut().invalidate_all();
                 inner.damage.borrow_mut().mark_full();
                 if let Some(h) = inner.redraw.borrow().as_ref() {
@@ -635,9 +645,9 @@ impl Runtime {
             self.inner.damage.borrow_mut().record_skipped();
             return crate::damage::FrameOutcome::Skipped;
         }
-        if had_motion {
-            self.inner.layers.borrow_mut().invalidate_all();
-        }
+        // Motion no longer wipes the layer cache: `advance_clock` marked the
+        // animated elements' boxes, and bumping their revision invalidates the
+        // ancestor layers that contain them.
         self.paint_region(list, text, CullCtx::ENABLED);
         self.inner.damage.borrow_mut().after_paint();
         crate::damage::FrameOutcome::Painted
@@ -704,6 +714,7 @@ impl Runtime {
         c.advance_by(dt);
         self.inner.clock.set(c);
         self.invalidate_animated_layout();
+        self.mark_animated_damage();
     }
 
     pub fn reset_clock(&self) {
@@ -724,6 +735,12 @@ impl Runtime {
     fn invalidate_animated_layout(&self) {
         if self.has_layout_animation() {
             self.inner.layout_dirty.set(true);
+            self.inner
+                .layout_epoch
+                .set(self.inner.layout_epoch.get().wrapping_add(1));
+            // Animated sizes feed `layout_style_ctx`, so cached measurements
+            // would otherwise pin the element to its old size.
+            self.inner.measures.borrow_mut().clear();
         }
     }
 
@@ -732,6 +749,26 @@ impl Runtime {
         c.advance();
         self.inner.clock.set(c);
         self.invalidate_animated_layout();
+        self.mark_animated_damage();
+    }
+
+    /// Marks only the elements that are animating.
+    ///
+    /// An animation used to force a full repaint and throw away every cached
+    /// layer. Its own box is the only thing that can change, and
+    /// `bump_revision` touches the ancestor layers that contain it, so the rest
+    /// of the scene stays cached (and scissored).
+    fn mark_animated_damage(&self) {
+        let ids: Vec<ElementId> = {
+            let anims = self.inner.live_anims.borrow();
+            let mut ids: Vec<ElementId> = anims.keys().map(|(el, _)| *el).collect();
+            ids.sort_by_key(|id| id.index);
+            ids.dedup();
+            ids
+        };
+        for id in ids {
+            self.mark_damage(id, Dirty::PAINT);
+        }
     }
 
     pub fn live_f32(
@@ -1169,6 +1206,15 @@ impl Runtime {
             .unwrap_or(0)
     }
 
+    /// Returns one child without cloning the parent's child list.
+    ///
+    /// Hit-testing and painting walk children on every frame; cloning the Vec
+    /// per node made those paths allocate once per visited element.
+    pub fn child_at(&self, id: ElementId, index: usize) -> Option<ElementId> {
+        let arena = self.inner.arena.borrow();
+        arena.get(id)?.children.get(index).copied()
+    }
+
     pub fn key_of(&self, id: ElementId) -> Option<u64> {
         self.inner.arena.borrow().get(id).map(|e| e.key)
     }
@@ -1472,6 +1518,10 @@ impl Runtime {
     /// active clip at push time, so the visible output is the same.
     pub fn paint_region(&self, list: &mut RenderList, text: &mut TextSystem, cull: CullCtx) {
         self.inner.redraw_armed.set(false);
+        // Transient overlays live for exactly one frame. Collect them before
+        // painting and remove them afterwards: hiding them up front meant an
+        // overlay created by an event was gone before it could be drawn.
+        let doomed = self.inner.overlays.borrow().transient_ids();
         // Paint once into a scratch list while the shape cache records misses
         // instead of tessellating them, then build the recorded set on worker
         // threads before the real pass. If nothing was missing the scratch
@@ -1490,6 +1540,7 @@ impl Runtime {
             } else {
                 list.append(&scratch);
             }
+            self.hide_transient_overlays(doomed);
             return;
         }
         // The prefetch pass painted placeholder shapes, so drop everything it
@@ -1498,6 +1549,13 @@ impl Runtime {
         self.inner.shapes.tessellate_prefetch();
         self.paint_pass(list, text, cull, &session);
         self.commit_paint_session(session.into_inner());
+        self.hide_transient_overlays(doomed);
+    }
+
+    fn hide_transient_overlays(&self, ids: Vec<OverlayId>) {
+        for id in ids {
+            self.overlay_hide(id);
+        }
     }
 
     fn commit_paint_session(&self, session: PaintSession) {
@@ -1529,10 +1587,6 @@ impl Runtime {
     ) {
         self.inner.surfaces.borrow_mut().clear();
 
-        let doomed = self.inner.overlays.borrow().transient_ids();
-        for id in doomed {
-            self.overlay_hide(id);
-        }
         let Some(root) = self.inner.root.get() else {
             return;
         };
@@ -1561,6 +1615,7 @@ impl Runtime {
             text,
             cull,
             pass,
+            0,
         );
 
         {
@@ -1594,6 +1649,7 @@ impl Runtime {
                     text,
                     cull,
                     pass,
+                    0,
                 );
             }
         }
@@ -1621,6 +1677,16 @@ impl Runtime {
     }
 
     fn hit_rec(&self, el: ElementId, pos: Point) -> Option<ElementId> {
+        self.hit_rec_depth(el, pos, 0)
+    }
+
+    fn hit_rec_depth(&self, el: ElementId, pos: Point, depth: usize) -> Option<ElementId> {
+        if depth > MAX_TREE_WALK_DEPTH {
+            log::warn!(
+                "sequoia-view: hit-test deeper than {MAX_TREE_WALK_DEPTH} levels — skipping subtree"
+            );
+            return None;
+        }
         let rect = {
             let arena = self.inner.arena.borrow();
             arena.get(el)?.rect.get()
@@ -1628,8 +1694,10 @@ impl Runtime {
         if !rect.contains(pos) {
             return None;
         }
-        for c in self.children(el).iter().rev() {
-            if let Some(h) = self.hit_rec(*c, pos) {
+        for i in (0..self.children_len(el)).rev() {
+            if let Some(c) = self.child_at(el, i)
+                && let Some(h) = self.hit_rec_depth(c, pos, depth + 1)
+            {
                 return Some(h);
             }
         }
@@ -2134,13 +2202,15 @@ impl Runtime {
         }
         entry.element.set(Some(el));
         let id = self.inner.overlays.borrow_mut().insert(entry);
+        let _ = transient;
         self.inner
             .damage
             .borrow_mut()
             .mark(Dirty::PAINT | Dirty::OVERLAY);
-        if !transient {
-            self.request_redraw();
-        }
+        // Transient overlays paint in exactly one frame, so they need a frame
+        // request just like persistent ones — without it the event that opened
+        // the overlay never scheduled the paint that would show it.
+        self.request_redraw();
         id
     }
 
@@ -3163,11 +3233,18 @@ impl Runtime {
 
         {
             let arena = self.inner.arena.borrow();
-            if arena.get(el).map(|e| e.dirty.is_empty()).unwrap_or(false) {
-                drop(arena);
+            let clean = arena.get(el).map(|e| e.dirty.is_empty()).unwrap_or(false);
+            drop(arena);
+            if clean {
+                // The style is part of the key: `layout_style_ctx` can depend
+                // on the environment or on signals, and returning the cached
+                // size without it pinned elements to a stale size.
+                let style = self.child_layout_style(el);
                 let measures = self.inner.measures.borrow();
                 if let Some(entries) = measures.get(&el)
-                    && let Some(e) = entries.iter().find(|e| e.constraints == constraints)
+                    && let Some(e) = entries
+                        .iter()
+                        .find(|e| e.constraints == constraints && e.style == style)
                 {
                     self.inner
                         .measure_hits
@@ -5585,6 +5662,7 @@ impl Runtime {
         text: &mut TextSystem,
         cull: CullCtx,
         pass: PaintPass<'_>,
+        level: usize,
     ) {
         let depth = list.clip_depth();
         let opacity_depth = list.opacity_depth();
@@ -5599,6 +5677,7 @@ impl Runtime {
                 &mut *text,
                 cull,
                 pass,
+                level,
             )
         })) {
             Ok(()) => {}
@@ -5622,7 +5701,15 @@ impl Runtime {
         text: &mut TextSystem,
         cull: CullCtx,
         pass: PaintPass<'_>,
+        level: usize,
     ) {
+        if level > MAX_TREE_WALK_DEPTH {
+            log::warn!(
+                "sequoia-view: paint recursion deeper than {MAX_TREE_WALK_DEPTH} levels — \
+                 skipping subtree"
+            );
+            return;
+        }
         let Some(v) = self.view_rc(id) else { return };
         let (base_rect, laid_out) = {
             let arena = self.inner.arena.borrow();
@@ -5699,6 +5786,10 @@ impl Runtime {
         let clip = list.active_clip();
         let clip_self = v.clip_self_erased();
         if cull.fully_clipped(paint_bounds, clip, clip_self) {
+            // The pixels are invisible, but `paint_self` also carries the
+            // per-frame work (`Presence` finishing an exit, `Portal` syncing
+            // its overlay). Skipping it froze that state while off screen.
+            self.paint_self_culled(id, rect, list, text, pass);
             if pushes_opacity {
                 list.pop_opacity();
             }
@@ -5708,7 +5799,8 @@ impl Runtime {
             return;
         }
         if !cull.intersects(paint_bounds, clip) {
-            self.paint_children(id, acc, scale, total_transform, list, text, cull, pass);
+            self.paint_self_culled(id, rect, list, text, pass);
+            self.paint_children(id, acc, scale, total_transform, list, text, cull, pass, level + 1);
             if pushes_opacity {
                 list.pop_opacity();
             }
@@ -5835,7 +5927,7 @@ impl Runtime {
                 );
             }
         }
-        self.paint_children(id, acc, scale, total_transform, list, text, cull, pass);
+        self.paint_children(id, acc, scale, total_transform, list, text, cull, pass, level + 1);
 
         {
             let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -5890,6 +5982,54 @@ impl Runtime {
         }
     }
 
+    /// Runs `paint_self` for a node whose pixels are fully culled.
+    ///
+    /// Frame-driven views (a `Presence` completing its exit, a `Portal`
+    /// syncing its overlay) do their per-frame work in `paint_self`, so
+    /// skipping it for an off-screen node freezes that state. Anything it
+    /// draws is rejected by the active clip, so only the side effects remain.
+    fn paint_self_culled(
+        &self,
+        id: ElementId,
+        rect: Rect,
+        list: &mut RenderList,
+        text: &mut TextSystem,
+        pass: PaintPass<'_>,
+    ) {
+        let Some(v) = self.view_rc(id) else { return };
+        // Only views that explicitly need per-frame work run their
+        // `paint_self` off screen; everything else keeps the culling win.
+        if !v.frame_work_when_culled_erased() {
+            return;
+        }
+        let (state, _) = self.view_state(id);
+        let hovered_subtree = pass.hovered_subtree(id);
+        let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let mut ctx = PaintCtx {
+                list: &mut *list,
+                text: &mut *text,
+                environment: pass.env,
+                rect,
+                element: id,
+                state,
+                window: self.inner.window.get(),
+                hovered_subtree,
+                runtime: self,
+                shapes: &self.inner.shapes,
+                draw_offset: Vec2::ZERO,
+                offset_stack: Vec::new(),
+            };
+            v.paint_self_erased(&mut ctx);
+        }));
+        if res.is_err() {
+            self.record_error(
+                id,
+                v.type_name().to_string(),
+                "paint_self panicked".to_string(),
+            );
+        }
+    }
+
     fn paint_children(
         &self,
         id: ElementId,
@@ -5900,6 +6040,7 @@ impl Runtime {
         text: &mut TextSystem,
         cull: CullCtx,
         pass: PaintPass<'_>,
+        level: usize,
     ) {
         const INLINE: usize = 16;
         let mut stack = [ElementId {
@@ -5917,11 +6058,15 @@ impl Runtime {
         };
         if n <= INLINE {
             for c in &stack[..n] {
-                self.paint_rec(*c, acc, scale, transform, list, text, cull, pass);
+                self.paint_rec(*c, acc, scale, transform, list, text, cull, pass, level);
             }
         } else {
-            for c in self.children(id) {
-                self.paint_rec(c, acc, scale, transform, list, text, cull, pass);
+            // Indexed access: cloning the whole child list here allocated a
+            // Vec per frame for every node with more than 16 children.
+            for i in 0..n {
+                if let Some(c) = self.child_at(id, i) {
+                    self.paint_rec(c, acc, scale, transform, list, text, cull, pass, level);
+                }
             }
         }
     }
@@ -6242,17 +6387,28 @@ impl Runtime {
     }
 
     fn unmount_subtree(&self, id: ElementId) {
-        self.invalidate_measure_chain(id);
-        let children: Vec<ElementId> = {
-            let arena = self.inner.arena.borrow();
-            arena
-                .get(id)
-                .map(|e| e.children.clone())
-                .unwrap_or_default()
-        };
-        for c in children {
-            self.unmount_subtree(c);
+        // Iterative post-order: `unmount_node` runs for the children first.
+        // Deep trees used to overflow the stack while being removed.
+        let mut order = Vec::new();
+        let mut stack = vec![id];
+        while let Some(current) = stack.pop() {
+            order.push(current);
+            let children: Vec<ElementId> = {
+                let arena = self.inner.arena.borrow();
+                arena
+                    .get(current)
+                    .map(|e| e.children.clone())
+                    .unwrap_or_default()
+            };
+            stack.extend(children);
         }
+        for current in order.into_iter().rev() {
+            self.unmount_node(current);
+        }
+    }
+
+    fn unmount_node(&self, id: ElementId) {
+        self.invalidate_measure_chain(id);
         let (parent, slot, view) = {
             let mut arena = self.inner.arena.borrow_mut();
             let Some(e) = arena.get_mut(id) else { return };

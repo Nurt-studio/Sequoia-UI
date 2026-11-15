@@ -516,6 +516,11 @@ impl View for Presence {
         self.scale_at(rt.elapsed_secs(), rt.reduced_motion())
     }
 
+    /// Finishing an exit must happen even when the element is off screen.
+    fn frame_work_when_culled(&self) -> bool {
+        true
+    }
+
     fn paint_self(&self, ctx: &mut PaintCtx) {
         let now = ctx.runtime().elapsed_secs();
         let reduced = ctx.runtime().reduced_motion();

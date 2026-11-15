@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -59,6 +59,9 @@ pub struct Portal {
     offset: (f32, f32),
     overflow: OverlayOverflow,
     on_dismiss: Option<Rc<dyn Fn()>>,
+    /// Element this instance is mounted at. Overlays are keyed by it instead
+    /// of by the `open` signal, which several instances can share.
+    own_key: Cell<Option<usize>>,
 }
 
 impl Portal {
@@ -75,6 +78,7 @@ impl Portal {
             offset: (0.0, 0.0),
             overflow: OverlayOverflow::FlipAndClamp,
             on_dismiss: None,
+            own_key: Cell::new(None),
         }
     }
 
@@ -145,12 +149,17 @@ impl Portal {
         self.open.set(!self.open.get_untracked());
     }
 
-    fn key(&self) -> usize {
-        self.open.id()
+    fn key(&self, ctx: &PaintCtx) -> usize {
+        // Two portals can share one `open` signal; keying by the signal made
+        // them collide, hide each other's overlay and remove the other's entry
+        // on unmount. The mounted element is unique per instance.
+        let key = ctx.element.index as usize;
+        self.own_key.set(Some(key));
+        key
     }
 
     fn sync_overlay(&self, ctx: &mut PaintCtx) {
-        let key = self.key();
+        let key = self.key(ctx);
         if !self.open.get_untracked() {
             if let Some(id) = take_portal_entry(key) {
                 ctx.hide_overlay(id);
@@ -225,8 +234,15 @@ impl View for Portal {
         }
     }
     fn on_unmount(&self) {
-        take_portal_entry(self.key());
+        if let Some(key) = self.own_key.get() {
+            take_portal_entry(key);
+        }
     }
+    /// Overlay syncing is per-frame work, not just painting.
+    fn frame_work_when_culled(&self) -> bool {
+        true
+    }
+
     fn paint_self(&self, ctx: &mut PaintCtx) {
         self.sync_overlay(ctx);
     }
@@ -264,6 +280,8 @@ pub struct Popper {
     input_mode: InputMode,
     dismiss: Dismiss,
     on_dismiss: Option<Rc<dyn Fn()>>,
+    /// Element this instance is mounted at (see [`Portal::own_key`]).
+    own_key: Cell<Option<usize>>,
 }
 
 impl Popper {
@@ -280,6 +298,7 @@ impl Popper {
             input_mode: InputMode::Interactive,
             dismiss: Dismiss::OutsideClick,
             on_dismiss: None,
+            own_key: Cell::new(None),
         }
     }
 
@@ -395,12 +414,17 @@ impl Popper {
         self.open.set(!self.open.get_untracked());
     }
 
-    fn key(&self) -> usize {
-        self.open.id()
+    fn key(&self, ctx: &PaintCtx) -> usize {
+        // Two portals can share one `open` signal; keying by the signal made
+        // them collide, hide each other's overlay and remove the other's entry
+        // on unmount. The mounted element is unique per instance.
+        let key = ctx.element.index as usize;
+        self.own_key.set(Some(key));
+        key
     }
 
     fn sync_overlay(&self, ctx: &mut PaintCtx) {
-        let key = self.key();
+        let key = self.key(ctx);
         if !self.open.get_untracked() {
             if let Some(id) = take_popper_entry(key) {
                 ctx.hide_overlay(id);
@@ -475,8 +499,15 @@ impl View for Popper {
         }
     }
     fn on_unmount(&self) {
-        take_popper_entry(self.key());
+        if let Some(key) = self.own_key.get() {
+            take_popper_entry(key);
+        }
     }
+    /// Overlay syncing is per-frame work, not just painting.
+    fn frame_work_when_culled(&self) -> bool {
+        true
+    }
+
     fn paint_self(&self, ctx: &mut PaintCtx) {
         self.sync_overlay(ctx);
     }

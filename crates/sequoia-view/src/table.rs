@@ -125,7 +125,9 @@ impl<R: 'static> TableColumn<R> {
 
 pub struct Table<R> {
     rows: Rc<dyn Fn() -> Vec<R>>,
-    key: Rc<dyn Fn(&R) -> u64>,
+    /// `None` lets the list fall back to unique row indices instead of giving
+    /// every row the same key.
+    key: Option<Rc<dyn Fn(&R) -> u64>>,
     columns: Vec<TableColumn<R>>,
     sort: Signal<Option<(usize, SortDir)>>,
     row_height: f32,
@@ -155,7 +157,7 @@ impl<R: Clone + 'static> Table<R> {
     pub fn new(rows: impl Fn() -> Vec<R> + 'static) -> Self {
         Self {
             rows: Rc::new(rows),
-            key: Rc::new(|_| 0),
+            key: None,
             columns: Vec::new(),
             sort: Signal::new(None),
             row_height: 28.0,
@@ -193,7 +195,7 @@ impl<R: Clone + 'static> Table<R> {
     }
 
     pub fn key(mut self, key: impl Fn(&R) -> u64 + 'static) -> Self {
-        self.key = Rc::new(key);
+        self.key = Some(Rc::new(key));
         self
     }
 
@@ -293,11 +295,7 @@ impl<R: Clone + 'static> Table<R> {
 
     fn list(&self) -> AnyView {
         let me = self.clone();
-        let list = VirtualList::new(move || me.filtered_sorted())
-            .key({
-                let key = self.key.clone();
-                move |r: &R| key(r)
-            })
+        let mut list = VirtualList::new(move || me.filtered_sorted())
             .item_indexed({
                 let columns = self.columns.clone();
                 let stripe_of = self.clone();
@@ -319,6 +317,9 @@ impl<R: Clone + 'static> Table<R> {
             .item_height(self.row_height)
             .overscan(self.overscan)
             .scrollbar_visibility(self.scrollbar);
+        if let Some(key) = self.key.clone() {
+            list = list.key(move |r: &R| key(r));
+        }
         AnyView::new(list)
     }
 }

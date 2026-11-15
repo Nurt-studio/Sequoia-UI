@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use sequoia_core::Length;
@@ -139,13 +139,25 @@ impl<T: Clone + 'static> TreeView<T> {
     }
 
     pub fn flatten(&self) -> Vec<FlatRow<T>> {
+        // Deeply nested data used to overflow the stack while flattening.
+        const MAX_TREE_DEPTH: usize = 128;
+
         fn walk<T: Clone>(
             nodes: &[TreeNode<T>],
             depth: usize,
             expanded: &mut HashMap<String, Signal<bool>>,
+            live: &mut HashSet<String>,
             out: &mut Vec<FlatRow<T>>,
         ) {
+            if depth > MAX_TREE_DEPTH {
+                log::warn!(
+                    "sequoia-view: TreeView nesting deeper than {MAX_TREE_DEPTH} — \
+                     skipping the rest of the subtree"
+                );
+                return;
+            }
             for n in nodes {
+                live.insert(n.id.clone());
                 let signal = expanded
                     .entry(n.id.clone())
                     .or_insert_with(|| n.expanded.clone())
@@ -159,15 +171,20 @@ impl<T: Clone + 'static> TreeView<T> {
                     value: n.value.clone(),
                 });
                 if !n.children.is_empty() && is_open {
-                    walk(&n.children, depth + 1, expanded, out);
+                    walk(&n.children, depth + 1, expanded, live, out);
                 }
             }
         }
 
         let roots = (self.roots)();
         let mut expanded = self.expanded.borrow_mut();
+        let mut live = HashSet::new();
         let mut out = Vec::new();
-        walk(&roots, 0, &mut expanded, &mut out);
+        walk(&roots, 0, &mut expanded, &mut live, &mut out);
+        // The map is shared by every rebuild, so a long-lived tree used to keep
+        // one `Signal` per id it had ever shown. Dropping ids that are gone
+        // also means a node that reappears later starts from its own signal.
+        expanded.retain(|id, _| live.contains(id));
         for r in &out {
             let _ = r.expanded.get();
         }

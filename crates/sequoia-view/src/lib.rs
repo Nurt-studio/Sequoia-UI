@@ -3,7 +3,6 @@
 pub mod a11y;
 mod animated;
 mod any;
-pub mod app;
 pub mod async_view;
 mod backdrop;
 mod cache;
@@ -36,6 +35,7 @@ mod paint_region;
 mod painter;
 mod portal;
 mod presence;
+mod rebuild;
 mod responsive;
 mod rich_text;
 mod runtime;
@@ -105,6 +105,7 @@ pub use overlay::{
 };
 pub use painter::Painter;
 pub use portal::{DismissableLayer, Popper, Portal};
+pub use rebuild::{Rebuild, rebuild};
 pub use presence::{
     ENTER_SECS, EXIT_SECS, Presence, enter_progress, enter_sample, exit_done, exit_progress,
     exit_sample,
@@ -220,6 +221,7 @@ pub mod prelude {
     };
     pub use crate::painter::Painter;
     pub use crate::portal::{DismissableLayer, Popper, Portal};
+    pub use crate::rebuild::{Rebuild, rebuild};
     pub use crate::presence::{
         ENTER_SECS, EXIT_SECS, Presence, enter_progress, enter_sample, exit_done, exit_progress,
         exit_sample,

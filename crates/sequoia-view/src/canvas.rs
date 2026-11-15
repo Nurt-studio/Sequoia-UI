@@ -519,10 +519,23 @@ impl Canvas {
     }
 
     pub fn fit_view(content: Rect, size: Size, padding: f32) -> (Vec2, f32) {
+        // A NaN camera position would poison every world/local conversion in
+        // the canvas, so invalid input falls back to the identity view.
+        let finite_content = content.left().is_finite()
+            && content.top().is_finite()
+            && content.size.width.is_finite()
+            && content.size.height.is_finite();
+        if !finite_content || !size.width.is_finite() || !size.height.is_finite() {
+            return (Vec2::new(0.0, 0.0), 1.0);
+        }
         if size.width <= 0.0 || size.height <= 0.0 {
             return (Vec2::new(content.left(), content.top()), 1.0);
         }
-        let pad = padding.max(0.0);
+        let pad = if padding.is_finite() {
+            padding.max(0.0)
+        } else {
+            0.0
+        };
         let cw = (content.size.width + pad * 2.0).max(1.0);
         let ch = (content.size.height + pad * 2.0).max(1.0);
         let zoom = (size.width / cw).min(size.height / ch).clamp(0.01, 100.0);
@@ -536,7 +549,9 @@ impl Canvas {
     }
 
     pub fn snap(value: f32, step: f32) -> f32 {
-        if !(step > 0.0) || !value.is_finite() {
+        // An infinite step is not a grid: `value / inf` is 0 and `0 * inf` is
+        // NaN, which then leaks into the camera.
+        if !step.is_finite() || !(step > 0.0) || !value.is_finite() {
             return value;
         }
         (value / step).round() * step
@@ -793,6 +808,25 @@ mod tests {
             Canvas::fit_view(content, Size::ZERO, 0.0),
             (Vec2::new(0.0, 0.0), 1.0)
         );
+    }
+
+    #[test]
+    fn snap_and_fit_view_reject_non_finite_input() {
+        assert_eq!(Canvas::snap(13.0, f32::INFINITY), 13.0);
+        assert_eq!(Canvas::snap(13.0, f32::NAN), 13.0);
+        assert!(Canvas::snap(f32::NAN, 10.0).is_nan(), "non-finite value passes through");
+
+        let nan_rect = vp(f32::NAN, 0.0, 400.0, 200.0);
+        let (cam, zoom) = Canvas::fit_view(nan_rect, Size::new(800.0, 600.0), 0.0);
+        assert!(cam.x.is_finite() && cam.y.is_finite());
+        assert!(zoom.is_finite() && zoom > 0.0);
+
+        let (cam, _) = Canvas::fit_view(
+            vp(0.0, 0.0, 400.0, 200.0),
+            Size::new(f32::INFINITY, 600.0),
+            0.0,
+        );
+        assert!(cam.x.is_finite() && cam.y.is_finite());
     }
 
     #[test]

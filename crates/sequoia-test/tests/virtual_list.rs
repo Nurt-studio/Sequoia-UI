@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use sequoia_reactive::Signal;
 use sequoia_test::Harness;
@@ -49,6 +51,82 @@ fn key_map(h: &Harness, vl: sequoia_view::ElementId) -> HashMap<u64, sequoia_vie
         .iter()
         .map(|&id| (h.key_of(id).unwrap(), id))
         .collect()
+}
+
+struct Keyless {
+    items: Signal<Vec<u64>>,
+}
+
+impl View for Keyless {
+    fn body(&self) -> impl View + 'static {
+        VirtualList::new({
+            let s = self.items.clone();
+            move || s.get()
+        })
+        .item(|id: &u64| Text::new(format!("Item {id}")))
+        .item_height(24.0)
+    }
+}
+
+#[test]
+fn keyless_rows_do_not_share_one_key() {
+    let h = Harness::new(Keyless {
+        items: Signal::new((1..=1000u64).collect()),
+    });
+    h.layout(W, H);
+    let vl = vl_of(&h);
+    let keys: Vec<u64> = h
+        .children(vl)
+        .iter()
+        .map(|&id| h.key_of(id).unwrap())
+        .collect();
+
+    assert_eq!(keys.len(), 25);
+    let unique: HashSet<u64> = keys.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        keys.len(),
+        "rows without an explicit `key` must fall back to unique indices"
+    );
+}
+
+struct CountingList {
+    calls: Rc<Cell<u32>>,
+}
+
+impl View for CountingList {
+    fn body(&self) -> impl View + 'static {
+        let calls = self.calls.clone();
+        VirtualList::new(move || {
+            calls.set(calls.get() + 1);
+            (1..=500u64).collect()
+        })
+        .item(|id: &u64| Text::new(format!("Item {id}")))
+        .item_height(24.0)
+    }
+}
+
+#[test]
+fn paint_reuses_the_items_materialized_by_the_build() {
+    let calls = Rc::new(Cell::new(0u32));
+    let h = Harness::new(CountingList {
+        calls: calls.clone(),
+    });
+    h.layout(W, H);
+    let _ = h.paint();
+    h.layout(W, H);
+    let after_build = calls.get();
+
+    let _ = h.paint();
+    h.layout(W, H);
+    let _ = h.paint();
+
+    assert!(
+        calls.get() <= after_build + 1,
+        "paint/layout must reuse the build's items, saw {} materializations ({} after the build)",
+        calls.get(),
+        after_build
+    );
 }
 
 #[test]

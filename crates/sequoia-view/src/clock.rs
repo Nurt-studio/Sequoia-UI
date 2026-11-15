@@ -8,6 +8,20 @@ use std::time::{Duration, Instant};
 /// unbounded work after a long stall.
 pub const MAX_FRAME_STEP_SECS: f32 = 0.25;
 
+/// Upper bound on the animation speed multiplier.
+///
+/// `Duration::mul_f32` panics when the result does not fit in a `Duration`,
+/// and `set_speed` used to accept `f32::MAX`.
+pub(crate) const MAX_SPEED: f32 = 1_000.0;
+
+/// Scales `dt` by `speed`, saturating instead of panicking on overflow.
+fn scale_step(dt: Duration, speed: f32) -> Duration {
+    if speed <= 0.0 || dt.is_zero() {
+        return Duration::ZERO;
+    }
+    Duration::try_from_secs_f64(dt.as_secs_f64() * f64::from(speed)).unwrap_or(Duration::MAX)
+}
+
 /// Shared frame clock owned by the runtime.
 ///
 /// Every view animation samples this clock instead of calling
@@ -77,7 +91,7 @@ impl FrameClock {
 
     pub fn set_speed(&mut self, speed: f32) {
         self.speed = if speed.is_finite() {
-            speed.max(0.0)
+            speed.clamp(0.0, MAX_SPEED)
         } else {
             1.0
         };
@@ -113,7 +127,7 @@ impl FrameClock {
         let scaled = if self.reduced_motion {
             Duration::ZERO
         } else {
-            wall.mul_f32(self.speed)
+            scale_step(wall, self.speed)
         };
         let capped = scaled.min(Duration::from_secs_f32(MAX_FRAME_STEP_SECS));
         self.elapsed += capped;
@@ -126,9 +140,9 @@ impl FrameClock {
         let scaled = if self.reduced_motion {
             Duration::ZERO
         } else {
-            dt.mul_f32(self.speed)
+            scale_step(dt, self.speed)
         };
-        self.elapsed += scaled;
+        self.elapsed = self.elapsed.saturating_add(scaled);
         self.dt = scaled;
         self.frame = self.frame.wrapping_add(1);
     }
@@ -175,6 +189,19 @@ mod tests {
         c.set_speed(2.0);
         c.advance_by(Duration::from_millis(50));
         assert_eq!(c.elapsed(), Duration::from_millis(100));
+    }
+
+    #[test]
+    fn huge_speed_saturates_instead_of_panicking() {
+        let mut c = FrameClock::new();
+        c.set_manual(true);
+        c.set_speed(f32::MAX);
+        assert_eq!(c.speed(), MAX_SPEED);
+        c.advance_by(Duration::from_secs(1));
+        assert_eq!(c.elapsed(), Duration::from_secs(1_000));
+        // A step that cannot be represented saturates instead of panicking.
+        c.advance_by(Duration::MAX);
+        assert_eq!(c.elapsed(), Duration::MAX);
     }
 
     #[test]

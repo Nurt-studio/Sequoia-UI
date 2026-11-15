@@ -171,6 +171,16 @@ pub trait View {
         false
     }
 
+    /// Whether `paint_self` must run even when the element is fully culled.
+    ///
+    /// Most views only draw there. A few (`Presence` finishing an exit,
+    /// `Portal` syncing its overlay) also do per-frame bookkeeping, which used
+    /// to freeze while they were off screen. Everything else keeps the culling
+    /// win of not calling `paint_self` at all.
+    fn frame_work_when_culled(&self) -> bool {
+        false
+    }
+
     fn paint_opacity_ctx(&self, _rt: &Runtime, _el: ElementId) -> Option<f32> {
         self.paint_opacity()
     }

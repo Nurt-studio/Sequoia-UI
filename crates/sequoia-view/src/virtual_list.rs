@@ -1,4 +1,5 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use sequoia_core::{Color, Length, Rect};
@@ -16,6 +17,10 @@ const FALLBACK_WINDOW: usize = 64;
 const DEFAULT_ITEM_HEIGHT: f32 = 28.0;
 
 const DEFAULT_OVERSCAN: usize = 4;
+
+/// Upper bound on `overscan`; the visible-window arithmetic adds it to the row
+/// count, so an unbounded value would build the entire list in one frame.
+const MAX_OVERSCAN: usize = 4096;
 
 const DEFAULT_BAR_W: f32 = 8.0;
 
@@ -50,8 +55,13 @@ impl View for ItemSlot {
 
 pub struct VirtualList<T> {
     items: Rc<dyn Fn() -> Vec<T>>,
-    key: Rc<dyn Fn(&T) -> u64>,
+    /// Explicit row identity. `None` falls back to the absolute item index so
+    /// every row still gets a unique key within the window.
+    key: Option<Rc<dyn Fn(&T) -> u64>>,
     item: Rc<dyn Fn(&T) -> AnyView>,
+    /// Items materialized by the last build, reused by `total_height` and the
+    /// scrollbar instead of calling `items` (and, for `Table`, sorting) again.
+    items_cache: Rc<RefCell<Option<Vec<T>>>>,
 
     item_idx: Option<Rc<dyn Fn(usize, &T) -> AnyView>>,
     item_height: f32,
@@ -75,8 +85,9 @@ impl<T: 'static> Clone for VirtualList<T> {
     fn clone(&self) -> Self {
         Self {
             items: Rc::clone(&self.items),
-            key: Rc::clone(&self.key),
+            key: self.key.clone(),
             item: Rc::clone(&self.item),
+            items_cache: Rc::clone(&self.items_cache),
             item_idx: self.item_idx.clone(),
             item_height: self.item_height,
             overscan: self.overscan,
@@ -100,8 +111,9 @@ impl<T: 'static> VirtualList<T> {
     pub fn new<F: Fn() -> Vec<T> + 'static>(items: F) -> Self {
         Self {
             items: Rc::new(items),
-            key: Rc::new(|_| 0),
+            key: None,
             item: Rc::new(|_| AnyView::new(crate::views::Unit)),
+            items_cache: Rc::new(RefCell::new(None)),
             item_idx: None,
             item_height: DEFAULT_ITEM_HEIGHT,
             overscan: DEFAULT_OVERSCAN,
@@ -125,7 +137,7 @@ impl<T: 'static> VirtualList<T> {
     }
 
     pub fn key<K: Fn(&T) -> u64 + 'static>(mut self, key: K) -> Self {
-        self.key = Rc::new(key);
+        self.key = Some(Rc::new(key));
         self
     }
 
@@ -152,8 +164,12 @@ impl<T: 'static> VirtualList<T> {
         self
     }
 
+    /// Extra rows materialized above and below the viewport.
+    ///
+    /// Clamped: the window arithmetic adds this to the visible row count, and
+    /// an unbounded value would make a single frame build the entire list.
     pub fn overscan(mut self, n: usize) -> Self {
-        self.overscan = n;
+        self.overscan = n.min(MAX_OVERSCAN);
         self
     }
 
@@ -287,8 +303,34 @@ impl<T: 'static> VirtualList<T> {
         self.scroll_by(self.viewport_h.get());
     }
 
+    /// Number of items, from the last build when there is one.
+    ///
+    /// `total_height`, `max_offset`, the scrollbar and the paint path all need
+    /// the count; calling `items` for each of them materializes the list (and
+    /// for `Table`, filters and sorts it) several times per frame.
+    fn item_count(&self) -> usize {
+        let cached = { self.items_cache.borrow().as_ref().map(Vec::len) };
+        cached.unwrap_or_else(|| (self.items)().len())
+    }
+
     fn total_height(&self) -> f32 {
-        (self.items)().len() as f32 * self.item_height
+        self.item_count() as f32 * self.item_height
+    }
+
+    /// Two rows with the same key make the runtime reuse one element for both,
+    /// which moves scroll/focus/edit state onto other data. Report it instead
+    /// of letting the list quietly misbehave.
+    fn warn_on_duplicate_keys(&self, children: &[(u64, AnyView)]) {
+        let mut seen = HashSet::with_capacity(children.len());
+        for (key, _) in children {
+            if !seen.insert(*key) {
+                log::error!(
+                    "sequoia-view: duplicate VirtualList item key {key} in the visible \
+                     window — rows will reuse each other's state; give `key` unique values"
+                );
+                return;
+            }
+        }
     }
 
     pub fn max_offset(&self) -> f32 {
@@ -308,11 +350,16 @@ impl<T: 'static> VirtualList<T> {
         let first = self.first_visible(off);
         let start = first.saturating_sub(self.overscan).min(item_count);
         if vh <= 0.0 {
-            let end = (start + FALLBACK_WINDOW).min(item_count);
+            let end = start.saturating_add(FALLBACK_WINDOW).min(item_count);
             return (start, end);
         }
-        let capacity = (vh / self.item_height).ceil() as usize + 1;
-        let end = (first + capacity + self.overscan).min(item_count);
+        // `as usize` saturates on a huge viewport, and the sums can still hit
+        // `usize::MAX`; saturating keeps the window valid instead of panicking.
+        let capacity = ((vh / self.item_height).ceil() as usize).saturating_add(1);
+        let end = first
+            .saturating_add(capacity)
+            .saturating_add(self.overscan)
+            .min(item_count);
         (start, end.min(item_count).max(start))
     }
 
@@ -416,6 +463,7 @@ impl<T: 'static> View for VirtualList<T> {
         self.viewport_h.set(old.viewport_h.get());
         self.viewport_hint.set(old.viewport_hint.get_untracked());
         self.window_start.set(old.window_start.get());
+        *self.items_cache.borrow_mut() = None;
     }
 
     fn body(&self) -> impl View + 'static {
@@ -423,33 +471,43 @@ impl<T: 'static> View for VirtualList<T> {
     }
 
     fn keyed_children(&self) -> Option<Vec<(u64, AnyView)>> {
+        // Materialize once: the slice below, `total_height` in arrange and the
+        // scrollbar in paint all read this copy instead of calling `items`.
         let items = (self.items)();
-        let off = self.offset.get().clamp(0.0, self.max_offset());
+        let total = items.len() as f32 * self.item_height;
+        let max_off = (total - self.viewport_h.get()).max(0.0);
+        let off = self.offset.get().clamp(0.0, max_off);
         let _hint = self.viewport_hint.get();
         let (start, end) = self.window_bounds(items.len(), off);
         self.window_start.set(start);
         let slot_h = self.item_height;
 
-        Some(
-            items[start..end]
-                .iter()
-                .enumerate()
-                .map(|(i, it)| {
-                    let k = (self.key)(it);
-                    let v = match &self.item_idx {
-                        Some(f) => f(start + i, it),
-                        None => (self.item)(it),
-                    };
-                    (
-                        k,
-                        AnyView::new(ItemSlot {
-                            child: v,
-                            height: slot_h,
-                        }),
-                    )
-                })
-                .collect(),
-        )
+        let children: Vec<(u64, AnyView)> = items[start..end]
+            .iter()
+            .enumerate()
+            .map(|(i, it)| {
+                let index = start + i;
+                let k = match &self.key {
+                    Some(key) => key(it),
+                    None => index as u64,
+                };
+                let v = match &self.item_idx {
+                    Some(f) => f(index, it),
+                    None => (self.item)(it),
+                };
+                (
+                    k,
+                    AnyView::new(ItemSlot {
+                        child: v,
+                        height: slot_h,
+                    }),
+                )
+            })
+            .collect();
+
+        self.warn_on_duplicate_keys(&children);
+        *self.items_cache.borrow_mut() = Some(items);
+        Some(children)
     }
 
     fn layout_style(&self) -> LayoutStyle {
