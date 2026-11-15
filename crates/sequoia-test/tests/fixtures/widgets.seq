@@ -1,0 +1,5 @@
+pub component Badge(text: String) {
+  Container(padding: 4) {
+    Text(text: text)
+  }
+}

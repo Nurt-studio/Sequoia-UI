@@ -27,6 +27,7 @@ pub use sequoia_reactive::{Binding, Environment, Signal, Store, UndoSignal};
 pub use sequoia_render as render;
 pub use sequoia_seq as seq;
 pub use sequoia_seq::{AppMeta, HostBindings, LoadedApp, SeqError, SeqLoader};
+pub use sequoia_seq_macros::include_seq;
 pub use sequoia_shader as shader;
 pub use sequoia_shader::shader;
 pub use sequoia_style as style;
@@ -41,8 +42,8 @@ pub mod prelude {
         DockLayoutStore, Emitter, Environment, Executor, FileFilter, GlobalHotkeys, HotkeyError,
         HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles, RedrawMode, ResizeDirection,
         Resource, ScopedTask, Settings, Signal, SignalAsyncExt, SingleInstance, Store, TaskHandle,
-        TaskId, Throttler, View, WindowId, WindowSpec, Windows, help_text, native_message,
-        not_editing,
+        TaskId, Throttler, View, WindowId, WindowSpec, Windows, help_text, include_seq,
+        native_message, not_editing,
     };
     pub use crate::{sleep, timeout};
     pub use sequoia_animation::Track as AnimTrack;

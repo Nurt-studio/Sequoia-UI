@@ -9,6 +9,7 @@ members = [
     "crates/sequoia-preview",
     "crates/sequoia-seq",
     "crates/sequoia-seq-lsp",
+    "crates/sequoia-seq-macros",
     "crates/sequoia-view",
     "crates/sequoia-test",
     "crates/sequoia-layout",
@@ -80,6 +81,7 @@ sequoia-reactive = { version = "0.1.5", path = "crates/sequoia-reactive" }
 sequoia-preview = { version = "0.1.5", path = "crates/sequoia-preview" }
 sequoia-seq = { version = "0.1.5", path = "crates/sequoia-seq" }
 sequoia-seq-lsp = { version = "0.1.5", path = "crates/sequoia-seq-lsp" }
+sequoia-seq-macros = { version = "0.1.5", path = "crates/sequoia-seq-macros" }
 sequoia-render = { version = "0.1.5", path = "crates/sequoia-render" }
 sequoia-shader = { version = "0.1.5", path = "crates/sequoia-shader" }
 sequoia-shader-wgsl = { version = "0.1.5", path = "crates/sequoia-shader-wgsl" }

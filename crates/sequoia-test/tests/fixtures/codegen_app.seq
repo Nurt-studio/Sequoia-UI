@@ -1,0 +1,18 @@
+import "./widgets.seq"
+
+app Demo {
+  title: "Demo"
+  size: (320, 200)
+  prop count: Int
+  prop label: String
+  on save()
+  on changed(v: Int)
+  on moved(x: Float, y: Float)
+  on picked(x: Float, y: Float, name: String)
+  on zoom(x: Float, y: Float, d: Float)
+
+  window Main {
+    Badge(text: label)
+    Text(dynamic: label, size: count * 2)
+  }
+}

@@ -12,6 +12,7 @@ sequoia-core = { workspace = true }
 sequoia-dock = { workspace = true }
 sequoia-reactive = { workspace = true }
 sequoia-seq = { workspace = true }
+sequoia-seq-macros = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-view = { workspace = true }
 sequoia-input = { workspace = true }
