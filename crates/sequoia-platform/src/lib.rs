@@ -760,7 +760,10 @@ impl App {
             initial.push(windows.push_initial(spec));
         }
 
-        let executor = Executor::new(Some(event_loop.create_proxy()), self.worker_threads);
+        // Jobs and global hotkeys both need to wake the loop out of `Wait`,
+        // so they get their own handles to the same proxy.
+        let proxy = event_loop.create_proxy();
+        let executor = Executor::new(Some(proxy.clone()), self.worker_threads);
 
         let env = Environment::new();
         env.provide(self.theme);
@@ -779,7 +782,9 @@ impl App {
         let global_hotkeys = if self.global_hotkeys.is_empty() {
             None
         } else {
-            match GlobalHotkeys::new() {
+            match GlobalHotkeys::with_waker(move || {
+                let _ = proxy.send_event(JobWake);
+            }) {
                 Ok(mut mgr) => {
                     for (key, mods, action) in self.global_hotkeys {
                         match mgr.register(key, mods) {
@@ -2617,24 +2622,60 @@ impl ShaderWatch {
     }
 }
 
+/// Depth limit for the shader directory walk.
+const MAX_SHADER_DIR_DEPTH: usize = 16;
+
+/// Collects `.wgsl` files below `current` without following directory links.
+///
+/// A junction or symlink pointing back at an ancestor used to recurse until the
+/// thread ran out of stack — both on the initial load and on every 200 ms poll.
+/// Links are skipped and canonical paths are recorded so aliases of the same
+/// directory are visited once.
 fn collect_shader_paths(
     root: &std::path::Path,
     current: &std::path::Path,
     out: &mut Vec<(String, std::path::PathBuf)>,
 ) -> std::io::Result<()> {
-    if !current.is_dir() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_shader_paths(root, &path, out)?;
-        } else if path.extension().and_then(|s| s.to_str()) == Some("wgsl")
-            && let Ok(rel) = path.strip_prefix(root)
-        {
-            let name = rel.with_extension("").to_string_lossy().replace('\\', "/");
-            out.push((name, path));
+    let mut stack = vec![(current.to_path_buf(), 0usize)];
+    let mut visited = std::collections::HashSet::new();
+    while let Some((dir, depth)) = stack.pop() {
+        if depth > MAX_SHADER_DIR_DEPTH {
+            log::warn!(
+                "sequoia-platform: shader directory deeper than {MAX_SHADER_DIR_DEPTH} at {} — \
+                 skipping",
+                dir.display()
+            );
+            continue;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(&dir) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        let canonical = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        if !visited.insert(canonical) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                stack.push((path, depth + 1));
+            } else if path.extension().and_then(|s| s.to_str()) == Some("wgsl")
+                && let Ok(rel) = path.strip_prefix(root)
+            {
+                let name = rel.with_extension("").to_string_lossy().replace('\\', "/");
+                out.push((name, path));
+            }
         }
     }
     Ok(())

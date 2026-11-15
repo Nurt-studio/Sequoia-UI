@@ -119,6 +119,17 @@ fn kick(thread_id: u32) {
 
 impl GlobalHotkeys {
     pub fn new() -> Result<Self, Error> {
+        Self::with_waker(|| {})
+    }
+
+    /// Like [`new`](Self::new), but calls `wake` whenever the backend queues a
+    /// fired hotkey.
+    ///
+    /// The backend only pushes onto a channel, so an event loop parked in
+    /// `Wait` never learns that a shortcut fired and the action waits for
+    /// unrelated input. The platform passes a proxy here and drains the queue
+    /// from the wake-up callback.
+    pub fn with_waker<W: Fn() + Send + 'static>(wake: W) -> Result<Self, Error> {
         let (fired_tx, fired_rx): (Sender<HotkeyId>, Receiver<HotkeyId>) =
             std::sync::mpsc::channel();
         #[cfg(windows)]
@@ -128,7 +139,7 @@ impl GlobalHotkeys {
             let fired = fired_tx.clone();
             let handle = std::thread::Builder::new()
                 .name("sequoia-hotkeys".into())
-                .spawn(move || windows_backend(rx, fired, ready_tx))
+                .spawn(move || windows_backend(rx, fired, ready_tx, wake))
                 .map_err(|_| Error::BackendGone)?;
 
             let thread_id = ready_rx.recv().map_err(|_| Error::BackendGone)?;
@@ -144,6 +155,7 @@ impl GlobalHotkeys {
         }
         #[cfg(not(windows))]
         {
+            let _ = wake;
             let _ = fired_rx;
             let _ = fired_tx;
             Err(Error::Unsupported)
@@ -245,7 +257,12 @@ impl Drop for GlobalHotkeys {
 }
 
 #[cfg(windows)]
-fn windows_backend(rx: Receiver<BackendMsg>, fired: Sender<HotkeyId>, ready: Sender<u32>) {
+fn windows_backend<W: Fn() + Send + 'static>(
+    rx: Receiver<BackendMsg>,
+    fired: Sender<HotkeyId>,
+    ready: Sender<u32>,
+    wake: W,
+) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -312,6 +329,10 @@ fn windows_backend(rx: Receiver<BackendMsg>, fired: Sender<HotkeyId>, ready: Sen
         }
         if m.message == WM_HOTKEY {
             let _ = fired.send(HotkeyId(m.wParam.0 as u32));
+            // The event loop may be parked in `Wait`; a plain channel send
+            // never wakes it, so the bound action would run only after some
+            // unrelated input arrived.
+            wake();
         }
     }
 }
