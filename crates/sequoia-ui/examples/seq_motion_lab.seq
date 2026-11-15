@@ -1,0 +1,84 @@
+app MotionLab {
+  title: "Seq Motion Lab"
+  size: (1040, 680)
+  theme: dark
+  prop heading: String
+  prop level: Float
+  prop open: Bool
+  on toggle()
+  on nudge()
+
+  window Main {
+    Column(padding: 28, gap: 18, background: #0F1117) {
+      Row(gap: 12, align: center) {
+        Text("0.1.6", size: 12, bold: true, color: #E8A34D)
+        Text(text: heading, size: 18 + level * 10, bold: true, color: #F2F4F8)
+      }
+      Text(
+        "Reactive attributes, enter/exit chains and springs — all declarative.",
+        size: 13,
+        color: #9299A8
+      )
+
+      Row(gap: 18, align: center) {
+        Width(value: 170 + level * 330, behavior: spring(240, 18)) {
+          Container(height: 116, background: #E8A34D, radius: 14, padding: 14) {
+            Text("spring(width)", color: #14161B, bold: true)
+          }
+        }
+        Scale(value: 0.88 + level * 0.30, behavior: bouncy) {
+          Container(width: 124, height: 116, background: #3E6B8A, radius: 14, padding: 14) {
+            Text("spring(scale)", color: #F2F4F8, bold: true)
+          }
+        }
+        Opacity(value: 0.30 + level * 0.70, behavior: snappy) {
+          Container(width: 124, height: 116, background: #7EC8E3, radius: 14, padding: 14) {
+            Text("spring(opacity)", color: #14161B, bold: true)
+          }
+        }
+      }
+
+      Container(
+        enter: fade().slide_y(14) at 280ms ease_out_cubic,
+        padding: 18,
+        background: #1D2027,
+        radius: 16
+      ) {
+        Column(gap: 6) {
+          Text("This card animates in on mount", size: 16, bold: true, color: #F2F4F8)
+          Text(
+            "enter: fade().slide_y(14) at 280ms ease_out_cubic",
+            size: 13,
+            color: #9299A8
+          )
+        }
+      }
+
+      Row(gap: 12) {
+        Button("More level", on_click: { nudge() })
+        Button("Toggle panel", on_click: { toggle() })
+      }
+
+      If(
+        when: dynamic(open),
+        enter: fade(0.2).slide_x(-16) at 200ms ease_out_back,
+        exit: fade() at 120ms ease_in
+      ) {
+        Container(padding: 18, background: #17301F, radius: 14) {
+          Text(
+            "The If subtree enters and exits with its own motion chain.",
+            size: 14,
+            color: #A8D5BA
+          )
+        }
+      }
+
+      Spacer()
+      Text(
+        "enter/exit on any node · behavior: spring(k, c[, m]) · reactive attributes · include_seq!()",
+        size: 12,
+        color: #6B7280
+      )
+    }
+  }
+}
