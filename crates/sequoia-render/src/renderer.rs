@@ -8,7 +8,6 @@
 use std::any::Any;
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -1423,8 +1422,7 @@ impl GpuRenderer {
             backdrop.c_tex.destroy();
         }
         self.scratch_frame.shrink_to_fit();
-        self.scratch_regions.shrink_to_fit();
-        self.scratch_cached.shrink_to_fit();
+        self.scratch_surfaces.shrink_to_fit();
         self.scratch_seen.shrink_to_fit();
     }
 
@@ -1716,13 +1714,13 @@ impl GpuRenderer {
                 _ => {}
             }
         }
-        if needs_blit {
+        if needs_blit || !surfaces.is_empty() {
             self.ensure_blit_pipeline();
         }
         if !surfaces.is_empty() {
             self.ensure_surface_blit_pipeline();
         }
-        if needs_gradient {
+        if needs_gradient || !surfaces.is_empty() {
             self.ensure_gradient_pipeline();
         }
         if list.has_backdrops() || list.has_filters() || opacity {
@@ -2116,7 +2114,16 @@ impl GpuRenderer {
         let blit_keys = &mut self.scratch_blit_keys;
         blit_quads.clear();
         blit_keys.clear();
-        for job in cached.iter() {
+        for job in jobs.iter_mut() {
+            let SurfaceContent::Cached {
+                size,
+                full,
+                screen,
+                blit,
+            } = &mut job.content
+            else {
+                continue;
+            };
             let requested = job.binding.format.unwrap_or(DEFAULT_SURFACE_FORMAT);
             let format = Self::cached_surface_format(
                 &self.device,
@@ -2125,7 +2132,7 @@ impl GpuRenderer {
             );
             let samples = supported_samples(format, job.binding.samples);
             let recreate = match self.surface_tex.get(&job.binding.key) {
-                Some(e) => e.size != job.size || e.samples != samples || e.format != format,
+                Some(e) => e.size != *size || e.samples != samples || e.format != format,
                 None => true,
             };
             if recreate
@@ -2147,6 +2154,7 @@ impl GpuRenderer {
                         > self.budget.surfaces)
             {
                 self.stats.dropped_surfaces += 1;
+                *blit = None;
                 continue;
             }
             if recreate {
@@ -2162,7 +2170,7 @@ impl GpuRenderer {
                         &self.device,
                         &self.atlas_bgl,
                         &self.blit_sampler,
-                        job.size,
+                        *size,
                         samples,
                         format,
                     ),
@@ -2255,8 +2263,11 @@ impl GpuRenderer {
                 job.binding.mark_clean.borrow_mut()();
             }
             if self.surface_tex.contains_key(&job.binding.key) {
-                blit_quads.push(blit_instance(job.screen, job.full));
+                *blit = Some(blit_quads.len() as u32);
+                blit_quads.push(blit_instance(*screen, *full));
                 blit_keys.push(job.binding.key);
+            } else {
+                *blit = None;
             }
         }
         self.surface_tex.retain(|k, v| {
@@ -2307,6 +2318,22 @@ impl GpuRenderer {
                 "sequoia-render: offscreen targets are ignored while backdrops or filters are present"
             );
         }
+        let has_surfaces = !jobs.is_empty();
+        let ordered = has_surfaces && !has_targets && !has_backdrops && !has_filters;
+        let has_direct_region = jobs
+            .iter()
+            .any(|job| matches!(job.content, SurfaceContent::Direct(Some(_))));
+        let surface_marks = if ordered {
+            let mut marks: Vec<(usize, u32)> = jobs
+                .iter()
+                .enumerate()
+                .map(|(index, job)| (job.order, index as u32))
+                .collect();
+            marks.sort_by_key(|&(at, index)| (at, index));
+            marks
+        } else {
+            Vec::new()
+        };
         let use_opacity_layers = !has_backdrops
             && !has_filters
             && !has_targets
@@ -2314,7 +2341,7 @@ impl GpuRenderer {
             && opacity_depth <= MAX_GROUP_DEPTH
             && blit_quads.is_empty()
             && frame_quads.is_empty()
-            && regions.is_empty();
+            && jobs.is_empty();
         if use_opacity_layers {
             Self::ensure_group_layers(
                 &self.device,
@@ -2433,7 +2460,7 @@ impl GpuRenderer {
                 }
             }
             if opacity_draws.is_none() {
-                let (dq, dg, di, dgrad, culled) = group_runs_with_opacity(
+                let (dq, dg, di, dgrad, culled) = group_runs_with_surfaces(
                     scene_items,
                     scene_clips,
                     scene_transforms,
@@ -2451,6 +2478,7 @@ impl GpuRenderer {
                     gradients,
                     runs,
                     Some(&mut self.shader_data),
+                    if ordered { &surface_marks } else { &[] },
                 );
                 self.stats.dropped_quads += dq as u64;
                 self.stats.dropped_glyphs += dg as u64;
@@ -3034,12 +3062,16 @@ impl GpuRenderer {
         }
 
         // Record the concrete passes.
-        let fb_drawn = !regions.is_empty()
-            || !frame_quads.is_empty()
-            || !blit_quads.is_empty()
-            || !images.is_empty();
+        let fb_drawn = if ordered {
+            false
+        } else {
+            has_direct_region
+                || !frame_quads.is_empty()
+                || !blit_quads.is_empty()
+                || !images.is_empty()
+        };
 
-        let shared_depth = !regions.is_empty();
+        let shared_depth = has_direct_region;
         if shared_depth {
             Self::ensure_depth_slot(&self.device, &mut self.depth_tex, fb.0, fb.1);
         }
@@ -3052,7 +3084,7 @@ impl GpuRenderer {
                 wgpu::LoadOp::Clear(clear)
             };
 
-            let split_depth = shared_depth && !frame_quads.is_empty();
+            let split_depth = shared_depth && !frame_quads.is_empty() && !ordered;
             let depth_attachment = if shared_depth && !split_depth {
                 self.depth_tex
                     .as_ref()
@@ -3084,7 +3116,7 @@ impl GpuRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if !frame_quads.is_empty() {
+            if !frame_quads.is_empty() && !ordered {
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.set_vertex_buffer(0, self.frame_buf.slice(..));
                 if partial {
@@ -3143,27 +3175,29 @@ impl GpuRenderer {
             }
         }
 
-        if !regions.is_empty() {
+        if !ordered {
             let depth_view = self.depth_tex.as_ref().map(|(_, v, _)| v);
-            let mut frame = WgpuFrame {
-                device: &self.device,
-                queue: &self.queue,
-                encoder: &mut encoder,
-                target: scene_target,
-                depth: depth_view,
-                format: self.render_format,
-                size: fb,
-                scale: s,
-                region: regions[0].0,
-                adapter: self.adapter.clone(),
-                backend: self.backend,
-                index: frame_index,
-                delta,
-                redraw: &self.redraw,
-            };
-            for (region, binding) in regions.iter() {
-                frame.region = *region;
-                (binding.draw)(&mut frame);
+            for job in jobs.iter() {
+                let SurfaceContent::Direct(Some(region)) = &job.content else {
+                    continue;
+                };
+                let mut frame = WgpuFrame {
+                    device: &self.device,
+                    queue: &self.queue,
+                    encoder: &mut encoder,
+                    target: scene_target,
+                    depth: depth_view,
+                    format: self.render_format,
+                    size: fb,
+                    scale: s,
+                    region: *region,
+                    adapter: self.adapter.clone(),
+                    backend: self.backend,
+                    index: frame_index,
+                    delta,
+                    redraw: &self.redraw,
+                };
+                (job.binding.draw)(&mut frame);
             }
         }
 
@@ -3608,6 +3642,190 @@ impl GpuRenderer {
                 &mut draws,
                 &ctx,
             );
+        } else if ordered {
+            let all_opaque = gradients.is_empty() && quads.iter().all(quad_is_opaque);
+            let target = scene_target;
+            let depth_view = if has_direct_region {
+                self.depth_tex.as_ref().map(|(_, v, _)| v)
+            } else {
+                None
+            };
+            let mut depth_cleared = false;
+            let mut initialized = use_offscreen;
+
+            macro_rules! draw_runs {
+                ($this:expr, $pass:expr, $slice:expr) => {
+                    Self::draw_gui_runs(
+                        $pass,
+                        &$this.quad_pipeline,
+                        &$this.quad_pipeline_opaque,
+                        &$this.glyph_pipeline,
+                        $this.blit_pipeline.as_ref().expect("blit pipeline"),
+                        $this.gradient_pipeline.as_ref().expect("gradient pipeline"),
+                        &$this.bind_group,
+                        $this.atlas_tex.as_ref().map(|(_, bg)| bg),
+                        $this.image_atlas.as_ref().map(|atlas| &atlas.bind_group),
+                        &$this.quad_buf,
+                        quads,
+                        &$this.glyph_buf,
+                        &$this.image_buf,
+                        &$this.gradient_buf,
+                        &$this.shader_buf,
+                        &$this.shader_data.instances,
+                        &$this.shader_bind_group,
+                        &$this.scratch_shader_textures,
+                        &$this.user_shaders,
+                        $slice,
+                        image_draws,
+                        all_opaque,
+                        $this.render_format,
+                    );
+                };
+            }
+
+            let mut segment_start = 0usize;
+            loop {
+                if segment_start >= runs.len() {
+                    break;
+                }
+                let next_direct = runs[segment_start..]
+                    .iter()
+                    .position(|run| match run {
+                        GuiRun::Surface(index) => matches!(
+                            &jobs[*index as usize].content,
+                            SurfaceContent::Direct(Some(_))
+                        ),
+                        _ => false,
+                    })
+                    .map(|offset| segment_start + offset);
+                let segment_end = next_direct.map(|at| at + 1).unwrap_or(runs.len());
+                let load = if initialized {
+                    wgpu::LoadOp::Load
+                } else {
+                    wgpu::LoadOp::Clear(clear_color_linear(self.clear_color))
+                };
+                passes += 1;
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("sequoia-composite"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+
+                let mut chunk_start = segment_start;
+                for index in segment_start..segment_end {
+                    let GuiRun::Surface(surface) = runs[index] else {
+                        continue;
+                    };
+                    if index > chunk_start {
+                        let slice = &runs[chunk_start..index];
+                        draw_runs!(self, &mut pass, slice);
+                        draws += gui_run_draws(slice, image_draws, self.image_atlas.is_some());
+                    }
+                    let job = &jobs[surface as usize];
+                    if job.deco.1 > 0 {
+                        pass.set_pipeline(&self.quad_pipeline);
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                        pass.set_vertex_buffer(0, self.frame_buf.slice(..));
+                        pass.draw(0..4, job.deco.0..job.deco.0 + job.deco.1);
+                        draws += 1;
+                    }
+                    if let SurfaceContent::Cached {
+                        blit: Some(blit), ..
+                    } = &job.content
+                    {
+                        let entry = &self.surface_tex[&job.binding.key];
+                        pass.set_pipeline(
+                            self.surface_blit_pipeline
+                                .as_ref()
+                                .expect("surface blit pipeline"),
+                        );
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                        pass.set_bind_group(1, &entry.bind_group, &[]);
+                        pass.set_vertex_buffer(0, self.blit_buf.slice(..));
+                        pass.draw(0..4, *blit..*blit + 1);
+                        draws += 1;
+                    }
+                    chunk_start = index + 1;
+                }
+                if chunk_start < segment_end {
+                    let slice = &runs[chunk_start..segment_end];
+                    draw_runs!(self, &mut pass, slice);
+                    draws += gui_run_draws(slice, image_draws, self.image_atlas.is_some());
+                }
+                drop(pass);
+                initialized = true;
+
+                let Some(at) = next_direct else {
+                    break;
+                };
+                let GuiRun::Surface(surface) = runs[at] else {
+                    unreachable!();
+                };
+                let job = &jobs[surface as usize];
+                if let SurfaceContent::Direct(Some(region)) = &job.content {
+                    if !depth_cleared {
+                        if let Some(view) = depth_view {
+                            passes += 1;
+                            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("sequoia-surface-depth-clear"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: target,
+                                    depth_slice: None,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                })],
+                                depth_stencil_attachment: Some(
+                                    wgpu::RenderPassDepthStencilAttachment {
+                                        view,
+                                        depth_ops: Some(wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(1.0),
+                                            store: wgpu::StoreOp::Store,
+                                        }),
+                                        stencil_ops: None,
+                                    },
+                                ),
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                                multiview_mask: None,
+                            });
+                            drop(pass);
+                        }
+                        depth_cleared = true;
+                    }
+                    let mut frame = WgpuFrame {
+                        device: &self.device,
+                        queue: &self.queue,
+                        encoder: &mut encoder,
+                        target: scene_target,
+                        depth: depth_view,
+                        format: self.render_format,
+                        size: fb,
+                        scale: s,
+                        region: *region,
+                        adapter: self.adapter.clone(),
+                        backend: self.backend,
+                        index: frame_index,
+                        delta,
+                        redraw: &self.redraw,
+                    };
+                    (job.binding.draw)(&mut frame);
+                }
+                segment_start = at + 1;
+            }
         } else {
             let all_opaque = gradients.is_empty() && quads.iter().all(quad_is_opaque);
 
@@ -3768,32 +3986,34 @@ impl GpuRenderer {
                                 pass.draw(0..4, index..index + 1);
                             }
                         }
+                        GuiRun::Surface(_) => {}
                     }
                 }
             }
 
-            if use_offscreen {
-                let frame_bg = self
-                    .frame_target
-                    .as_ref()
-                    .map(|t| &t.bg)
-                    .expect("frame target");
-                Self::present_frame_target(
-                    &self.device,
-                    &self.queue,
-                    &mut self.present_buf,
-                    &mut self.present_cap,
-                    self.present_pipeline.as_ref().expect("present pipeline"),
-                    &self.bind_group,
-                    frame_bg,
-                    clear_color,
-                    fb,
-                    &mut encoder,
-                    &view,
-                );
-                passes += 1;
-                draws += 1;
-            }
+        }
+
+        if use_offscreen {
+            let frame_bg = self
+                .frame_target
+                .as_ref()
+                .map(|t| &t.bg)
+                .expect("frame target");
+            Self::present_frame_target(
+                &self.device,
+                &self.queue,
+                &mut self.present_buf,
+                &mut self.present_cap,
+                self.present_pipeline.as_ref().expect("present pipeline"),
+                &self.bind_group,
+                frame_bg,
+                clear_color,
+                fb,
+                &mut encoder,
+                &view,
+            );
+            passes += 1;
+            draws += 1;
         }
         self.frame_target_valid = use_offscreen;
         // Publish statistics and present the finished frame.

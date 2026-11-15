@@ -1731,7 +1731,7 @@ impl PlatformApp {
             .scale_override
             .map(sanitize_scale)
             .unwrap_or_else(|| sanitize_scale(window.scale_factor()));
-        let mut text = {
+        let text = {
             let _trace = StartupTrace::new("create_window.text_system");
             let mut text = TextSystem::new();
             text.set_scale_factor(scale);

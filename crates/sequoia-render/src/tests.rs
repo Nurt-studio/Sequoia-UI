@@ -1154,10 +1154,55 @@ fn backdrop_segments_accumulate_with_absolute_ranges() {
                 GuiRun::Glyphs(s, l) => assert!((s + l) as usize <= all_glyphs.len()),
                 GuiRun::Images(s, l) => assert!((s + l) as usize <= all_images.len()),
                 GuiRun::Gradients(s, l) => assert!((s + l) as usize <= all_gradients.len()),
-                GuiRun::Shader(_, _, _, _) => {}
+                GuiRun::Surface(_) | GuiRun::Shader(_, _, _, _) => {}
             }
         }
     }
+}
+
+#[test]
+fn surface_markers_split_runs_at_paint_positions() {
+    let items = vec![plan_quad(0.0), plan_quad(10.0), plan_quad(20.0)];
+    let clips: Vec<Option<sequoia_core::RoundedClip>> = vec![None; items.len()];
+    let mut quads = Vec::new();
+    let mut glyphs = Vec::new();
+    let mut images = Vec::new();
+    let mut image_keys = Vec::new();
+    let mut gradients = Vec::new();
+    let mut runs = Vec::new();
+
+    group_runs_with_surfaces(
+        &items,
+        &clips,
+        &[],
+        &[],
+        1.0,
+        None,
+        usize::MAX,
+        usize::MAX,
+        usize::MAX,
+        usize::MAX,
+        &mut quads,
+        &mut glyphs,
+        &mut images,
+        &mut image_keys,
+        &mut gradients,
+        &mut runs,
+        None,
+        &[(1, 0), (2, 1)],
+    );
+
+    assert_eq!(
+        runs,
+        vec![
+            GuiRun::Quads(0, 1),
+            GuiRun::Surface(0),
+            GuiRun::Quads(1, 1),
+            GuiRun::Surface(1),
+            GuiRun::Quads(2, 1),
+        ],
+        "surface markers keep their position between paint runs"
+    );
 }
 
 #[test]
