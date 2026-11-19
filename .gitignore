@@ -2,3 +2,4 @@
 /Cargo.lock
 /docs/book
 /bench
+/.bench

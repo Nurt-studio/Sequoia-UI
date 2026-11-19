@@ -58,8 +58,8 @@ the `.seq` file at compile time:
 
 ```toml
 [dependencies]
-sequoia-seq = "0.1.5"
-sequoia-seq-macros = "0.1.5"
+sequoia-seq = "0.1.6"
+sequoia-seq-macros = "0.1.6"
 ```
 
 ```rust,ignore

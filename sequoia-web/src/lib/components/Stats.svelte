@@ -17,7 +17,7 @@
 	});
 
 	const stats = $derived([
-		{ number: '0.1.5', accent: '', label: 'Current crates.io release' },
+		{ number: '0.1.6', accent: '', label: 'Current crates.io release' },
 		{ number: '25', accent: '', label: 'Framework crates' },
 		{
 			number: downloads == null ? '—' : downloads.toLocaleString('en-US'),

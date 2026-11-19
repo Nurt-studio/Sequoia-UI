@@ -84,7 +84,7 @@ benchmark harness itself is not part of the current example set.
 
 ```toml
 [dependencies]
-sequoia-ui = "0.1.5"
+sequoia-ui = "0.1.6"
 ```
 
 `sequoia-ui` is the single facade crate. It re-exports the whole framework:

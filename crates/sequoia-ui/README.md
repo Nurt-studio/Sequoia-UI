@@ -39,7 +39,7 @@ directly on the GPU with `wgpu`.
 
 ```toml
 [dependencies]
-sequoia-ui = "0.1.5"
+sequoia-ui = "0.1.6"
 ```
 
 Requires Rust 1.88 or newer.

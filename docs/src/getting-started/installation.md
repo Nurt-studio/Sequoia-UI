@@ -27,7 +27,7 @@ The resulting dependency section looks like this:
 
 ```toml
 [dependencies]
-sequoia-ui = "0.1.5"
+sequoia-ui = "0.1.6"
 ```
 
 Cargo resolves the individual framework crates through the facade; do not add
