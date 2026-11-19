@@ -34,7 +34,7 @@ pub use sequoia_style as style;
 pub use sequoia_text as text;
 pub use sequoia_view as view;
 pub use sequoia_view::{
-    AnyView, CustomLayout, Decoratable, Leaf, Styleable, View, impl_view_for_leaf,
+    AnyView, CustomLayout, Decoratable, Leaf, Rebuild, Styleable, View, impl_view_for_leaf,
 };
 pub mod prelude {
     pub use crate::{
@@ -119,8 +119,9 @@ pub mod prelude {
         Filtered, FlatRow, FloatingPanel, FocusRing, FocusScope, Fragment, Grid, Icon, Image,
         InputMode, KeyBinding, Leaf, List, Live, LiveBackground, LiveExt, LiveOffset, LiveOpacity,
         Masonry, MemoLiveExt, Opacity, Orientation, OverlayEntry, OverlayLayer, Pad2D, Panel,
-        PanelId, PanelPayload, Placement, Popper, Portal, Presence, Prop, Pulse, Responsive,
-        RichText, Row, ScreenOrientation, ScrollAxis, ScrollView, ScrollbarVisibility, Sequence,
+        PanelId, PanelPayload, Placement, Popper, Portal, Presence, Prop, Pulse, Rebuild,
+        Responsive, RichText, Row, ScreenOrientation, ScrollAxis, ScrollView, ScrollbarVisibility,
+        Sequence,
         ShaderChain, ShaderPass, Shake, SignalLiveExt, SortDir, Spacer, SplitAxis, SplitPanel,
         SpringSpec, Stack, StackPos, Styleable, Table, TableColumn, Text, ThumbnailCache, Track1D,
         Translate, TreeNode, TreeView, Unit, VirtualList, WithSize, Wrap, clamp_card_top_left,
