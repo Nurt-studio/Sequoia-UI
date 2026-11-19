@@ -30,6 +30,7 @@ export const current = {
 			fps: 60.01,
 			gpu_util_pct: 16.98,
 			gpu_pid_mem_mb: 70.09,
+			gpu_mem_mb: 250.22,
 			ram_working_set_mb: 104.45,
 			ram_private_mb: 59.45
 		},
@@ -44,6 +45,7 @@ export const current = {
 			fps: 60.01,
 			gpu_util_pct: 15.73,
 			gpu_pid_mem_mb: 70.09,
+			gpu_mem_mb: 250.25,
 			ram_working_set_mb: 104.09,
 			ram_private_mb: 58.91
 		},
@@ -58,6 +60,7 @@ export const current = {
 			fps: null,
 			gpu_util_pct: 0,
 			gpu_pid_mem_mb: 69.64,
+			gpu_mem_mb: 250.04,
 			ram_working_set_mb: 100.91,
 			ram_private_mb: 55.34
 		},
@@ -72,6 +75,7 @@ export const current = {
 			fps: 60.01,
 			gpu_util_pct: 18.13,
 			gpu_pid_mem_mb: 70.11,
+			gpu_mem_mb: 239.89,
 			ram_working_set_mb: 105.61,
 			ram_private_mb: 60.72
 		},
@@ -86,6 +90,7 @@ export const current = {
 			fps: 60,
 			gpu_util_pct: 17.69,
 			gpu_pid_mem_mb: 70.47,
+			gpu_mem_mb: 240.5,
 			ram_working_set_mb: 106.97,
 			ram_private_mb: 62.43
 		},
@@ -100,6 +105,7 @@ export const current = {
 			fps: null,
 			gpu_util_pct: 0,
 			gpu_pid_mem_mb: 69.76,
+			gpu_mem_mb: 240.04,
 			ram_working_set_mb: 103.05,
 			ram_private_mb: 58.1
 		},
@@ -114,6 +120,7 @@ export const current = {
 			fps: 59.89,
 			gpu_util_pct: 19.25,
 			gpu_pid_mem_mb: 70.48,
+			gpu_mem_mb: 240.76,
 			ram_working_set_mb: 111.21,
 			ram_private_mb: 65.88
 		},
@@ -128,6 +135,7 @@ export const current = {
 			fps: 60.01,
 			gpu_util_pct: 19.23,
 			gpu_pid_mem_mb: 70.48,
+			gpu_mem_mb: 240.51,
 			ram_working_set_mb: 110.8,
 			ram_private_mb: 65.55
 		},
@@ -142,6 +150,7 @@ export const current = {
 			fps: null,
 			gpu_util_pct: 0,
 			gpu_pid_mem_mb: 69.95,
+			gpu_mem_mb: 239.97,
 			ram_working_set_mb: 108.24,
 			ram_private_mb: 62.75
 		},
@@ -156,6 +165,7 @@ export const current = {
 			fps: 60,
 			gpu_util_pct: 8.1,
 			gpu_pid_mem_mb: 69.57,
+			gpu_mem_mb: 239.6,
 			ram_working_set_mb: 109.36,
 			ram_private_mb: 64.12,
 			rebuild_p50_us: 3972
@@ -171,6 +181,7 @@ export const current = {
 			fps: 59.91,
 			gpu_util_pct: 8.08,
 			gpu_pid_mem_mb: 69.67,
+			gpu_mem_mb: 281.77,
 			ram_working_set_mb: 108.26,
 			ram_private_mb: 63.41,
 			rebuild_p50_us: 10
@@ -186,6 +197,7 @@ export const current = {
 			fps: null,
 			gpu_util_pct: 0,
 			gpu_pid_mem_mb: 69.53,
+			gpu_mem_mb: 281.11,
 			ram_working_set_mb: 105.45,
 			ram_private_mb: 61.1
 		},
@@ -200,6 +212,7 @@ export const current = {
 			fps: null,
 			gpu_util_pct: 0,
 			gpu_pid_mem_mb: 36.69,
+			gpu_mem_mb: 289.11,
 			ram_working_set_mb: 82.23,
 			ram_private_mb: 55.68
 		}

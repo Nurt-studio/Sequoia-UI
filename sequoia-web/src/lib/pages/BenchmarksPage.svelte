@@ -3,9 +3,17 @@
 	import DocsFooter from '../components/DocsFooter.svelte';
 	import { nav } from '../navigation.svelte.js';
 	import { meta, runs } from '../benchmark-data.js';
+	import { current } from '../version-compare-data.js';
+
+	const sequoiaRuns = current.runs.map((run) => ({
+		...run,
+		framework: 'sequoia',
+		uncapped: false
+	}));
+	const allRuns = [...runs.filter((run) => run.framework !== 'sequoia'), ...sequoiaRuns];
 
 	const frameworks = [
-		{ id: 'sequoia', name: 'sequoia-ui', version: '0.1.5' },
+		{ id: 'sequoia', name: 'sequoia-ui', version: '0.1.6' },
 		{ id: 'gpui-fast', name: 'gpui-fast', version: '0.1.14' },
 		{ id: 'bui', name: 'bui', version: 'blenderui 0.5.0' },
 		{ id: 'gpui', name: 'gpui', version: '0.2.2' }
@@ -22,7 +30,7 @@
 	 * @param {number|null} [cells]
 	 */
 	function find(framework, scenario, mode, cells = null) {
-		const run = runs.find(
+		const run = allRuns.find(
 			(r) =>
 				r.framework === framework &&
 				r.scenario === scenario &&
@@ -109,7 +117,7 @@
 	const scenarioHint = $derived(scenarios.find((s) => s.id === scenario)?.hint ?? '');
 
 	const visibleRuns = $derived(
-		runs
+		allRuns
 			.filter((r) => r.scenario === scenario)
 			.filter(
 				(r) =>
@@ -129,7 +137,11 @@
 			label: 'Runner',
 			value: `${meta.seconds} s window after ${meta.warmup} s warm-up, median of ${meta.reps} reps`
 		},
-		{ label: 'Build', value: 'Release · opt-level 3 · LTO fat · one back-to-back session' },
+		{ label: 'Build', value: 'Release · opt-level 3 · LTO fat' },
+		{
+			label: 'Sessions',
+			value: 'sequoia-ui 0.1.6: Nov 15, 2026 · competitors: Nov 11, 2026'
+		},
 		{ label: 'Ready', value: 'Spawn → first presented frame; includes process start-up' },
 		{ label: 'CPU / frame', value: 'Process CPU time ÷ measured frames; excludes GPU time' },
 		{
@@ -146,7 +158,7 @@
 		'Rows are virtualized in sequoia-ui by design; the scene still contains 3,000 nodes.',
 		'Rebuild p50 measures different work per framework. It is not an apples-to-apples row.',
 		'GPU counters are skipped when the driver does not expose them, so some cells stay empty.',
-		'Numbers come from one machine and one session. Treat them as a reproducible reference, not a universal ranking.'
+		'Numbers come from one machine. sequoia-ui 0.1.6 was re-measured on November 15, 2026; competitor numbers are from the November 11 session, so read cross-framework deltas as directional.'
 	];
 
 	/**
@@ -179,16 +191,17 @@
 				<span class="section-number">01</span>
 				<p class="section-label">Benchmark</p>
 			</div>
-			<span class="eyebrow-date">{meta.when.slice(0, 10)}</span>
+			<span class="eyebrow-date">{current.date}</span>
 		</div>
 
 		<h1>3,000 animated nodes. Still <span class="accent">60 fps</span>.</h1>
 
 		<p class="lede">
-			One machine, one session, identical scenes. sequoia-ui holds 60 fps in both 3,000-node
+			One machine, identical scenes. sequoia-ui 0.1.6 holds 60 fps in both 3,000-node
 			scenes — <span class="accent">6.1×</span> gpui-fast and
 			<span class="accent">7.7×</span> gpui on the row scene, at
-			<span class="accent">2.26 ms</span> of CPU per frame on the cell scene.
+			<span class="accent">{num(seqCells.cpu_ms_per_frame, 2)} ms</span> of CPU per frame on the
+			cell scene.
 		</p>
 
 		<div class="hero-meta">
@@ -366,8 +379,9 @@
 				<h2 id="method-title" class="section-title">How the numbers were produced</h2>
 			</div>
 			<p class="section-note">
-				The harness runs each framework from the same release build, in one session, with
-				identical scenes and timing protocol.
+				The harness runs each framework from the same release build with identical scenes and
+				timing protocol. sequoia-ui 0.1.6 was re-run on November 15, 2026; competitor numbers
+				are from the November 11 session.
 			</p>
 		</div>
 
