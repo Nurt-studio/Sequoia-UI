@@ -58,6 +58,12 @@ impl ElementId {
     }
 }
 
+#[cfg(debug_assertions)]
+thread_local! {
+    /// Element keys already reported by the collapsed-fill diagnostic.
+    static COLLAPSE_WARNED: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
+}
+
 #[derive(Clone, Copy)]
 struct PaintPass<'a> {
     env: &'a Environment,
@@ -202,6 +208,8 @@ struct MeasureEntry {
     masonry: Option<MasonryStyle>,
     children_len: usize,
     size: Size,
+    /// Value of `Inner::measure_clock` at the last hit or store.
+    last_use: u64,
 }
 
 struct DispatchCells {
@@ -292,6 +300,9 @@ struct Inner {
     measure_hits: Cell<u64>,
     measure_ns: Cell<u64>,
     arrange_ns: Cell<u64>,
+
+    /// Monotonic stamp for measure-entry recency (`MAX_MEASURE_VARIANTS`).
+    measure_clock: Cell<u64>,
 
     scoped_cancels: RefCell<HashMap<ElementId, Vec<Box<dyn FnOnce()>>>>,
 
@@ -430,6 +441,7 @@ impl Runtime {
                 measure_hits: Cell::new(0),
                 measure_ns: Cell::new(0),
                 arrange_ns: Cell::new(0),
+                measure_clock: Cell::new(0),
                 scoped_cancels: RefCell::new(HashMap::new()),
                 shader_ids: RefCell::new(HashMap::new()),
                 next_shader_id: Cell::new(0),
@@ -724,23 +736,63 @@ impl Runtime {
         self.invalidate_animated_layout();
     }
 
-    fn has_layout_animation(&self) -> bool {
-        self.inner
-            .live_anims
-            .borrow()
-            .keys()
-            .any(|(_, prop)| *prop == Prop::WIDTH.0 || *prop == Prop::HEIGHT.0)
-    }
-
+    /// Flags animated sizes and invalidates the measurements they change.
+    ///
+    /// Animated sizes feed `layout_style_ctx`, so the cached measurement of the
+    /// animated element and of its ancestors is stale. Only those chains are
+    /// dropped: clearing the whole map made every other element — and every
+    /// text run in the scene — measure and shape again on each animated frame.
+    /// When most of the tree animates at once every entry misses anyway, and
+    /// walking thousands of chains costs more than the reset it replaces, so
+    /// that case still clears the map.
     fn invalidate_animated_layout(&self) {
-        if self.has_layout_animation() {
-            self.inner.layout_dirty.set(true);
-            self.inner
-                .layout_epoch
-                .set(self.inner.layout_epoch.get().wrapping_add(1));
-            // Animated sizes feed `layout_style_ctx`, so cached measurements
-            // would otherwise pin the element to its old size.
+        let cached = self
+            .inner
+            .measures
+            .borrow()
+            .values()
+            .filter(|entries| !entries.is_empty())
+            .count();
+        let threshold = (cached / 4).max(1);
+        let mut ids: Vec<ElementId> = Vec::new();
+        let mut wholesale = false;
+        {
+            let anims = self.inner.live_anims.borrow();
+            for (el, prop) in anims.keys() {
+                if *prop != Prop::WIDTH.0 && *prop != Prop::HEIGHT.0 {
+                    continue;
+                }
+                if ids.len() == threshold {
+                    wholesale = true;
+                    break;
+                }
+                ids.push(*el);
+            }
+        }
+        if ids.is_empty() && !wholesale {
+            return;
+        }
+        self.inner.layout_dirty.set(true);
+        self.inner
+            .layout_epoch
+            .set(self.inner.layout_epoch.get().wrapping_add(1));
+        if wholesale {
             self.inner.measures.borrow_mut().clear();
+            let mut s = self.inner.stats.get();
+            s.measure_invalidations += cached as u64;
+            self.inner.stats.set(s);
+            return;
+        }
+        ids.sort_unstable_by_key(|id| id.index);
+        ids.dedup();
+        let mut dropped = 0u32;
+        for id in ids {
+            dropped += self.drop_measure_chain(id);
+        }
+        if dropped > 0 {
+            let mut s = self.inner.stats.get();
+            s.measure_invalidations += u64::from(dropped);
+            self.inner.stats.set(s);
         }
     }
 
@@ -1119,9 +1171,6 @@ impl Runtime {
 
     fn settle(&self) {
         flush_effects();
-        // Rects describe the previous layout, so they can only be trusted when
-        // no structural change is waiting for the next layout pass.
-        let rects_valid = !self.inner.layout_dirty.get();
         loop {
             let next = self.inner.queue.borrow_mut().pop();
             let Some(id) = next else { break };
@@ -1136,7 +1185,7 @@ impl Runtime {
             if flags.is_empty() {
                 continue;
             }
-            if rects_valid && self.rebuild_can_wait(id) {
+            if self.rebuild_can_wait(id) {
                 // Leave the flags set: the next layout that reaches this
                 // element rebuilds it in `measure_inner`. Keeping it out of
                 // the queue stops `has_pending_layout` from re-running the
@@ -1168,12 +1217,17 @@ impl Runtime {
             return false;
         }
         let arena = self.inner.arena.borrow();
-        let Some(e) = arena.get(id) else {
-            return false;
-        };
+        arena
+            .get(id)
+            .is_some_and(|e| Self::element_can_wait(e, viewport))
+    }
+
+    /// Whether a leaf can keep its dirty flags until layout reaches it.
+    ///
+    /// Parked rows sit far off screen; other rows are off screen when their
+    /// last arranged rect no longer overlaps the viewport.
+    fn element_can_wait(e: &Element, viewport: Rect) -> bool {
         let rect = e.rect.get();
-        // Parked rows sit far off screen; other rows are off screen when their
-        // last arranged rect no longer overlaps the viewport.
         let parked = rect.right() < viewport.left() || rect.bottom() < viewport.top();
         let offscreen = !rect.is_empty() && !rect.intersects(viewport);
         (parked || offscreen) && e.view.as_ref().is_some_and(|v| v.is_leaf())
@@ -1452,12 +1506,17 @@ impl Runtime {
         if queue.is_empty() {
             return false;
         }
+        let viewport = self.inner.viewport.get();
         let arena = self.inner.arena.borrow();
         queue.iter().any(|id| {
-            arena
-                .get(*id)
-                .map(|e| e.dirty.needs_layout())
-                .unwrap_or(false)
+            let Some(e) = arena.get(*id) else {
+                return false;
+            };
+            // An off-screen leaf that `settle` deferred is not a reason to run
+            // another full layout pass: layout only reaches it once it is
+            // visible, and `measure_inner` rebuilds it then.
+            e.dirty.needs_layout()
+                && (viewport.is_empty() || !Self::element_can_wait(e, viewport))
         })
     }
 
@@ -3240,16 +3299,24 @@ impl Runtime {
                 // on the environment or on signals, and returning the cached
                 // size without it pinned elements to a stale size.
                 let style = self.child_layout_style(el);
-                let measures = self.inner.measures.borrow();
-                if let Some(entries) = measures.get(&el)
-                    && let Some(e) = entries
-                        .iter()
+                let tick = self.inner.measure_clock.get().wrapping_add(1);
+                let mut measures = self.inner.measures.borrow_mut();
+                if let Some(entries) = measures.get_mut(&el)
+                    && let Some(entry) = entries
+                        .iter_mut()
                         .find(|e| e.constraints == constraints && e.style == style)
                 {
+                    // `MAX_MEASURE_VARIANTS` evicts the least recently used
+                    // variant: stamping the hit keeps the variant this pass
+                    // keeps using from aging out when another probe variant is
+                    // stored, without moving the entry itself.
+                    entry.last_use = tick;
+                    self.inner.measure_clock.set(tick);
+                    let size = entry.size;
                     self.inner
                         .measure_hits
                         .set(self.inner.measure_hits.get().wrapping_add(1));
-                    return e.size;
+                    return size;
                 }
             }
         }
@@ -3280,9 +3347,10 @@ impl Runtime {
         let children_len = children.len();
 
         {
-            let measures = self.inner.measures.borrow();
-            if let Some(entries) = measures.get(&el)
-                && let Some(e) = entries.iter().find(|e| {
+            let tick = self.inner.measure_clock.get().wrapping_add(1);
+            let mut measures = self.inner.measures.borrow_mut();
+            if let Some(entries) = measures.get_mut(&el)
+                && let Some(entry) = entries.iter_mut().find(|e| {
                     e.constraints == constraints
                         && e.style == style
                         && e.container == container
@@ -3294,10 +3362,13 @@ impl Runtime {
                         && e.children_len == children_len
                 })
             {
+                entry.last_use = tick;
+                self.inner.measure_clock.set(tick);
+                let size = entry.size;
                 self.inner
                     .measure_hits
                     .set(self.inner.measure_hits.get().wrapping_add(1));
-                return e.size;
+                return size;
             }
         }
 
@@ -3525,6 +3596,8 @@ impl Runtime {
             }
         }
         {
+            let tick = self.inner.measure_clock.get().wrapping_add(1);
+            self.inner.measure_clock.set(tick);
             let entry = MeasureEntry {
                 constraints,
                 style,
@@ -3536,6 +3609,7 @@ impl Runtime {
                 masonry,
                 children_len: children.len(),
                 size,
+                last_use: tick,
             };
             let mut measures = self.inner.measures.borrow_mut();
             let entries = measures.entry(el).or_default();
@@ -3543,7 +3617,11 @@ impl Runtime {
                 *slot = entry;
             } else {
                 if entries.len() >= MAX_MEASURE_VARIANTS {
-                    entries.remove(0);
+                    // Evict the least recently used variant, not the oldest.
+                    if let Some((idx, _)) = entries.iter().enumerate().min_by_key(|(_, e)| e.last_use)
+                    {
+                        entries.swap_remove(idx);
+                    }
                 }
                 entries.push(entry);
             }
@@ -3716,9 +3794,12 @@ impl Runtime {
         if let Some(hit) = self.inner.wrap_cache.borrow().get(&key).copied() {
             return hit;
         }
-        let mut stack = vec![root];
+        // Lazily seeded stack: a childless element (the bulk of a long list)
+        // never allocates a `Vec`; the walk itself is unchanged.
+        let mut stack: Vec<ElementId> = Vec::new();
+        let mut next = Some(root);
         let mut found = false;
-        while let Some(id) = stack.pop() {
+        while let Some(id) = next.take().or_else(|| stack.pop()) {
             if let Some(v) = self.view_rc(id) {
                 let grid = v.grid();
                 let dock = if grid.is_some() { None } else { v.dock() };
@@ -3759,9 +3840,12 @@ impl Runtime {
         if let Some(hit) = self.inner.wrap_cache.borrow().get(&key).copied() {
             return hit;
         }
+        // Lazily seeded stack: a childless element (the bulk of a long list)
+        // never allocates a `Vec`; the walk itself is unchanged.
+        let mut stack: Vec<ElementId> = Vec::new();
+        let mut next = Some(root);
         let mut found = false;
-        let mut stack = vec![root];
-        while let Some(id) = stack.pop() {
+        while let Some(id) = next.take().or_else(|| stack.pop()) {
             let Some(v) = self.view_rc(id) else {
                 continue;
             };
@@ -4723,6 +4807,70 @@ impl Runtime {
         }
     }
 
+    /// Warns when a fit-sized flex child holds fill content on the main axis
+    /// but cannot grow itself, so that fill resolves against a collapsed box.
+    ///
+    /// Layout propagates `Fill` from a child to a fit-sized wrapper only when
+    /// the wrapper has exactly one child (see `child_layout_style`). Overlaying
+    /// another child on a `Stack` silently drops that propagation, so the stack
+    /// stays at its intrinsic size; this catches that case in debug builds.
+    #[cfg(debug_assertions)]
+    fn warn_collapsed_fill_children(
+        &self,
+        infos: &[(ElementId, f32, f32, f32, f32, f32, f32, LayoutStyle)],
+        cstyle: &ContainerStyle,
+        avail_main: f32,
+    ) {
+        if !avail_main.is_finite() || avail_main <= 1.0 {
+            return;
+        }
+        for (child, base, grow, _, _, _, _, cs) in infos {
+            if *grow > 0.0 || *base + 1.0 >= avail_main {
+                continue;
+            }
+            let main_len = match cstyle.axis {
+                Axis::Horizontal => cs.width,
+                Axis::Vertical => cs.height,
+            };
+            if !main_len.is_fit() || !self.subtree_fills_axis(*child, cstyle.axis) {
+                continue;
+            }
+            let first = COLLAPSE_WARNED.with(|warned| warned.borrow_mut().insert(child.key()));
+            if !first {
+                continue;
+            }
+            log::warn!(
+                "sequoia-view: {} child `{}` is fit-sized but contains fill/flex content on the \
+                 main axis; it collapsed to {base:.0}px of {avail_main:.0}px. Give the child \
+                 `.expand()`/`.fill_size()` or pass it through `child_flex(..)`; a wrapper with \
+                 fill content must grow itself.",
+                if cstyle.axis == Axis::Vertical { "column" } else { "row" },
+                self.type_name_of(*child).unwrap_or_else(|| "?".into()),
+            );
+        }
+    }
+
+    /// Whether any element in the subtree asks for fill/flex growth on `axis`.
+    #[cfg(debug_assertions)]
+    fn subtree_fills_axis(&self, root: ElementId, axis: Axis) -> bool {
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let cs = self.child_layout_style(id);
+            let fills = match axis {
+                Axis::Horizontal => cs.width.is_fill(),
+                Axis::Vertical => cs.height.is_fill(),
+            };
+            if fills || cs.flex_weight() > 0.0 {
+                return true;
+            }
+            let arena = self.inner.arena.borrow();
+            if let Some(e) = arena.get(id) {
+                stack.extend(e.children.iter().copied());
+            }
+        }
+        false
+    }
+
     fn arrange_children_linear(
         &self,
         children: &[ElementId],
@@ -4792,6 +4940,9 @@ impl Runtime {
             }
             resolved
         };
+
+        #[cfg(debug_assertions)]
+        self.warn_collapsed_fill_children(&infos, cstyle, avail_main);
 
         if avail_main.is_finite() {
             for info in infos.iter_mut() {
@@ -6081,12 +6232,32 @@ impl Runtime {
         self.inner
             .layout_epoch
             .set(self.inner.layout_epoch.get().wrapping_add(1));
+        let n = self.drop_measure_chain(id);
+        if n > 0 {
+            let mut s = self.inner.stats.get();
+            s.measure_invalidations += u64::from(n);
+            self.inner.stats.set(s);
+        }
+    }
+
+    /// Drops cached measurements for `id` and its ancestors.
+    ///
+    /// A cached size depends on the children it was computed from, so a change
+    /// at `id` invalidates every measurement above it, while siblings keep
+    /// theirs. Returns the number of entries invalidated.
+    fn drop_measure_chain(&self, id: ElementId) -> u32 {
         let mut measures = self.inner.measures.borrow_mut();
         let arena = self.inner.arena.borrow();
         let mut cur = Some(id);
         let mut n = 0u32;
         while let Some(c) = cur {
-            if measures.remove(&c).is_some() {
+            // Clear in place instead of removing the entry: dropping the `Vec`
+            // made every rebuilt element allocate a fresh one on the next
+            // measure, once per visible cell and frame in an animated scene.
+            if let Some(entries) = measures.get_mut(&c)
+                && !entries.is_empty()
+            {
+                entries.clear();
                 n += 1;
             }
             cur = arena.get(c).and_then(|e| e.parent);
@@ -6094,13 +6265,7 @@ impl Runtime {
                 break;
             }
         }
-        drop(arena);
-        drop(measures);
-        if n > 0 {
-            let mut s = self.inner.stats.get();
-            s.measure_invalidations += u64::from(n);
-            self.inner.stats.set(s);
-        }
+        n
     }
 
     fn alloc(
@@ -6410,6 +6575,9 @@ impl Runtime {
 
     fn unmount_node(&self, id: ElementId) {
         self.invalidate_measure_chain(id);
+        // The arena slot can be reused, so drop the entry rather than leaving
+        // an empty variant list behind for every generation of the slot.
+        self.inner.measures.borrow_mut().remove(&id);
         let (parent, slot, view) = {
             let mut arena = self.inner.arena.borrow_mut();
             let Some(e) = arena.get_mut(id) else { return };
@@ -6707,6 +6875,62 @@ mod tests {
         let mid = rt.rect_of(child).unwrap().size.width;
         assert!(mid > start, "animated width should grow: {start} -> {mid}");
         assert!(mid < 200.0, "animation should still be in flight: {mid}");
+    }
+
+    #[test]
+    fn animated_frame_keeps_unrelated_measurements() {
+        use crate::layout_live::AnimatedSize;
+        use crate::live::SignalLiveExt;
+        use crate::views::{Column, Text};
+
+        #[derive(Clone)]
+        struct Scene {
+            width: sequoia_reactive::Signal<f32>,
+        }
+
+        impl View for Scene {
+            fn body(&self) -> impl View + 'static {
+                let mut col = Column::new();
+                for i in 0..64 {
+                    col = col.child(Text::new(format!("row {i}")));
+                }
+                col.child(AnimatedSize::width(
+                    crate::Unit,
+                    self.width
+                        .clone()
+                        .animate(AnimSpec::linear(std::time::Duration::from_secs(10))),
+                ))
+            }
+        }
+
+        let width = sequoia_reactive::Signal::new(80.0f32);
+        let rt = Runtime::new();
+        rt.set_manual_clock(true);
+        rt.mount(Scene {
+            width: width.clone(),
+        });
+        let mut text = TextSystem::new();
+        let bounds = Rect::from_xywh(0.0, 0.0, 400.0, 600.0);
+        rt.layout(bounds, &mut text);
+
+        width.set(200.0);
+        rt.tick();
+        rt.layout(bounds, &mut text);
+
+        rt.reset_measure_cache_stats();
+        rt.advance_for_test(std::time::Duration::from_secs(2));
+        rt.layout(bounds, &mut text);
+
+        let (calls, hits) = rt.measure_cache_stats();
+        assert!(
+            hits >= 64,
+            "animated frame re-measured the static rows: {calls} calls, {hits} hits"
+        );
+        let misses = calls - hits;
+        assert!(
+            misses * 4 <= calls,
+            "animated frame missed the measure cache too often: {misses} misses in {calls} probes"
+        );
     }
 
     #[test]

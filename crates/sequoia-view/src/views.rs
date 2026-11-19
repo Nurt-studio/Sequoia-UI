@@ -1912,12 +1912,22 @@ impl Row {
         self
     }
 
+    /// Adds a child with a flex weight on the main (horizontal) axis.
+    ///
+    /// A non-zero weight gives the child a share of the free space; zero keeps
+    /// its natural width. A `Fill` child with zero flex collapses to nothing,
+    /// so use a positive weight for anything that must expand.
     pub fn child_flex<V: View + 'static>(mut self, child: V, flex: f32) -> Self {
         self.0.children.push(AnyView::new(child));
         self.0.flex.push(Flex::sanitize_flex(flex));
         self
     }
 
+    /// Adds all `children` with zero flex, so each keeps its natural size.
+    ///
+    /// Children that must share the leftover width need [`Self::child_flex`].
+    /// In debug builds the runtime warns when a `Fill` child ends up in a
+    /// zero-flex slot.
     pub fn children(mut self, children: impl IntoChildren) -> Self {
         let mut children = children.into_children();
         self.0.flex.extend(std::iter::repeat_n(0.0, children.len()));
@@ -1968,12 +1978,22 @@ impl Column {
         self
     }
 
+    /// Adds a child with a flex weight on the main (vertical) axis.
+    ///
+    /// A non-zero weight gives the child a share of the free space; zero keeps
+    /// its natural height. A `Fill` child with zero flex collapses to nothing,
+    /// so use a positive weight for anything that must expand.
     pub fn child_flex<V: View + 'static>(mut self, child: V, flex: f32) -> Self {
         self.0.children.push(AnyView::new(child));
         self.0.flex.push(Flex::sanitize_flex(flex));
         self
     }
 
+    /// Adds all `children` with zero flex, so each keeps its natural size.
+    ///
+    /// Children that must share the leftover height need [`Self::child_flex`].
+    /// In debug builds the runtime warns when a `Fill` child ends up in a
+    /// zero-flex slot.
     pub fn children(mut self, children: impl IntoChildren) -> Self {
         let mut children = children.into_children();
         self.0.flex.extend(std::iter::repeat_n(0.0, children.len()));
@@ -2011,6 +2031,14 @@ impl View for Column {
 
 impl_flex_container!(Column, Axis::Vertical);
 
+/// Overlays children on top of each other, placing each with a [`StackPos`].
+///
+/// The stack measures to its largest natural child unless its own length is
+/// `Fill` (or pinned), in which case it uses the extent offered by the parent.
+/// `Fill` is not inferred from a single child when the stack has several, so
+/// set the stack's own length explicitly (for example `.fill_width()`) when a
+/// child needs the parent's extent. Otherwise a fill child overlaid under a
+/// small label collapses to the label's size.
 #[derive(Clone)]
 pub struct Stack {
     children: Vec<AnyView>,
@@ -2290,6 +2318,10 @@ impl Stack {
         }
     }
 
+    /// Adds all `children` at the default position, preserving their order.
+    ///
+    /// Every child gets a default [`StackPos`] (top-left, `z = 0`). Use
+    /// [`Self::child_at`] for explicit placement.
     pub fn children(mut self, children: impl IntoChildren) -> Self {
         for c in children.into_children() {
             self.children.push(c);
