@@ -36,24 +36,24 @@
 
 	const cards = [
 		{
-			value: '-34.4 ms',
-			label: 'Settings startup',
-			detail: '186.2 to 151.8 ms'
-		},
-		{
-			value: '-15.7 ms',
-			label: '3,000 cells',
-			detail: '218.2 to 202.5 ms'
-		},
-		{
-			value: '-51.9 ms',
+			value: '-24.8 ms',
 			label: '3,000 rows',
-			detail: '244.2 to 192.2 ms'
+			detail: '244.2 to 219.4 ms'
 		},
 		{
-			value: '-4.9 pp',
+			value: '-9.1 ms',
+			label: '3,000 cells',
+			detail: '218.2 to 209.2 ms'
+		},
+		{
+			value: '-4.6 pp',
 			label: 'GPU 3D, cells',
-			detail: '23.8% to 18.9%'
+			detail: '23.8% to 19.3%'
+		},
+		{
+			value: '-0.33 ms',
+			label: 'Rows rebuild p50',
+			detail: '4.31 to 3.97 ms'
 		}
 	];
 
@@ -66,7 +66,8 @@
 			unit: 'ms',
 			deltaUnit: 'ms',
 			digits: 2,
-			status: 'improved'
+			status: 'neutral',
+			noise: true
 		},
 		{
 			label: '3,000 cells to first frame',
@@ -121,7 +122,7 @@
 	];
 
 	const timeRows = [
-		{ label: 'Settings', hint: 'startup', old: oldSettings, new: newSettings },
+		{ label: 'Settings', hint: 'startup', old: oldSettings, new: newSettings, noise: true },
 		{ label: '3,000 cells', hint: 'anim', old: oldCells3000, new: newCells3000 },
 		{ label: '3,000 cells', hint: 'one', old: oldCells3000One, new: newCells3000One },
 		{ label: '3,000 rows', hint: 'anim', old: oldRows3000, new: newRows3000 },
@@ -143,7 +144,8 @@
 
 	/** @type {Record<string, { label: string, tone: string }>} */
 	const badges = {
-		improved: { label: 'Improved', tone: 'good' }
+		improved: { label: 'Improved', tone: 'good' },
+		neutral: { label: 'Within noise', tone: 'neutral' }
 	};
 
 	/**
@@ -219,14 +221,14 @@
 		>
 
 		<div class="eyebrow">
-			<span class="eyebrow-tag">Performance (0.1.6 Not Yet Released)</span>
-			<span class="eyebrow-date">Upcoming Release</span>
+			<span class="eyebrow-tag">Performance (0.1.6)</span>
+			<span class="eyebrow-date">Released November 19, 2026</span>
 		</div>
-		<h1>0.1.6 (Unreleased) vs <span>0.1.5</span>: faster to the first frame, less GPU work.</h1>
+		<h1>0.1.6 vs <span>0.1.5</span>: faster heavy scenes, less GPU work.</h1>
 		<p class="lede">
-			The same 100, 1,000 and 3,000-node scenes, measured on one Windows 11 machine. The
-			0.1.6 build gets to the first frame sooner, keeps 60 fps with a lower GPU load, and
-			rebuilds the 3,000-row scene faster.
+			The same 100, 1,000 and 3,000-node scenes on one Windows 11 machine. 0.1.6 reaches
+			the first frame sooner in the 3,000-node scenes, holds 60 fps, and cuts GPU time.
+			Settings startup is unchanged within run-to-run noise.
 		</p>
 		<div class="hero-actions">
 			<a
@@ -294,7 +296,7 @@
 							<td class="value">{display(row.old, row.unit, row.digits)}</td>
 							<td class="value strong">{display(row.new, row.unit, row.digits)}</td>
 							<td class="value">
-								<span class="change {trend(change)}">
+								<span class="change {row.noise ? 'neutral' : trend(change)}">
 									{signed(change, row.digits)} {row.deltaUnit}
 									<small>{percentChange(row.old, row.new)}</small>
 								</span>
@@ -341,12 +343,12 @@
 							<td class="mode">{row.hint}</td>
 							<td class="value">{num(row.old.ready_wall_ms, 2)} ms</td>
 							<td class="value strong">{num(row.new.ready_wall_ms, 2)} ms</td>
-							<td class="value {trend(row.new.ready_wall_ms - row.old.ready_wall_ms)}">
+							<td class="value {row.noise ? 'neutral' : trend(row.new.ready_wall_ms - row.old.ready_wall_ms)}">
 								{signed(row.new.ready_wall_ms - row.old.ready_wall_ms, 2)} ms
 							</td>
 							<td class="value">{num(row.old.ready_self_ms, 0)} ms</td>
 							<td class="value strong">{num(row.new.ready_self_ms, 0)} ms</td>
-							<td class="value {trend(row.new.ready_self_ms - row.old.ready_self_ms)}">
+							<td class="value {row.noise ? 'neutral' : trend(row.new.ready_self_ms - row.old.ready_self_ms)}">
 								{signed(row.new.ready_self_ms - row.old.ready_self_ms, 0)} ms
 							</td>
 						</tr>
@@ -433,11 +435,11 @@
 				</tbody>
 			</table>
 		</div>
-		<p class="table-note">
-			CPU/frame is not an improvement claim. Adjacent clean A/B sessions of the current
-			build ranged from roughly 2.6 to 7.4 ms per frame, so the movement here is within
-			run-to-run noise. FPS is pinned at 60 by the display.
-		</p>
+			<p class="table-note">
+				CPU/frame is not an improvement claim. Adjacent clean A/B sessions of this build
+				ranged from roughly 2.6 to 7.4 ms per frame, so the movement here is within
+				run-to-run noise. FPS is pinned at 60 by the display.
+			</p>
 	</section>
 
 	<section class="section">
@@ -514,9 +516,8 @@
 			</table>
 		</div>
 		<p class="table-note">
-			The 100-cell entries come from a separate rerun: the first 100-cell animated rep in
-			the full session was an opener outlier. The 1,000 and 3,000-cell entries are from the
-			main 0.1.6 session.
+			All cell counts come from the same November 15 session: a 10 s window after 3 s of
+			warm-up, median of three reps.
 		</p>
 	</section>
 
@@ -527,8 +528,8 @@
 			<h2>What was done, and what it bought</h2>
 			<p class="work-summary">
 				0.1.6 moves GPU pipeline setup off the startup path, renders directly into the view
-				target, and reduces the 3,000-row rebuild cost. Net effect: the same 60 fps, a
-				faster first frame and less GPU time in both scenes.
+				target, and reduces the 3,000-row rebuild cost. The heavy scenes start sooner and
+				use less GPU; light settings startup stays within noise.
 			</p>
 			<div class="work-list">
 				<article class="work">
@@ -541,9 +542,9 @@
 						draw does not pay for GPU setup.
 					</p>
 					<div class="work-gain">
-						<strong>-34.4 ms</strong>
-						<span>settings startup</span>
-						<small>3,000 cells -15.7 ms &middot; rows -51.9 ms</small>
+						<strong>-24.8 ms</strong>
+						<span>3,000 rows startup</span>
+						<small>3,000 cells -9.1 ms &middot; settings within noise</small>
 					</div>
 				</article>
 				<article class="work">
@@ -556,9 +557,9 @@
 						view target instead of an intermediate target.
 					</p>
 					<div class="work-gain">
-						<strong>-4.9 pp</strong>
+						<strong>-4.6 pp</strong>
 						<span>GPU 3D, 3,000 cells</span>
-						<small>23.8% to 18.9% &middot; rows 11.2% to 8.0%</small>
+						<small>23.8% to 19.3% &middot; rows 11.2% to 8.1%</small>
 					</div>
 				</article>
 				<article class="work">
@@ -570,9 +571,9 @@
 						The 3,000-row reactive rebuild probe is faster, with the same 60 fps output.
 					</p>
 					<div class="work-gain">
-						<strong>-0.45 ms</strong>
+						<strong>-0.33 ms</strong>
 						<span>rows rebuild p50</span>
-						<small>4.31 ms to 3.85 ms &middot; -10.5%</small>
+						<small>4.31 ms to 3.97 ms &middot; -7.8%</small>
 					</div>
 				</article>
 			</div>
@@ -583,6 +584,10 @@
 				<div>
 					<dt>Machine</dt>
 					<dd>Windows 11, one session per build</dd>
+				</div>
+				<div>
+					<dt>0.1.6 run</dt>
+					<dd>November 15, 2026</dd>
 				</div>
 				<div>
 					<dt>Window</dt>

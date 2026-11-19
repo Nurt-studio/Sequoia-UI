@@ -104,15 +104,15 @@
 		</div>
 		<div class="blog-featured-content">
 			<div class="meta">
-				<span class="blog-tag">Release (Unreleased)</span>
-				<span class="blog-date">Not yet released</span>
+				<span class="blog-tag">Release</span>
+				<span class="blog-date">November 19, 2026</span>
 			</div>
-			<h2>SequoiaUI 0.1.6 (Unreleased)</h2>
+			<h2>SequoiaUI 0.1.6</h2>
 			<p>
 				Continuous export: animated GIF and Motion JPEG AVI next to PNG, CPU shaders in headless
-				renders, and the glassmorphism demo. Also introduces BlockEditor with typed blocks, inline
-				objects, cross-block selection and IME support, plus expressions in the .seq format for
-				component arguments, styles and signal-backed attributes. Requires Rust 1.88 or newer.
+				renders, and the glassmorphism demo. Also introduces BlockEditor, motion and springs in
+				.seq, typed include_seq! bindings, frame metrics and paint-ordered GPU surfaces. Requires
+				Rust 1.88 or newer.
 			</p>
 			<a
 				href="/"

@@ -207,6 +207,42 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 <span class="kw">let</span> editor = BlockEditor::new(Signal::new(document))
     .font_size(<span class="num">16.0</span>)
     .padding(<span class="num">18.0</span>, <span class="num">14.0</span>);`;
+
+const frameMetricsHtml = `<span class="kw">use</span> sequoia_ui::prelude::*;
+
+App::new()
+    .title(<span class="str">"Profiler"</span>)
+    .root(view)
+    .on_frame_metrics(|m| {
+        <span class="cm">// Wall-clock milliseconds, excluding the vblank wait.</span>
+        log::debug!(
+            <span class="str">"{:.1} tick · {:.1} layout · {:.1} paint · {:.1} render"</span>,
+            m.tick_ms, m.layout_ms, m.paint_ms, m.render_ms
+        );
+        log::debug!(
+            <span class="str">"{} elements, {} states, {}x{} px"</span>,
+            m.elements, m.states, m.width, m.height
+        );
+    })
+    .run()?;`;
+
+const surfaceHtml = `<span class="kw">use</span> sequoia_ui::platform::{WgpuFrame, WgpuRenderer, WgpuSurface};
+
+<span class="kw">struct</span> Gradient {
+    <span class="cm">// pipeline and bind groups, created from WgpuFrame</span>
+}
+
+<span class="kw">impl</span> WgpuRenderer <span class="kw">for</span> Gradient {
+    <span class="kw">fn</span> render(&amp;<span class="kw">mut self</span>, frame: &amp;<span class="kw">mut</span> WgpuFrame) {
+        <span class="cm">// Draw into frame.region with the normal wgpu API.</span>
+        <span class="cm">// The UI composites the result at this view's paint position.</span>
+    }
+}
+
+<span class="kw">let</span> viewport = WgpuSurface::new(Gradient { .. })
+    .background(PANEL)
+    .radius(<span class="num">12.0</span>)
+    .expand();`;
 </script>
 
 <DocsTopBar version="0.1.6" />
@@ -223,18 +259,17 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 
 	<header class="release-head">
 		<div class="meta">
-			<span class="tag">Release (Unreleased)</span>
+			<span class="tag">Release</span>
 			<span class="version">v0.1.6</span>
-			<span class="date">Not yet released (November 2026)</span>
+			<span class="date">November 19, 2026</span>
 		</div>
 		<h1>Continuous export, block editing, and motion in .seq</h1>
 		<p class="lede">
-			<strong>sequoia-export</strong> can now render an animated scene without opening a window:
-			animated GIF, Motion JPEG AVI, or a numbered PNG sequence. The same pass runs custom shaders on
-			the CPU, so what you see on the GPU can be exported headlessly. This release also adds
-			<strong>BlockEditor</strong>, a complete block-based text surface with rich inline content.
-			The declarative <strong>.seq</strong> format also gains a motion language: reactive attribute expressions,
-			<strong>enter</strong>/<strong>exit</strong> chains on every node, spring behavior and compile-time typed bindings through <strong>include_seq!</strong>.
+			<strong>sequoia-export</strong> renders animated scenes without a window: GIF, Motion JPEG
+			AVI or a PNG sequence, with CPU equivalents of custom shaders. This release also adds
+			<strong>BlockEditor</strong>, the <strong>enter</strong>/<strong>exit</strong> and spring
+			motion language in <strong>.seq</strong>, typed <strong>include_seq!</strong> bindings,
+			per-frame metrics and paint-ordered GPU surfaces.
 		</p>
 		<a
 			class="bench-link"
@@ -249,32 +284,32 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<section class="perf-strip">
 		<div class="perf-copy">
 			<span class="perf-tag">Performance</span>
-			<h2>Faster first frame, same 60 fps, less GPU work</h2>
+			<h2>Faster heavy scenes, same 60 fps</h2>
 			<p>
-				Pre-initialized pipelines move GPU setup off the startup path. Lazy pipeline creation
-				and direct-to-view rendering cut GPU time in both benchmark scenes.
+				Pipeline setup moved off the startup path; lazy pipelines and direct-to-view rendering
+				cut GPU time. Settings startup is unchanged within run-to-run noise.
 			</p>
 		</div>
 		<div class="perf-grid">
 			<div>
-				<strong>-34.4 ms</strong>
-				<span>settings startup</span>
-				<small>186.2 to 151.8 ms</small>
+				<strong>-24.8 ms</strong>
+				<span>3,000 rows</span>
+				<small>244.2 to 219.4 ms</small>
 			</div>
 			<div>
-				<strong>-15.7 ms</strong>
+				<strong>-9.1 ms</strong>
 				<span>3,000 cells</span>
 				<small>time to first frame</small>
 			</div>
 			<div>
-				<strong>-4.9 pp</strong>
+				<strong>-4.6 pp</strong>
 				<span>GPU 3D, cells</span>
-				<small>23.8% to 18.9%</small>
+				<small>23.8% to 19.3%</small>
 			</div>
 			<div>
-				<strong>-0.45 ms</strong>
+				<strong>-0.33 ms</strong>
 				<span>rows rebuild p50</span>
-				<small>4.31 to 3.85 ms</small>
+				<small>4.31 to 3.97 ms</small>
 			</div>
 		</div>
 	</section>
@@ -293,62 +328,60 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<h2>What 0.1.6 adds</h2>
 	<ul>
 		<li>
-			<strong>One exporter, every output.</strong>
-			<span class="inline-code">Exporter</span> carries the asset registry and CPU shader
-			implementations, and exposes <span class="inline-code">render_to_image</span>,
+			<strong>One exporter, every output.</strong> <span class="inline-code">Exporter</span>
+			carries assets and CPU shaders and exposes <span class="inline-code">render_to_image</span>,
 			<span class="inline-code">render_animation</span>, <span class="inline-code">export_png</span>,
 			<span class="inline-code">export_gif</span>, <span class="inline-code">export_video</span> and
 			<span class="inline-code">export_frames</span>.
 		</li>
 		<li>
-			<strong>Animated GIF.</strong> <span class="inline-code">AnimationOptions</span> controls frame
-			count and duration; the frame clock advances between frames, and the GIF loops forever.
+			<strong>Animated output without ffmpeg.</strong> GIF frames advance the clock and loop;
+			<span class="inline-code">export_video</span> writes Motion JPEG AVI, one JPEG per frame in a
+			plain RIFF container.
 		</li>
 		<li>
-			<strong>Video without ffmpeg.</strong> <span class="inline-code">export_video</span> writes a
-			Motion JPEG AVI — one JPEG per frame in a plain RIFF container. It plays in common players and
-			needs no external binary or codec.
+			<strong>Shaders in headless renders.</strong> Implement
+			<span class="inline-code">CpuShader</span> and register it with
+			<span class="inline-code">Exporter::shader</span>; offscreen targets, opacity groups and
+			textures resolve on the CPU.
 		</li>
 		<li>
-			<strong>Shaders in headless renders.</strong> Implement <span class="inline-code">CpuShader</span>
-			for a shader and register it with <span class="inline-code">Exporter::shader</span>. Offscreen
-			targets, opacity groups and texture inputs are resolved on the CPU.
+			<strong>BlockEditor.</strong> Typed blocks, styled inline runs, embeddable objects,
+			cross-block selection, clipboard history, IME composition and smooth scrolling.
 		</li>
 		<li>
-			<strong>The existing PNG API is unchanged.</strong> The free functions are now thin wrappers over
-			<span class="inline-code">Exporter</span>, so current code keeps compiling.
+			<strong>Expressions in <span class="inline-code">.seq</span>.</strong> Component arguments,
+			<span class="inline-code">style</span> blocks and host-driven attributes accept arithmetic,
+			ternaries and built-ins; every attribute expression over a host value is tracked.
 		</li>
 		<li>
-			<strong>BlockEditor.</strong> A block-based editing surface with typed blocks, styled inline
-			runs,			embeddable objects, cross-block selection, clipboard history, IME composition and smooth
-			scrolling.
-		</li>
-		<li>
-			<strong>Expressions in the <span class="inline-code">.seq</span> format.</strong> Component
-			arguments, <span class="inline-code">style</span> blocks and the signal-backed attributes
-			accept arithmetic, ternaries and built-ins. Slots such as
-			<span class="inline-code">If(when:)</span>, <span class="inline-code">Width</span>,
-			<span class="inline-code">Progress</span> or <span class="inline-code">Slider</span>
-			re-evaluate their expression when the host signal changes. Since 0.1.6 every attribute expression over a host value is tracked, not only signal-backed slots, and writable controls keep their two-way binding.
-		</li>
-		<li>
-			<strong>Motion on every node.</strong> <span class="inline-code">enter</span> and
-			<span class="inline-code">exit</span> accept a preset or a chain such as
-			<span class="inline-code">fade().slide_y(14) at 280ms ease_out_cubic</span>, on any node and no
-			longer only on <span class="inline-code">If</span>.
-		</li>
-		<li>
-			<strong>Springs, not just tweens.</strong> <span class="inline-code">Width</span>,
-			<span class="inline-code">Height</span>, <span class="inline-code">Opacity</span>,
-			<span class="inline-code">Scale</span>, <span class="inline-code">Rotate</span> and
-			<span class="inline-code">Translate</span> take <span class="inline-code">behavior:</span> with
-			<span class="inline-code">spring(k, c[, m])</span> or a preset.
+			<strong>Motion and springs.</strong> <span class="inline-code">enter</span>/
+			<span class="inline-code">exit</span> chains work on any node, and animated values accept
+			<span class="inline-code">behavior: spring(k, c[, m])</span> or a preset.
 		</li>
 		<li>
 			<strong>Typed <span class="inline-code">.seq</span> bindings.</strong>
-			<span class="inline-code">include_seq!</span> parses the file and its imports at compile time
-			and generates <span class="inline-code">prop_*</span>/<span class="inline-code">on_*</span>
+			<span class="inline-code">include_seq!</span> parses files and imports at compile time and
+			generates <span class="inline-code">prop_*</span>/<span class="inline-code">on_*</span>
 			methods with matching Rust types.
+		</li>
+		<li>
+			<strong>Frame metrics.</strong> <span class="inline-code">App::on_frame_metrics</span>
+			delivers <span class="inline-code">FrameMetrics</span> after every presented frame.
+		</li>
+		<li>
+			<strong>Paint-ordered GPU surfaces.</strong> Embedded
+			<span class="inline-code">WgpuSurface</span> views composite in paint order, so widgets can
+			sit above or below them.
+		</li>
+		<li>
+			<strong>Reactive subtrees.</strong> The new <span class="inline-code">Rebuild</span> view
+			resubscribes a subtree to the signals its builder reads; measure results also survive animated
+			frames, and virtual-list rows keep stable keys.
+		</li>
+		<li>
+			<strong>Compatibility.</strong> The PNG free functions still compile as wrappers over
+			<span class="inline-code">Exporter</span>.
 		</li>
 	</ul>
 
@@ -391,129 +424,76 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 
 	<h2>A block editor, not a text buffer</h2>
 	<p>
-		<span class="inline-code">BlockEditor</span> edits a <span class="inline-code">Document</span> made
-		of typed blocks: paragraphs, headings, bullet and numbered lists, to-dos, quotes, code, callouts,
-		tables and dividers. Each block keeps its own style, layout and inline content while the editor owns
-		focus, selection and history.
-	</p>
-
-	<p>
-		Inline runs carry their own style, and embeddable objects — mentions, math, images, statuses and
-		icons — occupy one character in the document. Selection, deletion, copying and pasting therefore
-		work across them without special cases, and pasting a fragment back into the editor preserves the
-		object rather than turning it into plain text.
+		<span class="inline-code">BlockEditor</span> edits a <span class="inline-code">Document</span> of
+		typed blocks: paragraphs, headings, lists, to-dos, quotes, code, callouts, tables and dividers.
+		Inline runs carry their own style, and mentions, math, images, statuses and icons occupy one
+		character, so selection, deletion, copy and paste work across them.
 	</p>
 
 	<CodeBlock lang="Rust" code={blockEditorHtml} />
 
 	<ul>
 		<li>
-			<strong>Selection across blocks.</strong> Anchor and focus are document positions, so a drag can
-			start in one block and end in another. Delete, cut, copy and paste operate on the whole range.
+			<strong>Cross-block selection.</strong> Anchor and focus are document positions, so a drag can
+			start in one block and end in another; cut, copy and paste operate on the whole range.
 		</li>
 		<li>
-			<strong>Real editing semantics.</strong> Enter splits a block and keeps its type; Backspace
-			merges backwards; undo and redo restore document and focus. Cut without a selection removes the
-			current block and paste restores it with a new identifier.
+			<strong>Editing semantics.</strong> Enter splits a block and keeps its type, Backspace merges
+			backwards, and undo/redo restore document and focus.
 		</li>
 		<li>
-			<strong>IME aware.</strong> Preedit text stays out of the document until commit, the composition
-			caret follows the candidate cursor, and <span class="inline-code">ime_cursor_rect</span> is
-			reported in window coordinates.
-		</li>
-		<li>
-			<strong>Scrolling and soft wrap.</strong> The caret stays visible while typing or navigating,
-			the wheel scrolls the block layout, and hit-testing accounts for the scroll offset. Wrapped
-			lines keep caret affinity at line boundaries instead of jumping to the previous visual line.
+			<strong>IME and scrolling.</strong> Preedit text stays out until commit, the caret follows the
+			composition cursor, and it stays visible while scrolling or wrapping.
 		</li>
 	</ul>
 
 	<p class="note">
-		The editor inherits the ambient <span class="inline-code">Theme</span> and accepts explicit
-		background, font size, padding and text style overrides. Inline objects and block decorations are
-		painted by the element, so the document remains the single source of truth.
+		The editor inherits the ambient <span class="inline-code">Theme</span> and accepts background,
+		font size, padding and text style overrides.
 	</p>
 
 	<h2>Expressions in the .seq format</h2>
 	<p>
-		Attribute values already accepted arithmetic, ternaries and built-ins, but the expression
-		stopped at the edges of the declarative format. 0.1.6 carries it into the three places that
-		still demanded a literal: component arguments, <span class="inline-code">style</span> blocks
-		and the attributes driven by a reactive signal.
+		0.1.6 extends expressions into the three places that still required literals: component
+		arguments, <span class="inline-code">style</span> blocks and reactive attributes. Every attribute
+		expression over a host value is now tracked, including plain numeric attributes such as
+		<span class="inline-code">Text(size:)</span>; literal-only expressions still fold once.
 	</p>
 	<ul>
 		<li>
-			<strong>Component parameters.</strong> A parameter used inside an expression in the body is
-			substituted with the call-site value, so <span class="inline-code">Badge(size: 10 + 2)</span>
-			with <span class="inline-code">size * 2</span> in the body renders at 24 pt. Numbers, lengths
-			(<span class="inline-code">fill</span>/<span class="inline-code">px</span>/<span
-				class="inline-code">percent</span
-			>/<span class="inline-code">fit</span>), <span class="inline-code">theme.*</span>,
-			<span class="inline-code">env.*</span>, <span class="inline-code">item.*</span> and
-			<span class="inline-code">.seq</span> function calls all round-trip through the expression.
+			<strong>Component parameters.</strong> A parameter used in the body is substituted with the
+			call-site value, so <span class="inline-code">Badge(size: 10 + 2)</span> with
+			<span class="inline-code">size * 2</span> in the body renders at 24 pt. Numbers, lengths,
+			<span class="inline-code">theme.*</span>, <span class="inline-code">env.*</span>,
+			<span class="inline-code">item.*</span> and function calls all round-trip.
 		</li>
 		<li>
-			<strong>Style blocks.</strong> <span class="inline-code">radius: 4 * 2</span> builds a
-			<span class="inline-code">BoxStyle</span> with <span class="inline-code">radius: 8.0</span>,
-			and the same arithmetic works for text and button fields. Styles are still resolved at load
-			time and cannot see host properties.
+			<strong>Style blocks.</strong> <span class="inline-code">radius: 4 * 2</span> builds
+			<span class="inline-code">radius: 8.0</span>; styles resolve at load time and cannot see host
+			properties.
 		</li>
 		<li>
-			<strong>Reactive attributes.</strong> Slots that already take a signal —
-			<span class="inline-code">If(when:)</span>, <span class="inline-code">Opacity</span>,
-			<span class="inline-code">Scale</span>, <span class="inline-code">Rotate</span>,
-			<span class="inline-code">Width</span>, <span class="inline-code">Height</span>,
-			<span class="inline-code">Translate</span>, <span class="inline-code">Progress</span>,
-			<span class="inline-code">Slider</span>, <span class="inline-code">DragValue</span>,
-			<span class="inline-code">NumberField</span> and <span class="inline-code">SplitPanel</span> —
-			now evaluate their expression inside an effect, so changing the host property updates the
+			<strong>Reactive attributes.</strong> Slots from <span class="inline-code">If(when:)</span>
+			and <span class="inline-code">Width</span> to <span class="inline-code">Progress</span> and
+			<span class="inline-code">Slider</span> evaluate inside an effect, so host changes update the
 			view without a reload.
 		</li>
 	</ul>
 
 	<CodeBlock lang="Seq" code={seqExpressionHtml} />
-
-	<p class="note">
-		Reactivity is no longer opt-in by widget. Any attribute expression that reads a host property,
-		an environment value or a row field is tracked, so <span class="inline-code">Text(size:)</span>,
-		<span class="inline-code">Container(padding:)</span> and similar attributes update in place.
-		Expressions made only of literals are folded once and stay static.
-	</p>
-
 	<CodeBlock lang="Seq" code={seqReactiveHtml} />
 
 	<h2>Motion on any node</h2>
 	<p>
-		<strong>enter</strong> and <strong>exit</strong> used to be an <span class="inline-code">If</span>
-		feature. They now apply to every node: a card can fade and slide in when it mounts, and an
-		<span class="inline-code">If</span> subtree can leave with its own chain. A value is either a preset
+		<strong>enter</strong> and <strong>exit</strong> now apply to every node, not just
+		<span class="inline-code">If</span>. A value is a preset
 		(<span class="inline-code">fast</span>, <span class="inline-code">smooth</span>,
 		<span class="inline-code">snappy</span>, <span class="inline-code">gentle</span>,
-		<span class="inline-code">slow</span>) or a chain of steps.
+		<span class="inline-code">slow</span>) or a chain such as
+		<span class="inline-code">fade().slide_y(14) at 280ms ease_out_cubic</span>; timing, delay and
+		the full easing set are supported. An exit chain still needs a presence transition, so a node
+		removed from an always-mounted parent unmounts immediately.
 	</p>
-	<ul>
-		<li>
-			<strong>Steps.</strong> <span class="inline-code">fade(from)</span>,
-			<span class="inline-code">slide_x(px)</span>, <span class="inline-code">slide_y(px)</span>
-			and <span class="inline-code">slide(dx, dy)</span>, chained with
-			<span class="inline-code">.</span>.
-		</li>
-		<li>
-			<strong>Timing.</strong> <span class="inline-code">at 220ms ease_out_cubic</span> sets duration and
-			easing; <span class="inline-code">delay 80ms</span> shifts the start. Bare numbers are seconds,
-			and <span class="inline-code">ms</span>/<span class="inline-code">s</span> suffixes are accepted.
-		</li>
-		<li>
-			<strong>Easing.</strong> <span class="inline-code">linear</span>,
-			<span class="inline-code">ease_in/out/in_out</span>, the
-			<span class="inline-code">ease_*_&#123;quad,cubic,quart,quint,expo,circ,sine,back&#125;</span> family and
-			<span class="inline-code">bounce_in/out</span>.
-		</li>
-		<li>
-			<strong>Exit needs presence.</strong> A node removed from an always-mounted parent unmounts
-			immediately; use <span class="inline-code">If</span> when you need a leave animation.
-		</li>
-	</ul>
 	<CodeBlock lang="Seq" code={seqMotionHtml} />
 
 	<h2>Springs instead of tweens</h2>
@@ -521,49 +501,35 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 		Every animated value — <span class="inline-code">Width</span>,
 		<span class="inline-code">Height</span>, <span class="inline-code">Opacity</span>,
 		<span class="inline-code">Scale</span>, <span class="inline-code">Rotate</span> and
-		<span class="inline-code">Translate</span> — accepts <span class="inline-code">behavior:</span>.
-		A tween follows a duration and a curve; a spring follows stiffness, damping and mass, so it settles
-		naturally and can overshoot.
+		<span class="inline-code">Translate</span> — accepts <span class="inline-code">behavior:</span>
+		with <span class="inline-code">spring(k, c[, m])</span> or a preset
+		(<span class="inline-code">snappy</span>, <span class="inline-code">bouncy</span>,
+		<span class="inline-code">gentle</span>, <span class="inline-code">default</span>). A spring
+		follows stiffness, damping and mass, so it settles naturally and can overshoot.
 	</p>
 	<CodeBlock lang="Seq" code={seqSpringsHtml} />
-	<p class="note">
-		<span class="inline-code">spring(k, c)</span> uses mass 1 and
-		<span class="inline-code">spring(k, c, m)</span> sets it explicitly. Presets are
-		<span class="inline-code">snappy</span>, <span class="inline-code">bouncy</span>,
-		<span class="inline-code">gentle</span> and <span class="inline-code">default</span>.
-	</p>
 
 	<h2>Typed .seq bindings</h2>
 	<p>
-		<span class="inline-code">include_seq!</span> calls the parser at compile time and expands to a typed
-		builder. Every <span class="inline-code">prop</span> becomes a
+		<span class="inline-code">include_seq!</span> parses the file and its imports at compile time and
+		expands to a typed builder: every <span class="inline-code">prop</span> becomes a
 		<span class="inline-code">prop_*</span> method with the matching
 		<span class="inline-code">Signal&lt;T&gt;</span>, and every
 		<span class="inline-code">on</span> declaration becomes an
-		<span class="inline-code">on_*</span> method with matching arguments — a wrong name or signature is a
-		compile error, not a runtime load failure. Imports are parsed recursively and embedded with
-		<span class="inline-code">include_str!</span>, so editing any imported
-		<span class="inline-code">.seq</span> file rebuilds the crate.
+		<span class="inline-code">on_*</span> method. A wrong name or signature is a compile error, not a
+		runtime load failure. The macro is re-exported by <span class="inline-code">sequoia-ui</span>.
 	</p>
 	<CodeBlock lang="Rust" code={seqTypedHtml} />
 	<ul>
 		<li>
 			<strong>Callbacks.</strong> <span class="inline-code">on_*</span> handles
-			<span class="inline-code">()</span>, a single
-			<span class="inline-code">Int</span>/<span class="inline-code">Float</span>/<span
-				class="inline-code">String</span
-			>/<span class="inline-code">Bool</span>, points, named points and wheel deltas; a
+			<span class="inline-code">()</span>, scalars, points, named points and wheel deltas; a
 			<span class="inline-code">(Float, Float, Float)</span> callback also gets an
 			<span class="inline-code">on_*_pinch</span> variant.
 		</li>
 		<li>
-			<strong>Escape hatch.</strong> <span class="inline-code">configure(|b| ...)</span> adds env values,
-			memos, rows and resources that are not declared in the file.
-		</li>
-		<li>
-			<strong>No extra crate needed.</strong> <span class="inline-code">sequoia-ui</span> re-exports the
-			macro as <span class="inline-code">sequoia_ui::include_seq</span> (also available from the
-			prelude).
+			<strong>Escape hatch.</strong> <span class="inline-code">configure(|b| ...)</span> adds env
+			values, memos, rows and resources that are not declared in the file.
 		</li>
 	</ul>
 	<p class="note">
@@ -573,18 +539,17 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 
 	<h2>Render the scene</h2>
 	<p>
-		A scene is an ordinary <span class="inline-code">Canvas</span>: draw a rounded card and a sphere into
-		an offscreen group, then draw the glass shader over it. Exporting is the same view tree you would
-		hand to a window.
+		A scene is an ordinary <span class="inline-code">Canvas</span>; exporting renders the same view
+		tree you would hand to a window.
 	</p>
 
 	<CodeBlock lang="Rust" code={exportHtml} />
 
 	<h2>Shaders without a window</h2>
 	<p>
-		The <span class="inline-code">shader!</span> macro still produces typed WGSL, but the headless
-		rasterizer cannot execute it. A shader used during export needs a CPU implementation with the same
-		uniforms and sampling. Registering it by name is all the exporter needs.
+		<span class="inline-code">shader!</span> still produces typed WGSL, but the CPU rasterizer cannot
+		execute it. A shader used during export needs a <span class="inline-code">CpuShader</span> with the
+		same uniforms and sampling, registered with <span class="inline-code">Exporter::shader</span>.
 	</p>
 
 	<CodeBlock lang="Rust" code={shaderHtml} />
@@ -592,28 +557,25 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<div class="callout">
 		<strong>Fallback behaviour</strong>
 		A shader without a registered <span class="inline-code">CpuShader</span> is skipped with a warning
-		instead of failing the whole export. File-backed textures are not available to CPU shaders; use
+		instead of failing the export. File-backed textures are not available to CPU shaders; use
 		<span class="inline-code">TexInput::Target</span> or RGBA data instead.
 	</div>
 
 	<h2>The glassmorphism demo</h2>
 	<p>
-		The example is deliberately small: a rounded card with a dot grid and three drifting colour lights,
-		and one frosted panel in the middle. The background is drawn into a capture target; the
-		<span class="inline-code">glass</span> shader samples a 12-tap blur of it, tints the result milky,
-		then adds a soft border and a diagonal reflection. Because the lights orbit, the colour behind the
-		panel keeps moving.
+		A rounded card with a dot grid, three drifting colour lights and one frosted panel. The
+		<span class="inline-code">glass</span> shader samples a 12-tap blur of the captured backdrop,
+		tints it milky, then adds a soft border and a diagonal reflection.
 	</p>
 
 	<CodeBlock lang="Terminal" code={commandHtml} />
 
 	<h2>16-bit intermediates</h2>
 	<p>
-		The compositor can now keep an intermediate at 16-bit float precision. Twenty translucent
-		gradients into an <span class="inline-code">Rgba8</span> target round after every blend; the same
-		twenty into <span class="inline-code">Rgba16Float</span> stay smooth until the final tone-mapped
-		pass. Each target carries its own format through <span class="inline-code">RenderList</span>, and
-		the renderer builds the matching pipeline per format.
+		Intermediate targets can stay at 16-bit float precision. Twenty translucent gradients into
+		<span class="inline-code">Rgba8</span> round after every blend; the same layers into
+		<span class="inline-code">Rgba16Float</span> stay smooth until the final tone-mapped pass. Each
+		target carries its own format through <span class="inline-code">RenderList</span>.
 	</p>
 
 	<figure class="shot">
@@ -633,9 +595,8 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<h2>Shaders on photos</h2>
 	<p>
 		A photo is just another texture input. <span class="inline-code">photo_curve</span> applies an
-		S-curve around mid-grey, lifts the shadows slightly, then adds saturation and a warm tint. The
-		same uniforms drive the window and the headless <span class="inline-code">Exporter</span>, so the
-		figure below is the exported frame, not a screenshot.
+		S-curve, lifts the shadows, then adds saturation and warmth. The same uniforms drive the window
+		and the headless export, so the figure below is the exported frame, not a screenshot.
 	</p>
 
 	<figure class="shot">
@@ -651,17 +612,11 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 
 	<CodeBlock lang="Rust" code={photoHtml} />
 
-	<p class="note">
-		The 0.1.6 figures were rendered headlessly. Run
-		<span class="inline-code">cargo run --example photo_lab -p sequoia-ui</span> for the current
-		shader and LUT demo.
-	</p>
-
 	<h2>3D LUTs on the GPU</h2>
 	<p>
 		<span class="inline-code">Sampler3D</span> binds an Adobe/IRIDAS
-		<span class="inline-code">.cube</span> table as a <span class="inline-code">texture_3d</span>. The shader
-		samples the photo, then looks each colour up in the LUT; the sampler interpolates the table
+		<span class="inline-code">.cube</span> table as a <span class="inline-code">texture_3d</span>. The
+		shader samples the photo, then looks each colour up in the LUT; the sampler interpolates
 		trilinearly, so the result matches a photo editor applying the same table.
 	</p>
 
@@ -680,64 +635,78 @@ document.add_block(BlockType::Quote, <span class="str">"Blocks, not a text buffe
 	<CodeBlock lang="Rust" code={lutHtml} />
 
 	<p class="note">
-		<span class="inline-code">cargo run --example photo_lab -p sequoia-ui</span> applies the same
+		The 0.1.6 figures were rendered headlessly. Run
+		<span class="inline-code">cargo run --example photo_lab -p sequoia-ui</span> for the same
 		<span class="inline-code">.cube</span> tables over a painting. Only 3D tables with the default
-		<span class="inline-code">DOMAIN_MIN/DOMAIN_MAX</span> are accepted; 1D and 2D LUTs are rejected with a
-		warning.
+		<span class="inline-code">DOMAIN_MIN/DOMAIN_MAX</span> are accepted; 1D and 2D LUTs warn.
+	</p>
+
+	<h2>Frame metrics</h2>
+	<p>
+		<span class="inline-code">App::on_frame_metrics</span> runs on the UI thread after every
+		presented frame. <span class="inline-code">FrameMetrics</span> carries wall-clock phase
+		timings, renderer counters, runtime statistics, element and state counts, and the physical
+		surface size. The benchmark harness uses the same data.
+	</p>
+	<CodeBlock lang="Rust" code={frameMetricsHtml} />
+
+	<h2>GPU surfaces in paint order</h2>
+	<p>
+		<span class="inline-code">WgpuSurface</span> embeds a raw
+		<span class="inline-code">wgpu</span> pass in the normal layout. In 0.1.6 the result
+		composites at the view's paint position, so ordinary widgets can cover it or be covered by
+		it. Both <span class="inline-code">wgpu_surface</span> examples follow the same contract.
+	</p>
+	<CodeBlock lang="Rust" code={surfaceHtml} />
+	<p class="note">
+		Run <span class="inline-code">cargo run --example wgpu_surface -p sequoia-ui</span> or
+		<span class="inline-code">wgpu_surface_cached</span> to see direct and cached modes.
 	</p>
 
 	<h2>Performance notes</h2>
 	<p>
-		Export is CPU rasterization: every pixel of every frame is shaded and composited, then GIF frames are
-		palette-quantized. On the 640×480, 24-frame demo this takes about 9.5 s in a release build, of which
-		roughly 7 s is GIF quantization. A debug build is about 11× slower, so use
-		<span class="inline-code">--release</span> for real exports.
+		Export is CPU rasterization: each pixel is shaded and composited, then GIF frames are
+		palette-quantized. The 640×480, 24-frame demo takes about 9.5 s in release, roughly 7 s of it
+		quantization. Debug is about 11× slower, so use <span class="inline-code">--release</span>.
 	</p>
 	<ul>
-		<li>Lower <span class="inline-code">scale</span>, fps or frame count while iterating on a scene.</li>
-		<li>Prefer <span class="inline-code">export_video</span> or <span class="inline-code">export_frames</span> for longer animations.</li>
-		<li>GIF output size scales with pixels × frames, not with scene complexity.</li>
+		<li>Lower <span class="inline-code">scale</span>, fps or frame count while iterating.</li>
+		<li>Prefer <span class="inline-code">export_video</span> or <span class="inline-code">export_frames</span> for longer clips.</li>
+		<li>GIF size scales with pixels × frames, not scene complexity.</li>
 	</ul>
 
 	<h2>Upgrade notes</h2>
 	<ul>
 		<li>
 			<span class="inline-code">export_png</span>, <span class="inline-code">render_to_image</span>,
-			<span class="inline-code">export_gif</span>, <span class="inline-code">render_animation</span> and
-			<span class="inline-code">export_frames</span> keep their signatures.
+			<span class="inline-code">export_gif</span>, <span class="inline-code">render_animation</span>
+			and <span class="inline-code">export_frames</span> keep their signatures; new entry points are
+			<span class="inline-code">Exporter</span>, <span class="inline-code">CpuShader</span> and
+			<span class="inline-code">export_video</span>.
 		</li>
 		<li>
-			New entry points: <span class="inline-code">Exporter</span>,
-			<span class="inline-code">CpuShader</span> and <span class="inline-code">export_video</span>.
+			<span class="inline-code">.seq</span> expressions resolve in component arguments and
+			<span class="inline-code">style</span> blocks, and every attribute expression over a host
+			value is reactive. Literal-only expressions still evaluate once.
+		</li>
+		<li>
+			<span class="inline-code">enter:</span>/<span class="inline-code">exit:</span> chains work on
+			any node, and <span class="inline-code">behavior: spring(k, c[, m])</span> wins over
+			<span class="inline-code">animate:</span>. An
+			<span class="inline-code">exit:</span> chain still needs a presence transition
+			(<span class="inline-code">If</span>).
+		</li>
+		<li>
+			<span class="inline-code">include_seq!</span> is new: declared props and callbacks become
+			typed builder methods, and a mismatched name or signature is a compile error.
+		</li>
+		<li>
+			<span class="inline-code">FrameMetrics</span>, <span class="inline-code">Rebuild</span> and
+			paint-ordered <span class="inline-code">WgpuSurface</span> are additive; existing views keep
+			their signatures.
 		</li>
 		<li>Animations still advance the frame clock between frames, so time-based scenes loop cleanly.</li>
-		<li>
-			<span class="inline-code">.seq</span> expressions now also resolve in component arguments and
-			<span class="inline-code">style</span> blocks. Every attribute expression over a host value is
-			reactive, including plain numeric attributes such as
-			<span class="inline-code">Text(size:)</span>; expressions made only of literals still evaluate
-			once.
-		</li>
-		<li>
-			New motion syntax: <span class="inline-code">enter:</span>/<span class="inline-code">exit:</span>
-			chains on any node, and <span class="inline-code">behavior: spring(k, c[, m])</span> or the
-			<span class="inline-code">snappy</span>/<span class="inline-code">bouncy</span>/<span
-				class="inline-code">gentle</span
-			>
-			presets. When both <span class="inline-code">animate:</span> and
-			<span class="inline-code">behavior:</span> are set, the spring wins. An
-			<span class="inline-code">exit:</span> chain still needs a presence transition, so it applies
-			to <span class="inline-code">If</span> subtrees.
-		</li>
-		<li>
-			<span class="inline-code">include_seq!</span> is new
-			(<span class="inline-code">sequoia-seq-macros</span>, re-exported by
-			<span class="inline-code">sequoia-ui</span>). Declared props and callbacks become typed builder
-			methods; a mismatched name or signature is a compile error.
-		</li>
-		<li>
-			Parser, checker and lowering diagnostics are now reported in English instead of Polish.
-		</li>
+		<li>Parser, checker and lowering diagnostics are now reported in English instead of Polish.</li>
 	</ul>
 
 	<div class="release-nav">

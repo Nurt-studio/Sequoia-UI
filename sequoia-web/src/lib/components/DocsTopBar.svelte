@@ -1,7 +1,7 @@
 <script>
 	import { nav } from '../navigation.svelte.js';
 
-	let { version = '0.1.5' } = $props();
+	let { version = '0.1.6' } = $props();
 
 	/** @param {string} page */
 	function goto(page) {
