@@ -105,6 +105,49 @@ fn main() {
 displays frame statistics in the window title. Do not enable continuous mode
 for a mostly static UI; it keeps the GPU busy and drains battery.
 
+## Frame metrics
+
+`App::on_frame_metrics` receives a `FrameMetrics` value after every frame has
+been ticked, laid out, painted, and submitted to the GPU. The callback runs on
+the UI thread, and the first call covers the startup frame:
+
+```rust,no_run
+use sequoia_ui::prelude::*;
+
+fn main() {
+    App::new()
+        .root(Text::new("Metrics"))
+        .on_frame_metrics(|m| {
+            println!(
+                "gap {:.2} ms, tick {:.2} ms, layout {:.2} ms, paint {:.2} ms, render {:.2} ms",
+                m.gap_ms, m.tick_ms, m.layout_ms, m.paint_ms, m.render_ms
+            );
+        })
+        .run()
+        .expect("event loop failed");
+}
+```
+
+The phase timings are wall-clock milliseconds and exclude the vertical-blank
+wait. `gap_ms` measures the interval between consecutive frame starts, so it
+includes any presentation wait. `render_ms` is CPU-side encode and submit time,
+not GPU execution time.
+
+`FrameMetrics` also carries workload data:
+
+- `render` holds per-frame renderer counters such as draw calls, passes,
+  instances, culled views, and dropped instances.
+- `runtime` holds cumulative runtime counters: mounts, unmounts, rebuilds,
+  measure invalidations, and errors.
+- `elements` and `states` report live view-tree elements and allocated state
+  slots.
+- `width`, `height`, and `scale` describe the physical surface size and DPI
+  scale used for the frame.
+
+Keep the callback light. It runs for every painted frame, so accumulate values
+or print at a lower rate instead of formatting output on each frame. The same
+data drives the release benchmark harness.
+
 ## Closing a window
 
 Clicking the close button calls the window's close handler, if one is

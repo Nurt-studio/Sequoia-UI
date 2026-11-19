@@ -11,6 +11,7 @@ cargo run -p sequoia-ui --example form
 cargo run -p sequoia-ui --example photo_lab
 cargo run -p sequoia-ui --example seq_dashboard
 cargo run -p sequoia-ui --example split-panel
+cargo run -p sequoia-ui --example dock
 cargo run -p sequoia-ui --example wgpu_surface
 cargo run -p sequoia-ui --example wgpu_surface_cached
 ```
@@ -37,6 +38,14 @@ for the name of a widget or a style preset.
 
 A resizable two-pane layout. It shows how to keep a split ratio in a signal,
 clamp it while dragging, and rebuild only the panes that depend on it.
+
+## Dock
+
+`dock` is a small IDE shell built on `DockModel` and `DockView`. The default
+layout docks an explorer, editor/preview tabs, a console, and an inspector;
+the toolbar resets the layout, floats the inspector, and saves or loads it
+through `DockLayoutStore`. Drag a tab onto another panel to dock it, near an
+edge to split, or hold Alt while dropping to float it.
 
 ## Form
 
@@ -117,17 +126,14 @@ load the existing frame with `wgpu::LoadOp::Load`. See
 
 ## Complete applications
 
-The workspace root also contains two larger applications:
+The workspace also contains one larger application:
 
 ```text
 cargo run -p paint
-cargo run -p vision-design
 ```
 
-- `paint` is a desktop painting app with a dock layout, toolbars, and canvas
-  tools.
-- `vision-design` is the editor from the README screenshot: canvas, layers,
-  property inspector, and code generation.
+`paint` is a desktop painting app with a dock layout, toolbars, and canvas
+tools.
 
 ## Read examples like documentation
 
@@ -139,6 +145,7 @@ Read them in this order when learning the API:
 3. `form` for derived state and validation.
 4. `showcase` for the widget inventory.
 5. `seq_dashboard` for the declarative language.
+6. `dock` for model-driven docking and layout persistence.
 
 ## Add your own example
 

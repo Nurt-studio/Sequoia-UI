@@ -141,7 +141,8 @@ let dock = DockView::new(model.clone(), |panel| {
 
 The renderer should be pure and keyed by `PanelId`; keep all mutable state in
 signals. The same renderer can be shared by `DockView`, `DockFloatLayer`, and a
-detached-window root.
+detached-window root. See `crates/sequoia-ui/examples/dock.rs` for a complete
+shell with a toolbar, persistence, and a floating-panel toggle.
 
 `DockView` has no style builder and no background. Its tab strip and split
 handles use fixed colors, so put it in a `Container` if the surrounding shell

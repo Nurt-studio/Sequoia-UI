@@ -260,7 +260,9 @@ your own attachment in the callback.
 ## Direct and cached rendering
 
 By default a surface draws directly into the window scene during the normal
-paint pass. Each frame that paints the surface invokes `WgpuRenderer::render`.
+paint pass. It composites at the view's paint position, so earlier siblings
+paint underneath it and later siblings paint on top. Each frame that paints the
+surface invokes `WgpuRenderer::render`.
 
 With `.cached(true)`, the host allocates an offscreen texture for the surface,
 clears it, calls `render` once, and then composites the texture. While the

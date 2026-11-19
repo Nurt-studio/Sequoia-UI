@@ -92,6 +92,33 @@ front of a `Column` therefore shifts every child's identity, which can reset
 state in the shifted children. Use an explicit keyed list when items can be
 reordered, inserted, or removed.
 
+## Rebuilding subtrees
+
+`Rebuild` wraps a view whose body should be rebuilt when a tracked signal
+changes, without rebuilding the enclosing view:
+
+```rust
+# use sequoia_ui::prelude::*;
+let selected = Signal::new(0usize);
+let initial = AnyView::new(Text::new("No selection"));
+let detail = Rebuild::new(initial, {
+    let selected = selected.clone();
+    move || {
+        let index = selected.get();
+        AnyView::new(Text::new(format!("Selected item {index}")))
+    }
+});
+
+let _ = detail;
+```
+
+The closure runs inside the runtime's read-capture scope, so every `Signal::get`
+or `Memo::get` it performs subscribes the element. Layout properties come from
+the most recently built child, so the wrapper sizes like its contents. Use it
+when a frequently changing branch is large enough that rebuilding the parent
+body would do unnecessary work; otherwise `Text::with` or a keyed list is
+simpler.
+
 ## Keyed lists
 
 `List` runs an item closure inside a reactive scope and reconciles the result
