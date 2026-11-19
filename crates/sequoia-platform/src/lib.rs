@@ -14,7 +14,7 @@ use sequoia_reactive::Environment;
 use sequoia_render::{GpuOptions, GpuRenderer, PreinitGpu, RenderError, preinit_gpu};
 use sequoia_style::Theme;
 use sequoia_text::TextSystem;
-use sequoia_view::{AnyView, CullCtx, FrameOutcome, Runtime, View};
+use sequoia_view::{AnyView, CullCtx, FrameOutcome, Runtime, Stats as RuntimeStats, View};
 
 mod cli;
 mod clipboard;
@@ -281,6 +281,40 @@ struct FrameHooks {
     end: Option<Rc<dyn Fn()>>,
 }
 
+/// Timing and workload data for one completed frame.
+///
+/// Delivered to [`App::on_frame_metrics`] after the frame has been ticked,
+/// laid out, painted, and submitted to the GPU. Times are wall-clock
+/// milliseconds and exclude the vertical-blank wait; `gap_ms` is the interval
+/// between consecutive frame starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FrameMetrics {
+    /// Time since the previous frame started, including any presentation wait.
+    pub gap_ms: f64,
+    /// Reactive tick and pending rebuild time.
+    pub tick_ms: f64,
+    /// Layout pass time.
+    pub layout_ms: f64,
+    /// Paint list generation time.
+    pub paint_ms: f64,
+    /// Renderer encode/submit time. This is CPU-side cost, not GPU time.
+    pub render_ms: f64,
+    /// Renderer counters for this frame.
+    pub render: RenderStats,
+    /// Cumulative runtime work counters at the end of this frame.
+    pub runtime: RuntimeStats,
+    /// Number of live elements in the view tree.
+    pub elements: usize,
+    /// Number of allocated view-state slots.
+    pub states: usize,
+    /// Physical surface width in pixels.
+    pub width: u32,
+    /// Physical surface height in pixels.
+    pub height: u32,
+    /// DPI scale used for the frame.
+    pub scale: f32,
+}
+
 pub struct App {
     windows: Vec<WindowSpec>,
     theme: Theme,
@@ -294,6 +328,7 @@ pub struct App {
     shader_watch: Option<std::path::PathBuf>,
     bench_frames: Option<u32>,
     hooks: FrameHooks,
+    metrics: Option<Rc<dyn Fn(FrameMetrics)>>,
 }
 
 impl Default for App {
@@ -315,6 +350,7 @@ impl Default for App {
             shader_watch: None,
             bench_frames: None,
             hooks: FrameHooks::default(),
+            metrics: None,
         }
     }
 }
@@ -729,6 +765,16 @@ impl App {
         self
     }
 
+    /// Runs `f` on the UI thread with structured timing data for every frame.
+    ///
+    /// The callback receives phase timings, renderer counters, and cumulative
+    /// runtime statistics. Use it to drive a benchmark or an in-app profiler;
+    /// the first callback covers the startup frame that mounts the view tree.
+    pub fn on_frame_metrics(mut self, f: impl Fn(FrameMetrics) + 'static) -> Self {
+        self.metrics = Some(Rc::new(f));
+        self
+    }
+
     pub fn scale_factor(mut self, scale: f64) -> Self {
         self.primary_mut().settings.scale_override = Some(scale);
         self
@@ -810,6 +856,7 @@ impl App {
             backend: self.backend,
             bench: bench.clone(),
             hooks: self.hooks,
+            metrics: self.metrics,
             redraw_mode: self.redraw_mode,
             assets: self.assets,
             accelerators: self.accelerators,
@@ -1054,6 +1101,8 @@ struct WindowState {
     bench: Option<Rc<RefCell<Bench>>>,
 
     hooks: FrameHooks,
+
+    metrics: Option<Rc<dyn Fn(FrameMetrics)>>,
 }
 
 impl WindowState {
@@ -1153,15 +1202,35 @@ impl WindowState {
             );
         }
         note_frame(gap_ms, tick_ms, layout_ms, paint_ms, render_ms);
+        let render_stats = if self.bench.is_some() || self.metrics.is_some() {
+            Some(self.gpu.take_stats())
+        } else {
+            None
+        };
         if let Some(bench) = &self.bench {
-            let stats = self.gpu.take_stats();
             bench.borrow_mut().sample(BenchSample {
                 gap_ms,
                 tick_ms,
                 layout_ms,
                 paint_ms,
                 render_ms,
-                stats,
+                stats: render_stats.unwrap_or_default(),
+            });
+        }
+        if let (Some(metrics), Some(render)) = (&self.metrics, render_stats) {
+            metrics(FrameMetrics {
+                gap_ms,
+                tick_ms,
+                layout_ms,
+                paint_ms,
+                render_ms,
+                render,
+                runtime: self.rt.stats(),
+                elements: self.rt.element_count(),
+                states: self.rt.state_count(),
+                width: size.width,
+                height: size.height,
+                scale: s,
             });
         }
         if self.settings.show_fps {
@@ -1464,6 +1533,7 @@ struct PlatformApp {
     shader_watch: Option<ShaderWatch>,
     bench: Option<Rc<RefCell<Bench>>>,
     hooks: FrameHooks,
+    metrics: Option<Rc<dyn Fn(FrameMetrics)>>,
 }
 
 impl PlatformApp {
@@ -1788,6 +1858,7 @@ impl PlatformApp {
             list: RenderList::new(),
             bench: self.bench.clone(),
             hooks: self.hooks.clone(),
+            metrics: self.metrics.clone(),
         };
 
         {
