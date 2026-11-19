@@ -224,7 +224,7 @@
 			<span class="eyebrow-tag">Performance (0.1.6)</span>
 			<span class="eyebrow-date">Released November 19, 2026</span>
 		</div>
-		<h1>0.1.6 vs <span>0.1.5</span>: faster heavy scenes, less GPU work.</h1>
+		<h1>{oldVersion} vs <span>{newVersion}</span>: faster heavy scenes, less GPU work.</h1>
 		<p class="lede">
 			The same 100, 1,000 and 3,000-node scenes on one Windows 11 machine. 0.1.6 reaches
 			the first frame sooner in the 3,000-node scenes, holds 60 fps, and cuts GPU time.

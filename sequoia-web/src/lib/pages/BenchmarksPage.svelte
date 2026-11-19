@@ -206,7 +206,7 @@
 				onclick={(e) => {
 					e.preventDefault();
 					nav.page = 'compare-0.1.6';
-				}}>0.1.6 vs 0.1.5 benchmark comparison &rarr;</a
+				}}>0.1.5 vs 0.1.6 benchmark comparison &rarr;</a
 			>
 			<a href="#method" class="hero-link">How it was measured &rarr;</a>
 		</div>

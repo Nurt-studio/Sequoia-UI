@@ -277,7 +277,7 @@ const surfaceHtml = `<span class="kw">use</span> sequoia_ui::platform::{WgpuFram
 			onclick={(e) => {
 				e.preventDefault();
 				nav.page = 'compare-0.1.6';
-			}}>See the 0.1.6 vs 0.1.5 benchmark comparison &rarr;</a
+			}}>See the 0.1.5 vs 0.1.6 benchmark comparison &rarr;</a
 		>
 	</header>
 
