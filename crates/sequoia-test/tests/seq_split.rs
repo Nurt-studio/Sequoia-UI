@@ -105,7 +105,7 @@ fn needs_exactly_two_panes() {
         check("Main.seq", &app).unwrap();
         let err = match SeqLoader::load_str("Main.seq", &src) {
             Err(e) => e,
-            Ok(_) => panic!("oczekiwano bledu"),
+            Ok(_) => panic!("expected error"),
         };
         assert!(err.message.contains("2"), "{err}");
     }
@@ -120,7 +120,7 @@ fn bad_axis_is_rejected() {
     check("Main.seq", &app).unwrap();
     let err = match SeqLoader::load_str("Main.seq", &src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("axis"), "{err}");
 }

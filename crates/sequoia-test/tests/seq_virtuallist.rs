@@ -121,7 +121,7 @@ fn missing_items_is_rejected() {
     check("Main.seq", &app).unwrap();
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("items"), "{err}");
 }
@@ -131,7 +131,7 @@ fn static_needs_host() {
     let src = "app A {\n  title: \"A\"\n  size: (400, 200)\n  window M {\n    VirtualList(items: songs, key: id) {\n      Text(\"x\")\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("hosta"), "{err}");
 }

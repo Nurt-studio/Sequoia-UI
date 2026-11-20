@@ -37,7 +37,7 @@ fn bad_stack_pos_reports_line() {
     check("Main.seq", &app).unwrap();
     let err = match SeqLoader::load_str("Main.seq", &src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("at to"), "{err}");
 }

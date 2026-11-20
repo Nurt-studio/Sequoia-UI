@@ -33,7 +33,7 @@ const LIB: &str =
 
 fn err_of(file: &str, src: &str, files: &[(&str, &str)]) -> sequoia_seq::SeqError {
     match SeqLoader::load_str_map(file, src, files) {
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
         Err(e) => e,
     }
 }

@@ -146,7 +146,7 @@ fn text_style_with_dynamic_subscribes() {
 fn style_err(src: &str) -> String {
     match SeqLoader::load_str("S.seq", src) {
         Err(e) => e.message,
-        Ok(_) => panic!("oczekiwano bledu: {src}"),
+        Ok(_) => panic!("expected error: {src}"),
     }
 }
 
@@ -155,7 +155,7 @@ fn unknown_style_is_rejected() {
     let m = style_err(
         "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Container(style: Ghost)\n  }\n}\n",
     );
-    assert!(m.contains("nieznany styl 'Ghost'"), "{m}");
+    assert!(m.contains("unknown style 'Ghost'"), "{m}");
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn style_duplicate_is_rejected() {
     let m = style_err(
         "app A {\n  title: \"A\"\n  size: (10, 10)\n  style Card: Box {\n    background: #FFFFFF\n  }\n  style Card: Box {\n    background: #000000\n  }\n  window M {\n    Container(style: Card)\n  }\n}\n",
     );
-    assert!(m.contains("dwa razy"), "{m}");
+    assert!(m.contains("defined twice"), "{m}");
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn style_cycle_is_rejected() {
     let m = style_err(
         "app A {\n  title: \"A\"\n  size: (10, 10)\n  style A1: Box extends B1 {\n    radius: 1\n  }\n  style B1: Box extends A1 {\n    radius: 2\n  }\n  window M {\n    Container(style: A1)\n  }\n}\n",
     );
-    assert!(m.contains("cykliczne"), "{m}");
+    assert!(m.contains("cyclic"), "{m}");
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn style_text_two_weights_rejected() {
     let m = style_err(
         "app A {\n  title: \"A\"\n  size: (10, 10)\n  style T: Text {\n    bold: true\n    light: true\n  }\n  window M {\n    Text(\"x\", style: T)\n  }\n}\n",
     );
-    assert!(m.contains("jedna flaga"), "{m}");
+    assert!(m.contains("single weight flag"), "{m}");
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn theme_missing_file_reports_line() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  theme: \"nie-ma.json\"\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let err = match SeqLoader::load_str("S.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("nie-ma.json"), "{err}");
 }

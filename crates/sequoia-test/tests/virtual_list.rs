@@ -387,7 +387,7 @@ fn scrollbar_paints_only_when_scrollable() {
     assert_eq!(
         small.paint().quads().count(),
         0,
-        "3 wiersze < viewport: brak paska"
+        "3 rows < viewport: no bar"
     );
 
     let big = harness(1000);

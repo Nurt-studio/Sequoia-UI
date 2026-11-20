@@ -280,11 +280,11 @@ fn backdrop_instance_scales_to_physical_pixels() {
         &backdrop_span(Rect::from_xywh(10.0, 20.0, 200.0, 100.0), 16.0),
         2.0,
     )
-    .expect("widoczny marker");
+    .expect("visible marker");
     assert_eq!(inst.rect, [20.0, 40.0, 400.0, 200.0]);
     assert_eq!(inst.params[0], 32.0, "blur 16 * scale 2");
     assert_eq!(inst.params[2], 16.0, "radius 8 * scale 2");
-    assert_eq!(inst.clip_rect, [0.0; 4], "brak clipu");
+    assert_eq!(inst.clip_rect, [0.0; 4], "no clip");
 }
 
 #[test]

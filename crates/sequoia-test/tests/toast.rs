@@ -90,9 +90,9 @@ fn zero_ttl_expires_on_first_paint() {
     );
 
     settle(&h);
-    assert!(q.is_empty(), "zero ttl znika przy pierwszym paincie");
+    assert!(q.is_empty(), "zero ttl disappears on first paint");
     settle(&h);
-    assert!(h.overlay_ids().is_empty(), "brak overlay po wygaszeniu");
+    assert!(h.overlay_ids().is_empty(), "no overlay after fade out");
 }
 
 #[test]

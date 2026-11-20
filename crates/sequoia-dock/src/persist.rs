@@ -16,10 +16,10 @@ impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DecodeError::Expected { what, pos } => {
-                write!(f, "dock: oczekiwano {what} @{pos}")
+                write!(f, "dock: expected {what} @{pos}")
             }
             DecodeError::Number { pos } => write!(f, "dock: wrong number @{pos}"),
-            DecodeError::Trailing { pos } => write!(f, "dock: nadmiar danych @{pos}"),
+            DecodeError::Trailing { pos } => write!(f, "dock: extra data @{pos}"),
         }
     }
 }
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(back, again);
         match back.root {
             Some(DockNode::Split { .. }) => {}
-            other => panic!("oczekiwano splitu, jest {other:?}"),
+            other => panic!("expected split, got {other:?}"),
         }
     }
 

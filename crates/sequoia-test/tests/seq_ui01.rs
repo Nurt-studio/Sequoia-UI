@@ -10,7 +10,7 @@ fn app_with(body: &str) -> String {
 fn loads(src: &str) {
     let loaded = match SeqLoader::load_str("Main.seq", src) {
         Ok(l) => l,
-        Err(e) => panic!("oczekiwano load ok: {e}"),
+        Err(e) => panic!("expected load ok: {e}"),
     };
     let h = Harness::new(loaded.view);
     h.layout(400.0, 300.0);
@@ -20,7 +20,7 @@ fn loads(src: &str) {
 
 fn load_err(src: &str) -> sequoia_seq::SeqError {
     match SeqLoader::load_str("Main.seq", src) {
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
         Err(e) => e,
     }
 }
@@ -81,7 +81,7 @@ fn container_per_side_borders_paint() {
     );
     let loaded = match SeqLoader::load_str("Main.seq", &src) {
         Ok(l) => l,
-        Err(e) => panic!("oczekiwano load ok: {e}"),
+        Err(e) => panic!("expected load ok: {e}"),
     };
     let h = Harness::new(loaded.view);
     h.layout(400.0, 300.0);
@@ -94,7 +94,7 @@ fn panel_per_side_borders_paint() {
     let src = app_with("    Panel(width: px(120), height: px(60), border_x: [3, #00FF00])");
     let loaded = match SeqLoader::load_str("Main.seq", &src) {
         Ok(l) => l,
-        Err(e) => panic!("oczekiwano load ok: {e}"),
+        Err(e) => panic!("expected load ok: {e}"),
     };
     let h = Harness::new(loaded.view);
     h.layout(400.0, 300.0);

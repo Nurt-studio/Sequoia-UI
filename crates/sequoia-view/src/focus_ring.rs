@@ -189,7 +189,7 @@ mod tests {
         let r = Rect::from_xywh(10.0, 20.0, 100.0, 40.0);
         assert_eq!(ring_rect(r, 2.0), Rect::from_xywh(8.0, 18.0, 104.0, 44.0));
         assert_eq!(ring_rect(r, 0.0), r);
-        assert_eq!(ring_rect(r, -5.0), r, "ujemny offset = brak");
+        assert_eq!(ring_rect(r, -5.0), r, "negative offset = none");
     }
 
     #[test]

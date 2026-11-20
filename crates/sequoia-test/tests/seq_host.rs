@@ -68,7 +68,7 @@ fn prop_type_mismatch_reports_decl_line() {
     let b = HostBindings::new().prop_str("n", Signal::new("x".to_string()));
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(
         err.message.contains("Int") && err.message.contains("String"),
@@ -83,7 +83,7 @@ fn on_signature_mismatch_reports_decl_line() {
     let b = HostBindings::new().on("pick", || {});
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("does not match the host"), "{err}");
     assert_eq!(err.line, 4);
@@ -95,7 +95,7 @@ fn unknown_prop_reports_use_line() {
     let b = HostBindings::new();
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("nope"), "{err}");
     assert_eq!(err.line, 5);
@@ -117,7 +117,7 @@ fn unknown_callback_reports_call_line() {
     let b = HostBindings::new();
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("nope"), "{err}");
     assert_eq!(err.line, 5);

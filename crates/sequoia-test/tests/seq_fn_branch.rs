@@ -106,7 +106,7 @@ fn parse_tag_reads_tail() {
     click_button(&f.h, 3);
     assert_eq!(f.result.get_untracked(), 7);
     click_button(&f.h, 4);
-    assert_eq!(f.result.get_untracked(), -1, "brak liczby → -1");
+    assert_eq!(f.result.get_untracked(), -1, "no number → -1");
 }
 
 #[test]

@@ -213,7 +213,7 @@ fn if_requires_when() {
     check("Main.seq", &app).unwrap();
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("when"), "{err}");
 }
@@ -301,7 +301,7 @@ fn t_without_i18n_binding_is_rejected() {
     let b = HostBindings::new();
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("i18n"), "{err}");
 }
@@ -346,7 +346,7 @@ fn async_unknown_source_reports_line() {
     let b = HostBindings::new();
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("nope"), "{err}");
     assert_eq!(err.line, 5);

@@ -13,7 +13,7 @@ fn app(fn_src: &str, button: &str) -> String {
 fn err(src: &str) -> SeqError {
     match SeqLoader::load_str("Err.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu dla:\n{src}"),
+        Ok(_) => panic!("expected error dla:\n{src}"),
     }
 }
 
@@ -24,7 +24,7 @@ fn unknown_action_in_callback_reports_missing_host() {
     let src = app("", "Button(\"x\", on_click: { nope() })");
     let e = match SeqLoader::load_str_with("Err.seq", &src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(e.message.contains("unknown callback 'nope'"), "{e}");
 }
@@ -53,7 +53,7 @@ fn callback_arg_type_mismatch() {
         "  fn f(a: Int) { out = a; }",
         "Button(\"x\", on_click: { f(\"s\") })",
     ));
-    assert!(e.message.contains("podaje String"), "{e}");
+    assert!(e.message.contains("provides String"), "{e}");
     assert_eq!(e.line, 7, "linia callbacku: {e}");
 }
 
@@ -63,7 +63,7 @@ fn assign_to_param_is_rejected() {
         "  fn f(x: Int) { x = 1; }",
         "Button(\"x\", on_click: { f(1) })",
     ));
-    assert!(e.message.contains("niemutowalna"), "{e}");
+    assert!(e.message.contains("immutable"), "{e}");
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn return_type_mismatch() {
         "  fn f() -> Int { return \"s\"; }",
         "Button(\"x\", on_click: { f() })",
     ));
-    assert!(e.message.contains("oczekiwano Int"), "{e}");
+    assert!(e.message.contains("expected Int"), "{e}");
 }
 
 #[test]

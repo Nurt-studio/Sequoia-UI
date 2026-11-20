@@ -175,7 +175,7 @@ fn unknown_rows_prop_reports_use_line() {
     let b = HostBindings::new();
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("nope"), "{err}");
     assert_eq!(err.line, 5);
@@ -187,7 +187,7 @@ fn non_id_key_is_rejected() {
     let (_rows, b, _f, _t) = layers();
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("key"), "{err}");
     assert_eq!(err.line, 5);
@@ -198,7 +198,7 @@ fn static_list_requires_host() {
     let src = "app A {\n  title: \"A\"\n  size: (300, 200)\n  window M {\n    List(items: layers, key: id) {\n      Text(\"x\")\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("rows()"), "{err}");
 }
@@ -209,7 +209,7 @@ fn item_outside_list_is_rejected() {
     let (_rows, b, _f, _t) = layers();
     let err = match SeqLoader::load_str_with("Main.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("List"), "{err}");
     assert_eq!(err.line, 5);

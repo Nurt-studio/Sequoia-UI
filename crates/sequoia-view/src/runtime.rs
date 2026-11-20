@@ -1122,7 +1122,7 @@ impl Runtime {
             .slot
             .as_mut()
             .and_then(|b| b.downcast_mut::<S>())
-            .expect("slot ma typ S po sprawdzeniu is::<S>()");
+            .expect("slot has type S after checking is::<S>()");
         f(s)
     }
 

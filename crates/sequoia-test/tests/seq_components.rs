@@ -22,7 +22,7 @@ fn glyphs(h: &Harness) -> usize {
 fn loads(src: &str) -> Harness {
     let loaded = match SeqLoader::load_str("Main.seq", src) {
         Ok(l) => l,
-        Err(e) => panic!("oczekiwano load ok: {e}"),
+        Err(e) => panic!("expected load ok: {e}"),
     };
     let h = Harness::new(loaded.view);
     h.layout(400.0, 300.0);
@@ -33,7 +33,7 @@ fn loads(src: &str) -> Harness {
 
 fn load_err(src: &str) -> sequoia_seq::SeqError {
     match SeqLoader::load_str("Main.seq", src) {
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
         Err(e) => e,
     }
 }
@@ -200,7 +200,7 @@ fn second_app_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Text(\"x\")\n  }\n}\napp B {\n  title: \"B\"\n  size: (10, 10)\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let err = match parse("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("second `app` block"), "{err}");
 }
@@ -210,7 +210,7 @@ fn missing_app_rejected() {
     let src = "component Card(title: String) {\n  Text(text: title)\n}\n";
     let err = match parse("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("missing `app Name { }` block"), "{err}");
 }
@@ -223,7 +223,7 @@ fn component_inside_app_rejected() {
     );
     let err = match parse("Main.seq", &src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("outside `app`"), "{err}");
 }
@@ -269,7 +269,7 @@ fn empty_body_rejected() {
     let src = "component Card(title: String) {\n}\napp A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let err = match parse("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("at least 1 node"), "{err}");
 }
@@ -286,7 +286,7 @@ fn missing_param() {
         "component Card(title: String, sub: String) {\n  Text(text: title)\n}",
         "    Card(title: \"A\")",
     ));
-    assert!(err.message.contains("brakuje parametru 'sub'"), "{err}");
+    assert!(err.message.contains("missing parameter 'sub'"), "{err}");
 }
 
 #[test]
@@ -295,7 +295,7 @@ fn unknown_param() {
         "component Card(title: String) {\n  Text(text: title)\n}",
         "    Card(title: \"A\", extra: 1)",
     ));
-    assert!(err.message.contains("nieznany parametr 'extra'"), "{err}");
+    assert!(err.message.contains("unknown parameter 'extra'"), "{err}");
     assert!(err.message.contains("title"), "{err}");
 }
 
@@ -305,7 +305,7 @@ fn dup_param_arg() {
         "component Card(title: String) {\n  Text(text: title)\n}",
         "    Card(title: \"A\", title: \"B\")",
     ));
-    assert!(err.message.contains("dwa razy"), "{err}");
+    assert!(err.message.contains("defined twice"), "{err}");
 }
 
 #[test]
@@ -442,7 +442,7 @@ fn fanout_expansion_bomb_is_refused() {
     let src = with_comp(&comps, "    C0()");
 
     let app = parse("Main.seq", &src).expect("parsuje");
-    check("Main.seq", &app).expect("brak cykli — checker ok");
+    check("Main.seq", &app).expect("no cycles — checker ok");
     let err = load_err(&src);
     assert!(err.message.contains("budget"), "{err}");
 }

@@ -132,7 +132,7 @@ fn shape_outside_canvas_is_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Rect(x: 0, y: 0, w: 10, h: 10, fill: #FFFFFF)\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("Canvas"), "{err}");
 }
@@ -185,7 +185,7 @@ fn on_pinch_rejected_without_binding() {
     let src = "app B {\n  title: \"B\"\n  size: (300, 200)\n  on zoom_at(x: Float, y: Float, s: Float)\n  window M {\n    Canvas(on_pinch: { zoom_at(x, y, s) }) {\n      Rect(x: 40, y: 40, w: 120, h: 80, fill: #FFFFFF)\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str_with("P.seq", src, &HostBindings::new()) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("without binding"), "{err}");
 }
@@ -198,7 +198,7 @@ fn transformed_center(list: &sequoia_core::RenderList) -> sequoia_core::Point {
             return list.item_transform(i).apply(c);
         }
     }
-    panic!("oczekiwano jednego quada")
+    panic!("expected one quad")
 }
 
 fn pivot_case(rotate: &str, bindings: HostBindings) -> sequoia_core::Point {
@@ -255,7 +255,7 @@ fn group_pivot_outside_group_is_rejected() {
     let src = "app B {\n  title: \"B\"\n  size: (300, 300)\n  window M {\n    Canvas(width: fill(1), height: fill(1)) {\n      Rect(x: 0, y: 0, w: 10, h: 10, fill: #FFFFFF, pivot: (5, 5))\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str("P.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("pivot"), "{err}");
 }

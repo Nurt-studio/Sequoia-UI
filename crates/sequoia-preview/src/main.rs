@@ -25,10 +25,10 @@ fn parse_args(argv: &[String]) -> Result<Config, String> {
         match a.as_str() {
             "--watch" => watch = true,
             CHILD_FLAG => is_child = true,
-            s if s.starts_with("--") => return Err(format!("nieznana flaga '{s}'")),
+            s if s.starts_with("--") => return Err(format!("unknown flag '{s}'")),
             _ => {
                 if file.is_some() {
-                    return Err("podaj jeden plik .seq".to_string());
+                    return Err("provide one .seq file".to_string());
                 }
                 file = Some(PathBuf::from(a));
             }

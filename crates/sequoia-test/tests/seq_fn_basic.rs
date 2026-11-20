@@ -109,7 +109,7 @@ fn unknown_type_in_signature_is_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  fn f(x: Liczba) { }\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("nieznany typ parametru"), "{err}");
     assert_eq!(err.line, 4, "linia parametru: {err}");

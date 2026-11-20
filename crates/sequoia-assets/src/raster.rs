@@ -933,7 +933,7 @@ mod tests {
         assert_eq!(
             out.len(),
             1,
-            "pierwszy dash 1e6 jest widoczny, reszta przerwana"
+            "first dash 1e6 is visible, rest broken"
         );
     }
 

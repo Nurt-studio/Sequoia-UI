@@ -3,11 +3,11 @@
 use sequoia_ui::prelude::*;
 
 fn hello_world_app() -> App {
-    App::new().title("Moja aplikacja").size(800.0, 600.0).root(
+    App::new().title("My Application").size(800.0, 600.0).root(
         Column::new()
             .fill_size()
-            .child(Text::new("Witaj w Sequoia"))
-            .child(Button::new("Kliknij mnie").on_click(|| println!("klik!"))),
+            .child(Text::new("Welcome to Sequoia"))
+            .child(Button::new("Click me").on_click(|| println!("click!"))),
     )
 }
 
@@ -248,7 +248,7 @@ fn login_form() -> impl View {
 
     let email = Field::new(Signal::new(String::new()), "E-mail")
         .placeholder("jan@example.com")
-        .rule("podaj poprawny e-mail", |v: &str| v.contains('@'));
+        .rule("provide a valid e-mail", |v: &str| v.contains('@'));
 
     let password = Field::new(Signal::new(String::new()), "Password")
         .placeholder("••••••••")

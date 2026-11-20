@@ -60,7 +60,7 @@ fn textarea_requires_value() {
     let src = "app F {\n  title: \"F\"\n  size: (10, 10)\n  window M {\n    TextArea(placeholder: \"x\")\n  }\n}\n";
     let err = match SeqLoader::load_str("F.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("value"), "{err}");
 }
@@ -71,7 +71,7 @@ fn textarea_bad_limit_is_rejected() {
     let b = HostBindings::new().prop_str("body", Signal::new(String::new()));
     let err = match SeqLoader::load_str_with("F.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("max_lines"), "{err}");
 }
@@ -90,7 +90,7 @@ fn field_requires_label() {
     let b = HostBindings::new().prop_str("name", Signal::new(String::new()));
     let err = match SeqLoader::load_str_with("F.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("label"), "{err}");
 }
@@ -109,7 +109,7 @@ fn numberfield_min_over_max_is_rejected() {
     let b = HostBindings::new().prop_float("qty", Signal::new(1.0));
     let err = match SeqLoader::load_str_with("F.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("min <= max"), "{err}");
 }
@@ -140,7 +140,7 @@ fn multiselect_min_over_options_rejected() {
     let src = "app F {\n  title: \"F\"\n  size: (10, 10)\n  window M {\n    MultiSelect(options: [\"a\"], label: \"T\", min_selected: 2)\n  }\n}\n";
     let err = match SeqLoader::load_str("F.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("min_selected"), "{err}");
 }
@@ -156,7 +156,7 @@ fn dragvalue_renders_and_rejects_bad_range() {
     let b2 = HostBindings::new().prop_float("v", Signal::new(1.0));
     let err = match SeqLoader::load_str_with("F.seq", bad, &b2) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("min <= max"), "{err}");
 }

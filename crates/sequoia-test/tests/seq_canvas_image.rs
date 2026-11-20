@@ -101,7 +101,7 @@ fn missing_src_is_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Canvas {\n      Image2d(x: 0, y: 0, w: 10, h: 10)\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("src"), "{err}");
 }
@@ -111,7 +111,7 @@ fn image_outside_canvas_is_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Image2d(src: \"cover.jpg\", x: 0, y: 0, w: 10, h: 10)\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("Canvas"), "{err}");
 }
@@ -121,7 +121,7 @@ fn bad_uv_is_rejected() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Canvas {\n      Image2d(src: \"cover.jpg\", x: 0, y: 0, w: 10, h: 10, uv: (0, 0, 1))\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("uv"), "{err}");
 }

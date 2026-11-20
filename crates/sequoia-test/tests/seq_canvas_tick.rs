@@ -16,7 +16,7 @@ fn marker(h: &Harness) -> Point {
             return list.item_transform(i).apply(c);
         }
     }
-    panic!("oczekiwano markera");
+    panic!("expected marker");
 }
 
 fn dist(a: Point, b: (f32, f32)) -> f32 {
@@ -102,7 +102,7 @@ fn tick_requires_host() {
     let src = "app B {\n  title: \"B\"\n  size: (10, 10)\n  window M {\n    Canvas(tick: a) {\n      Rect(x: 0, y: 0, w: 10, h: 10, fill: #FFFFFF)\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str("P.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("tick"), "{err}");
 }
@@ -113,7 +113,7 @@ fn running_without_tick_is_rejected() {
     let b = HostBindings::new().prop_bool("play", Signal::new(true));
     let err = match SeqLoader::load_str_with("P.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("tick"), "{err}");
 }
@@ -124,7 +124,7 @@ fn unknown_tick_name_is_rejected() {
     let b = HostBindings::new();
     let err = match SeqLoader::load_str_with("P.seq", src, &b) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("zzz"), "{err}");
 }

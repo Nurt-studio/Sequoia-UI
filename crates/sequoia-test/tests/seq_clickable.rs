@@ -328,7 +328,7 @@ fn click_needs_host() {
     let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    Container(on_click: { pick() }) {\n      Text(\"x\")\n    }\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("hosta"), "{err}");
 }
