@@ -19,6 +19,7 @@ sequoia-input = { workspace = true }
 sequoia-elements = { workspace = true }
 
 [dev-dependencies]
+taffy = "0.15.1"
 sequoia-async = { workspace = true }
 sequoia-platform = { workspace = true }
 sequoia-render = { workspace = true }

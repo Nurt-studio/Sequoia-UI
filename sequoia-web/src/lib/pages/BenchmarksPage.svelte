@@ -4,6 +4,7 @@
 	import { nav } from '../navigation.svelte.js';
 	import { meta, runs } from '../benchmark-data.js';
 	import { current } from '../version-compare-data.js';
+	import { layoutMeta, layoutRows } from '../layout-benchmark-data.js';
 
 	const sequoiaRuns = current.runs.map((run) => ({
 		...run,
@@ -180,6 +181,31 @@
 	function fwVersion(id) {
 		return frameworks.find((f) => f.id === id)?.version ?? '';
 	}
+
+	/**
+	 * @param {string} mode
+	 */
+	function layoutFor(mode) {
+		return layoutRows
+			.filter((row) => row.mode === mode)
+			.map((row) => {
+				const seq = row.sequoia[1];
+				const taffy = row.taffy[1];
+				return {
+					...row,
+					seq,
+					taffy,
+					winner: seq <= taffy ? 'sequoia' : 'taffy',
+					ratio: seq <= taffy ? taffy / seq : seq / taffy
+				};
+			});
+	}
+	const warmLayout = layoutFor('warm');
+	const coldLayout = layoutFor('cold');
+	const layoutBlocks = [
+		{ id: 'warm', label: 'Warm · one mounted tree, repeated layout' },
+		{ id: 'cold', label: 'Cold · fresh tree built on every iteration' }
+	];
 </script>
 
 <DocsTopBar />
@@ -221,6 +247,7 @@
 					nav.page = 'compare-0.1.6';
 				}}>0.1.5 vs 0.1.6 benchmark comparison &rarr;</a
 			>
+			<a href="#layout-vs-taffy" class="hero-link">Layout engine vs taffy &rarr;</a>
 			<a href="#method" class="hero-link">How it was measured &rarr;</a>
 		</div>
 	</header>
@@ -371,10 +398,64 @@
 		</p>
 	</section>
 
-	<section class="bench-section" id="method" aria-labelledby="method-title">
+	<section class="bench-section" id="layout-vs-taffy" aria-labelledby="layout-title">
 		<div class="section-head">
 			<div>
 				<span class="section-number">04</span>
+				<p class="section-label">Layout engine</p>
+				<h2 id="layout-title" class="section-title">Sequoia vs taffy {layoutMeta.taffy}</h2>
+			</div>
+			<p class="section-note">
+				The same flex, grid, wrap and text trees laid out by both engines. Values are p50
+				milliseconds per pass over {layoutMeta.warmFrames} warm frames and {layoutMeta.coldFrames}
+				cold frames, after {layoutMeta.warmup} warmup passes.
+			</p>
+		</div>
+
+		{#each layoutBlocks as block}
+			<h3 class="layout-subtitle">{block.label}</h3>
+			<div class="table-scroll">
+				<table class="results-table layout-table">
+					<thead>
+						<tr>
+							<th scope="col">Scene</th>
+							<th scope="col">Nodes</th>
+							<th scope="col">Sequoia<span>p50 · ms</span></th>
+							<th scope="col">taffy<span>p50 · ms</span></th>
+							<th scope="col">Faster<span>ratio</span></th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each block.id === 'warm' ? warmLayout : coldLayout as row}
+							<tr>
+								<td><span class="fw-name">{row.kind}</span></td>
+								<td>{row.nodes.toLocaleString('en-US')}</td>
+								<td class:best={row.winner === 'sequoia'}>{num(row.seq, 3)}</td>
+								<td class:best={row.winner === 'taffy'}>{num(row.taffy, 3)}</td>
+								<td>
+									<span class="fw-name">{row.winner}</span>
+									<span class="fw-version">{num(row.ratio, 2)}&times;</span>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/each}
+
+		<p class="table-hint">
+			Lower is better. Warm reuses one mounted tree and alternates the viewport width so neither
+			engine can reuse the previous pass; Sequoia short-circuits cached measures, so most of its
+			time is in arrange. Cold includes building a fresh view/node tree on every iteration. taffy
+			has no text shaping, so its text rows use a measure callback. One machine, one run —
+			sub-millisecond rows are noisy. Raw numbers live in <code>layout-benchmark-data.js</code>.
+		</p>
+	</section>
+
+	<section class="bench-section" id="method" aria-labelledby="method-title">
+		<div class="section-head">
+			<div>
+				<span class="section-number">05</span>
 				<p class="section-label">Methodology</p>
 				<h2 id="method-title" class="section-title">How the numbers were produced</h2>
 			</div>
@@ -635,6 +716,13 @@
 		line-height: 1.5;
 		color: #8a8a8e;
 		text-align: right;
+	}
+
+	.layout-subtitle {
+		margin: var(--space-6) 0 var(--space-3);
+		font-size: var(--text-sm);
+		font-weight: 700;
+		letter-spacing: 0.02em;
 	}
 
 	.highlights {
