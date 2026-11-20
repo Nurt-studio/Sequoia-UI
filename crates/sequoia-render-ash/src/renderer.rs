@@ -1859,9 +1859,6 @@ impl AshRenderer {
                 .image_indices(&image_indices);
             self.swapchain_fn.queue_present(self.queue, &present)
         };
-        unsafe {
-            let _ = self.device.queue_wait_idle(self.queue);
-        }
 
         match present_result {
             Ok(false) => Ok(()),
