@@ -12,7 +12,7 @@ mod resolve;
 mod value;
 
 pub use bindings::{ActionSig, FieldSignal, HostBindings, PropType, SeqRow, SeqRowData};
-pub use check::check;
+pub use check::{check, check_all};
 pub use error::SeqError;
 pub use ir::{
     BinOp, CompParam, ComponentDef, DeferredDecl, DeferredKind, FnParam, ImportDecl, LengthVal,
@@ -25,5 +25,5 @@ pub use lower::{
     BuiltStyles, SeqTextStyle, TextWeight, build_styles, check_decls, expand_components, lower,
     lower_window, lower_window_with, lower_with, resolve_theme,
 };
-pub use parser::{parse, parse_seq_file};
+pub use parser::{parse, parse_all, parse_seq_file, parse_seq_file_all};
 pub use resolve::{FsSource, MapSource, ResolvedImports, SeqSource, resolve_imports};

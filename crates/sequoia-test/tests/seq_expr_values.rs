@@ -29,14 +29,14 @@ fn arg_value<'a>(node: &'a SeqNode, name: &str) -> &'a SeqValue {
         .args
         .iter()
         .find(|a| a.name == name)
-        .unwrap_or_else(|| panic!("brak atrybutu '{name}'"))
+        .unwrap_or_else(|| panic!("missing attribute '{name}'"))
         .value
 }
 
 fn num(value: &SeqValue) -> f32 {
     match value {
         SeqValue::Num(n) => *n,
-        other => panic!("oczekiwano liczby, jest {other:?}"),
+        other => panic!("expected number, got {other:?}"),
     }
 }
 
@@ -77,7 +77,7 @@ fn string_expression_where_number_expected_is_an_error() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Text(\"hi\", size: \"big\")\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(err) => err,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("expected Float"), "{err}");
     assert_eq!(err.line, 5);
@@ -92,7 +92,7 @@ fn array_values_fold_element_expressions() {
             assert_eq!(num(&items[0]), 4.0);
             assert_eq!(num(&items[1]), 6.0);
         }
-        other => panic!("oczekiwano tablicy, jest {other:?}"),
+        other => panic!("expected array, got {other:?}"),
     }
 }
 
@@ -125,5 +125,36 @@ fn host_values_are_available_inside_expressions() {
     let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  prop gap: Float\n  window M {\n    Container(width: gap * 2 + 4) {\n      Text(\"x\")\n    }\n  }\n}\n";
     let gap = Signal::new(10.0);
     let bindings = HostBindings::new().prop_float("gap", gap.clone());
+    SeqLoader::load_str_with("Main.seq", src, &bindings).unwrap();
+}
+
+#[test]
+fn color_literals_may_be_ternary_operands() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    Container(background: true ? #223047 : #1a1a1b) {\n      Text(\"x\")\n    }\n  }\n}\n";
+    let app = parse("Expr.seq", src).unwrap();
+    let container = &app.windows[0].nodes[0];
+    match arg_value(container, "background") {
+        SeqValue::Color(hex) => assert_eq!(hex, "223047"),
+        other => panic!("expected color, got {other:?}"),
+    }
+    SeqLoader::load_str("Expr.seq", src).unwrap();
+}
+
+#[test]
+fn color_literals_fold_false_ternary_branch() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  window M {\n    Container(background: false ? #223047 : #1a1a1b) {\n      Text(\"x\")\n    }\n  }\n}\n";
+    let app = parse("Expr.seq", src).unwrap();
+    let container = &app.windows[0].nodes[0];
+    match arg_value(container, "background") {
+        SeqValue::Color(hex) => assert_eq!(hex, "1a1a1b"),
+        other => panic!("expected color, got {other:?}"),
+    }
+}
+
+#[test]
+fn color_ternary_is_reactive_with_host_binding() {
+    let src = "app A {\n  title: \"A\"\n  size: (200, 100)\n  prop sel: Bool\n  window M {\n    Container(background: sel ? #223047 : #1a1a1b) {\n      Text(\"x\")\n    }\n  }\n}\n";
+    let sel = Signal::new(true);
+    let bindings = HostBindings::new().prop_bool("sel", sel.clone());
     SeqLoader::load_str_with("Main.seq", src, &bindings).unwrap();
 }

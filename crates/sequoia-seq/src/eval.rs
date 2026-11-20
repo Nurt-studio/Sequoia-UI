@@ -74,6 +74,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Float(x), Value::Float(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Color(x), Value::Color(y)) => x == y,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Tuple(x), Value::Tuple(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| values_equal(a, b))
@@ -92,6 +93,7 @@ fn literal_value(init: &SeqExpr) -> Option<Value> {
         SeqExprKind::Int(i) => Some(Value::Int(*i)),
         SeqExprKind::Float(f) => Some(Value::Float(*f)),
         SeqExprKind::Str(s) => Some(Value::Str(Rc::new(s.clone()))),
+        SeqExprKind::Color(hex) => Some(Value::Color(Rc::new(hex.clone()))),
         SeqExprKind::Bool(b) => Some(Value::Bool(*b)),
         SeqExprKind::Var(name) if name == "None" => Some(Value::Option(None)),
         _ => None,
@@ -396,6 +398,7 @@ impl<'a> Eval<'a> {
             SeqExprKind::Int(i) => Ok(Value::Int(*i)),
             SeqExprKind::Float(f) => Ok(Value::Float(*f)),
             SeqExprKind::Str(s) => Ok(Value::Str(Rc::new(s.clone()))),
+            SeqExprKind::Color(hex) => Ok(Value::Color(Rc::new(hex.clone()))),
             SeqExprKind::Bool(b) => Ok(Value::Bool(*b)),
             SeqExprKind::Var(name) => {
                 if name == "None" {
@@ -613,6 +616,7 @@ impl<'a> Eval<'a> {
             BinOp::Eq | BinOp::Ne => {
                 let eq = match (&l, &r) {
                     (Value::Str(a), Value::Str(b)) => a == b,
+                    (Value::Color(a), Value::Color(b)) => a == b,
                     (Value::Bool(a), Value::Bool(b)) => a == b,
                     (Value::Option(a), Value::Option(b)) => match (a, b) {
                         (None, None) => true,
@@ -801,6 +805,7 @@ fn same_kind(slot: &Value, v: &Value) -> bool {
             | (Value::Float(_), Value::Float(_))
             | (Value::Float(_), Value::Int(_))
             | (Value::Str(_), Value::Str(_))
+            | (Value::Color(_), Value::Color(_))
             | (Value::Bool(_), Value::Bool(_))
     )
 }
@@ -810,6 +815,7 @@ fn coerce_arg(ev: &Eval<'_>, p: &crate::ir::FnParam, v: Value) -> Result<Value, 
         "Int" => matches!(v, Value::Int(_)),
         "Float" => v.is_number(),
         "String" => matches!(v, Value::Str(_)),
+        "Color" => matches!(v, Value::Color(_)),
         "Bool" => matches!(v, Value::Bool(_)),
         t if t.starts_with("Option") => matches!(v, Value::Option(_)),
         t if t.starts_with('(') => matches!(v, Value::Tuple(_)),
@@ -819,7 +825,7 @@ fn coerce_arg(ev: &Eval<'_>, p: &crate::ir::FnParam, v: Value) -> Result<Value, 
         return Err(ev.err(
             p.line,
             format!(
-                "argument '{}': oczekiwano {}, dano {}",
+                "argument '{}': expected {}, got {}",
                 p.name,
                 p.ty,
                 v.type_name()

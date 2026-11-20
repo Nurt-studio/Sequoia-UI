@@ -7,21 +7,54 @@ use crate::ir::{
 };
 
 pub fn parse(file: &str, src: &str) -> Result<SeqApp, SeqError> {
-    let seq = parse_seq_file(file, src)?;
-    let mut app = seq
-        .app
-        .ok_or_else(|| SeqError::new(file, 1, 1, "missing `app Name { }` block"))?;
-    app.components = seq.components;
-    app.imports = seq.imports;
-    Ok(app)
+    let (app, errors) = parse_all(file, src);
+    if let Some(error) = SeqError::aggregate(errors) {
+        return Err(error);
+    }
+    app.ok_or_else(|| SeqError::new(file, 1, 1, "missing `app Name { }` block"))
+}
+
+pub fn parse_all(file: &str, src: &str) -> (Option<SeqApp>, Vec<SeqError>) {
+    let (seq, mut errors) = parse_seq_file_all(file, src);
+    let SeqFile {
+        imports,
+        components,
+        app,
+    } = seq;
+    let app = app.map(|mut app| {
+        app.components = components;
+        app.imports = imports;
+        app
+    });
+    if app.is_none() && errors.is_empty() {
+        errors.push(SeqError::new(file, 1, 1, "missing `app Name { }` block"));
+    }
+    (app, errors)
 }
 
 pub fn parse_seq_file(file: &str, src: &str) -> Result<SeqFile, SeqError> {
+    let (seq, errors) = parse_seq_file_all(file, src);
+    match SeqError::aggregate(errors) {
+        Some(error) => Err(error),
+        None => Ok(seq),
+    }
+}
+
+pub fn parse_seq_file_all(file: &str, src: &str) -> (SeqFile, Vec<SeqError>) {
     let mut p = Parser::new(file, src);
-    p.parse_seq_file()
+    p.parse_seq_file_all()
 }
 
 const MAX_NESTING_DEPTH: usize = 256;
+
+const MAX_ERRORS: usize = 100;
+
+fn is_app_item_keyword(kw: &str) -> bool {
+    matches!(
+        kw,
+        "title" | "size" | "theme" | "window" | "prop" | "on" | "state" | "fn" | "style"
+    )
+}
 
 fn is_single_value_expr(kind: &SeqExprKind) -> bool {
     matches!(
@@ -29,6 +62,7 @@ fn is_single_value_expr(kind: &SeqExprKind) -> bool {
         SeqExprKind::Int(_)
             | SeqExprKind::Float(_)
             | SeqExprKind::Str(_)
+            | SeqExprKind::Color(_)
             | SeqExprKind::Bool(_)
             | SeqExprKind::Var(_)
             | SeqExprKind::Field { .. }
@@ -45,6 +79,7 @@ struct Parser<'a> {
     line: usize,
     col: usize,
     depth: usize,
+    errors: Vec<SeqError>,
 }
 
 impl<'a> Parser<'a> {
@@ -56,11 +91,18 @@ impl<'a> Parser<'a> {
             line: 1,
             col: 1,
             depth: 0,
+            errors: Vec::new(),
         }
     }
 
     fn err(&self, line: usize, col: usize, message: impl Into<String>) -> SeqError {
         SeqError::new(self.file, line, col, message)
+    }
+
+    fn push_error(&mut self, error: SeqError) {
+        if self.errors.len() < MAX_ERRORS {
+            self.errors.push(error);
+        }
     }
 
     fn peek(&self) -> Option<char> {
@@ -154,7 +196,7 @@ impl<'a> Parser<'a> {
             }
         }
         if digits == 0 {
-            return Err(self.err(line, col, "oczekiwano liczby"));
+            return Err(self.err(line, col, "expected number"));
         }
         let text: String = self.chars[start..self.pos].iter().collect();
         text.parse::<f32>()
@@ -204,7 +246,259 @@ impl<'a> Parser<'a> {
         Ok((hex, line, col))
     }
 
-    fn parse_seq_file(&mut self) -> Result<SeqFile, SeqError> {
+    fn at_line_start(&self) -> bool {
+        let mut i = self.pos;
+        while i > 0 {
+            let c = self.chars[i - 1];
+            if c == ' ' || c == '\t' || c == '\r' {
+                i -= 1;
+            } else {
+                return c == '\n';
+            }
+        }
+        true
+    }
+
+    fn skip_string_lossy(&mut self) {
+        if self.peek() != Some('"') {
+            return;
+        }
+        self.bump();
+        while let Some(c) = self.bump() {
+            match c {
+                '"' => return,
+                '\\' => {
+                    self.bump();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn skip_comment(&mut self) {
+        while !matches!(self.peek(), None | Some('\n')) {
+            self.bump();
+        }
+    }
+
+    fn recover_top_level(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            self.skip_trivia();
+            match self.peek() {
+                None => return,
+                Some('{') => {
+                    depth += 1;
+                    self.bump();
+                }
+                Some('}') => {
+                    if depth > 0 {
+                        depth -= 1;
+                    }
+                    self.bump();
+                }
+                Some('"') => self.skip_string_lossy(),
+                Some('/') if self.chars.get(self.pos + 1) == Some(&'/') => self.skip_comment(),
+                Some(c)
+                    if depth == 0
+                        && (c.is_ascii_alphabetic() || c == '_')
+                        && self.at_line_start() =>
+                {
+                    let save = (self.pos, self.line, self.col);
+                    match self.ident() {
+                        Ok((kw, _, _))
+                            if matches!(kw.as_str(), "app" | "component" | "pub" | "import") =>
+                        {
+                            (self.pos, self.line, self.col) = save;
+                            return;
+                        }
+                        _ => {
+                            (self.pos, self.line, self.col) = save;
+                            self.bump();
+                        }
+                    }
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    fn recover_app_item(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            self.skip_trivia();
+            match self.peek() {
+                None => return,
+                Some('{') => {
+                    depth += 1;
+                    self.bump();
+                }
+                Some('}') => {
+                    if depth == 0 {
+                        return;
+                    }
+                    depth -= 1;
+                    self.bump();
+                }
+                Some('"') => self.skip_string_lossy(),
+                Some('/') if self.chars.get(self.pos + 1) == Some(&'/') => self.skip_comment(),
+                Some(c)
+                    if depth == 0
+                        && (c.is_ascii_alphabetic() || c == '_')
+                        && self.at_line_start() =>
+                {
+                    let save = (self.pos, self.line, self.col);
+                    match self.ident() {
+                        Ok((kw, _, _)) if is_app_item_keyword(&kw) => {
+                            (self.pos, self.line, self.col) = save;
+                            return;
+                        }
+                        _ => {
+                            (self.pos, self.line, self.col) = save;
+                            self.bump();
+                        }
+                    }
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    fn recover_block_item(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            self.skip_trivia();
+            match self.peek() {
+                None => return,
+                Some('{') => {
+                    depth += 1;
+                    self.bump();
+                }
+                Some('}') => {
+                    if depth == 0 {
+                        return;
+                    }
+                    depth -= 1;
+                    self.bump();
+                }
+                Some('"') => self.skip_string_lossy(),
+                Some('/') if self.chars.get(self.pos + 1) == Some(&'/') => self.skip_comment(),
+                Some(c)
+                    if depth == 0
+                        && (c.is_ascii_alphabetic() || c == '_')
+                        && self.at_line_start() =>
+                {
+                    let save = (self.pos, self.line, self.col);
+                    match self.ident() {
+                        Ok((kw, _, _))
+                            if kw == "children"
+                                || kw.starts_with(|ch: char| ch.is_ascii_uppercase()) =>
+                        {
+                            (self.pos, self.line, self.col) = save;
+                            return;
+                        }
+                        _ => {
+                            (self.pos, self.line, self.col) = save;
+                            self.bump();
+                        }
+                    }
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    fn recover_stmt(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            self.skip_trivia();
+            match self.peek() {
+                None => return,
+                Some(';') if depth == 0 => return,
+                Some('}') if depth == 0 => return,
+                Some('{') => {
+                    depth += 1;
+                    self.bump();
+                }
+                Some('}') => {
+                    depth -= 1;
+                    self.bump();
+                }
+                Some('"') => self.skip_string_lossy(),
+                Some('/') if self.chars.get(self.pos + 1) == Some(&'/') => self.skip_comment(),
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    fn recover_delimited(&mut self, stops: &[char]) {
+        let mut parens = 0i32;
+        let mut brackets = 0i32;
+        let mut braces = 0i32;
+        loop {
+            self.skip_trivia();
+            match self.peek() {
+                None => return,
+                Some('"') => self.skip_string_lossy(),
+                Some('/') if self.chars.get(self.pos + 1) == Some(&'/') => self.skip_comment(),
+                Some('(') => {
+                    parens += 1;
+                    self.bump();
+                }
+                Some('[') => {
+                    brackets += 1;
+                    self.bump();
+                }
+                Some('{') => {
+                    braces += 1;
+                    self.bump();
+                }
+                Some(')') => {
+                    if parens == 0 && brackets == 0 && braces == 0 {
+                        return;
+                    }
+                    if parens > 0 {
+                        parens -= 1;
+                    }
+                    self.bump();
+                }
+                Some(']') => {
+                    if parens == 0 && brackets == 0 && braces == 0 {
+                        return;
+                    }
+                    if brackets > 0 {
+                        brackets -= 1;
+                    }
+                    self.bump();
+                }
+                Some('}') => {
+                    if parens == 0 && brackets == 0 && braces == 0 {
+                        return;
+                    }
+                    if braces > 0 {
+                        braces -= 1;
+                    }
+                    self.bump();
+                }
+                Some(c) if parens == 0 && brackets == 0 && braces == 0 && stops.contains(&c) => {
+                    return;
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    fn parse_seq_file_all(&mut self) -> (SeqFile, Vec<SeqError>) {
         let mut app: Option<SeqApp> = None;
         let mut components: Vec<ComponentDef> = Vec::new();
         let mut imports: Vec<ImportDecl> = Vec::new();
@@ -213,45 +507,61 @@ impl<'a> Parser<'a> {
             if self.peek().is_none() {
                 break;
             }
-            let (kw, line, col) = self.ident()?;
-            match kw.as_str() {
-                "app" => {
-                    if app.is_some() {
-                        return Err(self.err(line, col, "second `app` block (only one allowed)"));
-                    }
-                    app = Some(self.app_rest(line, col)?);
-                }
-                "import" => {
-                    let (path, _, _) = self.string()?;
-                    imports.push(ImportDecl { path, line });
-                }
-                "pub" => {
-                    let (kw2, l2, c2) = self.ident()?;
-                    if kw2 != "component" {
-                        return Err(self.err(l2, c2, "`pub` only before `component`"));
-                    }
-                    components.push(self.component_rest(line, Visibility::Pub)?);
-                }
-                "component" => {
-                    components.push(self.component_rest(line, Visibility::Priv)?);
-                }
-                _ => {
-                    return Err(self.err(line, col, "expected `app`, `component` or `import`"));
-                }
+            let before = self.pos;
+            if let Err(error) = self.top_item(&mut app, &mut components, &mut imports) {
+                self.push_error(error);
+                self.recover_top_level();
+            }
+            if self.pos == before {
+                self.bump();
             }
         }
-        if app.is_none() && components.is_empty() && imports.is_empty() {
-            return Err(self.err(
-                1,
-                1,
-                "empty file: expected `app`, `component` or `import`",
-            ));
+        if app.is_none() && components.is_empty() && imports.is_empty() && self.errors.is_empty() {
+            self.push_error(self.err(1, 1, "empty file: expected `app`, `component` or `import`"));
         }
-        Ok(SeqFile {
-            imports,
-            components,
-            app,
-        })
+        (
+            SeqFile {
+                imports,
+                components,
+                app,
+            },
+            std::mem::take(&mut self.errors),
+        )
+    }
+
+    fn top_item(
+        &mut self,
+        app: &mut Option<SeqApp>,
+        components: &mut Vec<ComponentDef>,
+        imports: &mut Vec<ImportDecl>,
+    ) -> Result<(), SeqError> {
+        let (kw, line, col) = self.ident()?;
+        match kw.as_str() {
+            "app" => {
+                if app.is_some() {
+                    return Err(self.err(line, col, "second `app` block (only one allowed)"));
+                }
+                *app = Some(self.app_rest(line, col)?);
+            }
+            "import" => {
+                let (path, _, _) = self.string()?;
+                imports.push(ImportDecl { path, line });
+            }
+            "pub" => {
+                let (kw2, l2, c2) = self.ident()?;
+                if kw2 != "component" {
+                    return Err(self.err(l2, c2, "`pub` only before `component`"));
+                }
+                components.push(self.component_rest(line, Visibility::Pub)?);
+            }
+            "component" => {
+                components.push(self.component_rest(line, Visibility::Priv)?);
+            }
+            _ => {
+                return Err(self.err(line, col, "expected `app`, `component` or `import`"));
+            }
+        }
+        Ok(())
     }
 
     fn app_rest(&mut self, line: usize, col: usize) -> Result<SeqApp, SeqError> {
@@ -280,18 +590,26 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.peek().is_none() {
-                return Err(self.err(self.line, self.col, "unclosed `app` block"));
+                self.push_error(self.err(self.line, self.col, "unclosed `app` block"));
+                break;
             }
-            self.app_item(&mut app)?;
+            let before = self.pos;
+            if let Err(error) = self.app_item(&mut app) {
+                self.push_error(error);
+                self.recover_app_item();
+            }
+            if self.pos == before {
+                self.bump();
+            }
         }
         if !app.has_title {
-            return Err(self.err(line, col, "app requires `title: \"...\"`"));
+            self.push_error(self.err(line, col, "app requires `title: \"...\"`"));
         }
         if !app.has_size {
-            return Err(self.err(line, col, "app requires `size: (W, H)`"));
+            self.push_error(self.err(line, col, "app requires `size: (W, H)`"));
         }
         if app.windows.is_empty() {
-            return Err(self.err(line, col, "app requires at least 1 `window` block"));
+            self.push_error(self.err(line, col, "app requires at least 1 `window` block"));
         }
         Ok(app)
     }
@@ -331,12 +649,23 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.peek().is_none() {
-                return Err(self.err(self.line, self.col, "unclosed `component` block"));
+                self.push_error(self.err(self.line, self.col, "unclosed `component` block"));
+                break;
             }
-            body.push(self.node()?);
+            let before = self.pos;
+            match self.node() {
+                Ok(node) => body.push(node),
+                Err(error) => {
+                    self.push_error(error);
+                    self.recover_block_item();
+                }
+            }
+            if self.pos == before {
+                self.bump();
+            }
         }
         if body.is_empty() {
-            return Err(self.err(line, 1, "component requires at least 1 node"));
+            self.push_error(self.err(line, 1, "component requires at least 1 node"));
         }
         Ok(ComponentDef {
             name,
@@ -649,11 +978,20 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.peek().is_none() {
-                return Err(self.err(self.line, self.col, format!("unclosed block {what}")));
+                self.push_error(self.err(self.line, self.col, format!("unclosed block {what}")));
+                break;
             }
-            let stmt = self.fn_stmt()?;
-            if let Some(stmt) = stmt {
-                out.push(stmt);
+            let before = self.pos;
+            match self.fn_stmt() {
+                Ok(Some(stmt)) => out.push(stmt),
+                Ok(None) => {}
+                Err(error) => {
+                    self.push_error(error);
+                    self.recover_stmt();
+                }
+            }
+            if self.pos == before {
+                self.bump();
             }
         }
         Ok(out)
@@ -861,7 +1199,7 @@ impl<'a> Parser<'a> {
             }
         }
         if digits == 0 {
-            return Err(self.err(line, col, "oczekiwano liczby"));
+            return Err(self.err(line, col, "expected number"));
         }
         let text: String = self.chars[start..self.pos].iter().collect();
         text.parse::<f64>()
@@ -1152,6 +1490,13 @@ impl<'a> Parser<'a> {
                     kind: SeqExprKind::Str(s),
                 })
             }
+            Some('#') => {
+                let (hex, _, _) = self.color()?;
+                Ok(SeqExpr {
+                    line,
+                    kind: SeqExprKind::Color(hex),
+                })
+            }
             Some(c) if c.is_ascii_digit() => {
                 let (n, int, _, _) = self.number_expr()?;
                 Ok(SeqExpr {
@@ -1307,13 +1652,26 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.peek().is_none() {
-                return Err(self.err(self.line, self.col, "unclosed `style` block"));
+                self.push_error(self.err(self.line, self.col, "unclosed `style` block"));
+                break;
             }
-            let (name, line, _) = self.ident()?;
-            self.expect(':', format!("':' po polu stylu '{name}'").as_str())?;
-            let value = self.value()?;
-            args.push(SeqArg { name, line, value });
-
+            let before = self.pos;
+            let field = (|| -> Result<SeqArg, SeqError> {
+                let (name, line, _) = self.ident()?;
+                self.expect(':', format!("':' po polu stylu '{name}'").as_str())?;
+                let value = self.value()?;
+                Ok(SeqArg { name, line, value })
+            })();
+            match field {
+                Ok(arg) => args.push(arg),
+                Err(error) => {
+                    self.push_error(error);
+                    self.recover_delimited(&[',', '}']);
+                }
+            }
+            if self.pos == before {
+                self.bump();
+            }
             self.eat(',');
         }
         Ok(args)
@@ -1340,9 +1698,20 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.peek().is_none() {
-                return Err(self.err(self.line, self.col, "unclosed `window` block"));
+                self.push_error(self.err(self.line, self.col, "unclosed `window` block"));
+                break;
             }
-            nodes.push(self.node()?);
+            let before = self.pos;
+            match self.node() {
+                Ok(node) => nodes.push(node),
+                Err(error) => {
+                    self.push_error(error);
+                    self.recover_block_item();
+                }
+            }
+            if self.pos == before {
+                self.bump();
+            }
         }
         Ok(SeqWindow {
             name,
@@ -1387,7 +1756,7 @@ impl<'a> Parser<'a> {
             } else if self.peek() != Some(')') {
                 args = self.named_args()?;
             }
-            self.expect(')', "')' po atrybutach")?;
+            self.expect(')', "')' after attributes")?;
         }
         let mut children = Vec::new();
         if self.eat('{') {
@@ -1398,9 +1767,20 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 if self.peek().is_none() {
-                    return Err(self.err(self.line, self.col, "unclosed children block `{ }`"));
+                    self.push_error(self.err(self.line, self.col, "unclosed children block `{ }`"));
+                    break;
                 }
-                children.push(self.node()?);
+                let before = self.pos;
+                match self.node() {
+                    Ok(node) => children.push(node),
+                    Err(error) => {
+                        self.push_error(error);
+                        self.recover_block_item();
+                    }
+                }
+                if self.pos == before {
+                    self.bump();
+                }
             }
         }
         Ok(SeqNode {
@@ -1415,21 +1795,37 @@ impl<'a> Parser<'a> {
     fn named_args(&mut self) -> Result<Vec<SeqArg>, SeqError> {
         let mut args = Vec::new();
         loop {
-            let (name, line, _) = self.ident()?;
-            self.expect(':', format!("':' after attribute '{name}'").as_str())?;
-            let value = match name.as_str() {
-                "enter" | "exit" => self.motion_value()?,
-                "behavior" => self.behavior_value()?,
-                _ => self.value()?,
-            };
-            args.push(SeqArg { name, line, value });
-            if !self.eat(',') {
+            self.skip_trivia();
+            if self.peek().is_none() || self.peek() == Some(')') {
                 break;
+            }
+            let before = self.pos;
+            let arg = (|| -> Result<SeqArg, SeqError> {
+                let (name, line, _) = self.ident()?;
+                self.expect(':', format!("':' after attribute '{name}'").as_str())?;
+                let value = match name.as_str() {
+                    "enter" | "exit" => self.motion_value()?,
+                    "behavior" => self.behavior_value()?,
+                    _ => self.value()?,
+                };
+                Ok(SeqArg { name, line, value })
+            })();
+            match arg {
+                Ok(arg) => args.push(arg),
+                Err(error) => {
+                    self.push_error(error);
+                    self.recover_delimited(&[',', ')']);
+                }
+            }
+            if self.pos == before {
+                self.bump();
             }
             self.skip_trivia();
-            if self.peek() == Some(')') {
-                break;
+            if self.peek() == Some(',') {
+                self.bump();
+                continue;
             }
+            break;
         }
         Ok(args)
     }

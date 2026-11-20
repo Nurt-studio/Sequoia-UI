@@ -93,10 +93,34 @@ const LAYOUT_PROPS: &[&str] = &[
 ];
 
 pub fn check(file: &str, app: &SeqApp) -> Result<(), SeqError> {
-    check_styles(file, app)?;
-    let (fns, props, states) = check_fns(file, app)?;
-    let comps = check_components(file, &app.components, &app.styles, &props, &states, &fns)?;
-    check_seq_calls(file, app, &fns)?;
+    match SeqError::aggregate(check_all(file, app)) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+pub fn check_all(file: &str, app: &SeqApp) -> Vec<SeqError> {
+    let mut errors = Vec::new();
+    if let Err(error) = check_styles(file, app) {
+        errors.push(error);
+    }
+    let (fns, props, states) = match check_fns(file, app) {
+        Ok(tables) => tables,
+        Err(error) => {
+            errors.push(error);
+            return errors;
+        }
+    };
+    let comps = match check_components(file, &app.components, &app.styles, &props, &states, &fns) {
+        Ok(comps) => comps,
+        Err(error) => {
+            errors.push(error);
+            return errors;
+        }
+    };
+    if let Err(error) = check_seq_calls(file, app, &fns) {
+        errors.push(error);
+    }
     let ctx = CheckCtx {
         styles: &app.styles,
         components: &app.components,
@@ -108,10 +132,16 @@ pub fn check(file: &str, app: &SeqApp) -> Result<(), SeqError> {
     };
     for w in &app.windows {
         for n in &w.nodes {
-            check_node(file, n, None, false, &ctx)?;
+            if let Err(error) = check_node(file, n, None, false, &ctx) {
+                if !errors.iter().any(|e| {
+                    e.file == error.file && e.line == error.line && e.message == error.message
+                }) {
+                    errors.push(error);
+                }
+            }
         }
     }
-    Ok(())
+    errors
 }
 
 const COMP_PARAM_TYPES: &[&str] = &["String", "Bool", "Int", "Float", "Color"];
@@ -144,10 +174,10 @@ fn check_components(
                 &c.file,
                 c.line,
                 1,
-                format!(
-                    "komponent '{}' zdefiniowany dwa razy (pierwszy w {}:{})",
-                    c.name, first.file, first.line
-                ),
+                    format!(
+                        "component '{}' defined twice (first in {}:{})",
+                        c.name, first.file, first.line
+                    ),
             ));
         }
         if COMPONENTS.contains(&c.name.as_str()) {
@@ -155,7 +185,7 @@ fn check_components(
                 &c.file,
                 c.line,
                 1,
-                format!("komponent '{}' koliduje z wbudowanym", c.name),
+                format!("component '{}' conflicts with built-in", c.name),
             ));
         }
         if !c.name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
@@ -176,7 +206,7 @@ fn check_components(
                     &c.file,
                     p.line,
                     1,
-                    format!("parametr '{}' dwa razy w {}", p.name, c.name),
+                    format!("parameter '{}' defined twice in {}", p.name, c.name),
                 ));
             }
             seen.push(p.name.as_str());
@@ -186,7 +216,7 @@ fn check_components(
                     p.line,
                     1,
                     format!(
-                        "nieznany typ parametru '{}' (String/Bool/Int/Float/Color)",
+                         "unknown parameter type '{}' (String/Bool/Int/Float/Color)",
                         p.ty
                     ),
                 ));
@@ -200,7 +230,7 @@ fn check_components(
                 &c.file,
                 c.line,
                 1,
-                format!("jedno `children` w ciele {}", c.name),
+                format!("one `children` in body {}", c.name),
             ));
         }
     }
@@ -383,7 +413,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                 file,
                 s.line,
                 1,
-                format!("styl '{}' zdefiniowany dwa razy", s.name),
+                format!("style '{}' defined twice", s.name),
             ));
         }
         let fields: &[&str] = match s.target.as_str() {
@@ -396,7 +426,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                     s.line,
                     1,
                     format!(
-                        "style '{}': nieznany typ '{other}' (Box/Button/Text)",
+                         "style '{}': unknown type '{other}' (Box/Button/Text)",
                         s.name
                     ),
                 ));
@@ -410,7 +440,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                     a.line,
                     1,
                     format!(
-                        "nieznane pole '{}' w style {}:{} (dozwolone: {})",
+                        "unknown field '{}' in style {}:{} (allowed: {})",
                         a.name,
                         s.name,
                         s.target,
@@ -428,7 +458,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                 s.line,
                 1,
                 format!(
-                    "style '{}': jedna flaga wagi (bold/semi/medium/normal/light/black)",
+                    "style '{}': single weight flag (bold/semi/medium/normal/light/black)",
                     s.name
                 ),
             ));
@@ -445,7 +475,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                         file,
                         s.line,
                         1,
-                        format!("style '{}': cykliczne extends", s.name),
+                        format!("style '{}': cyclic extends", s.name),
                     ));
                 }
                 seen.push(cur);
@@ -637,10 +667,10 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
             file,
             node.line,
             1,
-            format!(
-                "komponent '{}' jest prywatny (zdefiniowany w {})",
-                def.name, def.file
-            ),
+                format!(
+                    "component '{}' is private (defined in {})",
+                    def.name, def.file
+                ),
         ));
     }
     if node.label.is_some() {
@@ -674,7 +704,7 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
                 arg.line,
                 1,
                 format!(
-                    "nieznany parametr '{}' w {} (oczekiwano: {want})",
+                    "unknown parameter '{}' in {} (expected: {want})",
                     arg.name, def.name
                 ),
             ));
@@ -684,7 +714,7 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
                 file,
                 arg.line,
                 1,
-                format!("parametr '{}' dwa razy w {}", arg.name, def.name),
+                format!("parameter '{}' defined twice in {}", arg.name, def.name),
             ));
         }
         seen.push(arg.name.as_str());
@@ -696,7 +726,7 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
                 file,
                 node.line,
                 1,
-                format!("brakuje parametru '{}' w {}", p.name, def.name),
+                format!("missing parameter '{}' in {}", p.name, def.name),
             ));
         }
     }
@@ -705,10 +735,10 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
             file,
             node.line,
             1,
-            format!(
-                "{} nie przyjmuje dzieci (brak `children` w ciele)",
-                def.name
-            ),
+                format!(
+                    "{} does not accept children (missing `children` in body)",
+                    def.name
+                ),
         ));
     }
     for child in &node.children {
@@ -729,7 +759,7 @@ fn check_comp_value(
             file,
             arg.line,
             1,
-            format!("nieznany typ parametru '{}'", param.ty),
+            format!("unknown parameter type '{}'", param.ty),
         ));
     };
     let ty = value_ty(&arg.value, ctx, file, arg.line)?;
@@ -1620,7 +1650,7 @@ fn check_arg(
                     file,
                     arg.line,
                     1,
-                    format!("nieznany styl '{style_name}' (brak bloku style)"),
+                    format!("unknown style '{style_name}' (missing style block)"),
                 ));
             }
         }
@@ -1788,7 +1818,7 @@ fn check_fns(
                 file,
                 s.line,
                 1,
-                format!("state '{}' zdefiniowany dwa razy", s.name),
+                format!("state '{}' defined twice", s.name),
             ));
         }
         let Some(decl) = Ty::from_sig(&s.ty) else {
@@ -1796,7 +1826,7 @@ fn check_fns(
                 file,
                 s.line,
                 1,
-                format!("state '{}': typ Int/Float/String/Bool/Color", s.name),
+                format!("state '{}': type Int/Float/String/Bool/Color", s.name),
             ));
         };
         if prop_tys.contains_key(s.name.as_str()) {
@@ -1804,13 +1834,14 @@ fn check_fns(
                 file,
                 s.line,
                 1,
-                format!("state '{}' koliduje z `prop {}`", s.name, s.name),
+                format!("state '{}' conflicts with `prop {}`", s.name, s.name),
             ));
         }
         let init = match &s.init.kind {
             SeqExprKind::Int(_) => Ty::Int,
             SeqExprKind::Float(_) => Ty::Float,
             SeqExprKind::Str(_) => Ty::Str,
+            SeqExprKind::Color(_) => Ty::Color,
             SeqExprKind::Bool(_) => Ty::Bool,
             SeqExprKind::Var(name) if name == "None" => Ty::Option(Box::new(Ty::Any)),
             _ => {
@@ -1871,7 +1902,7 @@ fn check_fns(
                 file,
                 f.line,
                 1,
-                format!("fn '{}' koliduje ze `state {}`", f.name, f.name),
+                format!("fn '{}' conflicts with `state {}`", f.name, f.name),
             ));
         }
         if prop_tys.contains_key(f.name.as_str()) {
@@ -1879,7 +1910,7 @@ fn check_fns(
                 file,
                 f.line,
                 1,
-                format!("fn '{}' koliduje z `prop {}`", f.name, f.name),
+                format!("fn '{}' conflicts with `prop {}`", f.name, f.name),
             ));
         }
         let mut seen: Vec<&str> = Vec::new();
@@ -1890,7 +1921,7 @@ fn check_fns(
                     file,
                     p.line,
                     1,
-                    format!("parametr '{}' dwa razy w fn {}", p.name, f.name),
+                    format!("parameter '{}' defined twice in fn {}", p.name, f.name),
                 ));
             }
             seen.push(p.name.as_str());
@@ -1900,7 +1931,7 @@ fn check_fns(
                     p.line,
                     1,
                     format!(
-                        "fn {}: nieznany typ parametru '{}' (Int/Float/String/Bool)",
+                         "fn {}: unknown parameter type '{}' (Int/Float/String/Bool)",
                         f.name, p.ty
                     ),
                 ));
@@ -1916,7 +1947,7 @@ fn check_fns(
                         f.line,
                         1,
                         format!(
-                            "fn {}: nieznany typ zwracany '{r}' (Int/Float/String/Bool/(A, B))",
+                             "fn {}: unknown return type '{r}' (Int/Float/String/Bool/(A, B))",
                             f.name
                         ),
                     ));
@@ -2031,7 +2062,7 @@ fn check_stmt(
                     ctx.file,
                     *line,
                     1,
-                    format!("lokalna '{name}' zdefiniowana dwa razy"),
+                    format!("local '{name}' defined twice"),
                 ));
             }
             frame.insert(
@@ -2060,7 +2091,7 @@ fn check_stmt(
                             ctx.file,
                             *line,
                             1,
-                            format!("'{name}' niemutowalna — `mut {name} = ...`"),
+                            format!("'{name}' is immutable — `mut {name} = ...`"),
                         ));
                     }
                     if !ty.fits(&local.ty) {
@@ -2267,6 +2298,7 @@ fn expr_ty(
         SeqExprKind::Int(_) => Ok(Ty::Int),
         SeqExprKind::Float(_) => Ok(Ty::Float),
         SeqExprKind::Str(_) => Ok(Ty::Str),
+        SeqExprKind::Color(_) => Ok(Ty::Color),
         SeqExprKind::Bool(_) => Ok(Ty::Bool),
         SeqExprKind::Var(name) => {
             if name == "None" {
@@ -2291,6 +2323,12 @@ fn expr_ty(
             ))
         }
         SeqExprKind::Field { base, field } => {
+            if base == "theme" {
+                return Ok(Ty::Color);
+            }
+            if base == "env" || base == "item" {
+                return Ok(Ty::Any);
+            }
             for frame in locals.iter().rev() {
                 if let Some(local) = frame.get(base) {
                     match &local.ty {
@@ -2493,7 +2531,7 @@ fn builtin_ty(
                 ctx.file,
                 line,
                 1,
-                format!("Some: oczekiwano 1 argumentu, dano {}", tys.len()),
+                format!("Some: expected 1 argument, got {}", tys.len()),
             ));
         }
         return Ok(Some(Ty::Option(Box::new(tys[0].clone()))));
@@ -2777,6 +2815,7 @@ fn check_callback_call(
                 SeqValue::Num(n) if n.fract() == 0.0 => Ty::Int,
                 SeqValue::Num(_) => Ty::Float,
                 SeqValue::Str(_) => Ty::Str,
+                SeqValue::Color(_) => Ty::Color,
                 SeqValue::Bool(_) => Ty::Bool,
                 SeqValue::ItemField(_) => Ty::Any,
                 _ => {
@@ -2872,7 +2911,7 @@ fn check_callback_call(
                 arg.line,
                 1,
                 format!(
-                    "fn {name}: parametr {} to {}, a {attr} podaje {}",
+                    "fn {name}: parameter {} is {}, and {attr} provides {}",
                     i + 1,
                     p.name(),
                     e.name()

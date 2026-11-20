@@ -6,7 +6,7 @@ use sequoia_view::AnyView;
 use crate::bindings::HostBindings;
 use crate::error::SeqError;
 use crate::resolve::{FsSource, MapSource, SeqSource, resolve_imports};
-use crate::{check, lower, lower_with, parse_seq_file, resolve_theme};
+use crate::{check_all, lower, lower_with, parse_seq_file_all, resolve_theme};
 
 #[derive(Clone, Debug)]
 pub struct AppMeta {
@@ -74,10 +74,15 @@ impl SeqLoader {
         source: &dyn SeqSource,
         bindings: Option<&HostBindings>,
     ) -> Result<LoadedApp, SeqError> {
-        let seq = parse_seq_file(file, src)?;
+        let (seq, errors) = parse_seq_file_all(file, src);
+        if let Some(error) = SeqError::aggregate(errors) {
+            return Err(error);
+        }
         let resolved = resolve_imports(file, seq, source)?;
         let app = crate::resolve_seq_calls(resolved.app);
-        check(file, &app)?;
+        if let Some(error) = SeqError::aggregate(check_all(file, &app)) {
+            return Err(error);
+        }
         let theme = resolve_theme(file, &app)?;
         let view = match bindings {
             Some(b) => lower_with(file, &app, b)?,

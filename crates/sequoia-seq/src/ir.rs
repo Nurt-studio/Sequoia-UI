@@ -239,6 +239,7 @@ pub(crate) fn evaluate_seq_expr(expr: &SeqExpr) -> Result<SeqValue, String> {
             }
         }
         SeqExprKind::Str(s) => Ok(SeqValue::Str(s.clone())),
+        SeqExprKind::Color(hex) => Ok(SeqValue::Color(hex.clone())),
         SeqExprKind::Bool(b) => Ok(SeqValue::Bool(*b)),
         SeqExprKind::Tuple(items) => {
             let mut out = Vec::with_capacity(items.len());
@@ -398,6 +399,7 @@ fn values_eq(a: &SeqValue, b: &SeqValue) -> bool {
     match (a, b) {
         (SeqValue::Num(x), SeqValue::Num(y)) => x == y,
         (SeqValue::Str(x), SeqValue::Str(y)) => x == y,
+        (SeqValue::Color(x), SeqValue::Color(y)) => x == y,
         (SeqValue::Bool(x), SeqValue::Bool(y)) => x == y,
         _ => false,
     }
@@ -542,6 +544,8 @@ pub enum SeqExprKind {
     Float(f64),
 
     Str(String),
+
+    Color(String),
 
     Bool(bool),
 

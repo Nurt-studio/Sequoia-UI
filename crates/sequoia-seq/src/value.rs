@@ -10,6 +10,8 @@ pub(crate) enum Value {
 
     Str(Rc<String>),
 
+    Color(Rc<String>),
+
     Bool(bool),
 
     Tuple(Rc<Vec<Value>>),
@@ -27,6 +29,7 @@ impl std::fmt::Debug for Value {
             Self::Int(i) => write!(f, "Int({i})"),
             Self::Float(v) => write!(f, "Float({v})"),
             Self::Str(s) => write!(f, "Str({s:?})"),
+            Self::Color(s) => write!(f, "Color({s:?})"),
             Self::Bool(b) => write!(f, "Bool({b})"),
             Self::Tuple(items) => write!(f, "Tuple({items:?})"),
             Self::Option(v) => match v {
@@ -45,6 +48,7 @@ impl Value {
             Self::Int(_) => "Int",
             Self::Float(_) => "Float",
             Self::Str(_) => "String",
+            Self::Color(_) => "Color",
             Self::Bool(_) => "Bool",
             Self::Tuple(_) => "tuple",
             Self::Option(_) => "Option",

@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::SeqError;
 use crate::ir::{ImportDecl, SeqApp, SeqFile};
-use crate::parse_seq_file;
+use crate::parse_seq_file_all;
 
 const MAX_IMPORT_DEPTH: usize = 32;
 
@@ -89,7 +89,11 @@ pub fn resolve_imports(
         files: vec![root_id],
     };
     r.seen.insert(r.files[0].clone(), ());
-    r.collect(file, &root.imports, 1)?;
+    let mut errors = Vec::new();
+    r.collect(file, &root.imports, 1, &mut errors);
+    if let Some(error) = SeqError::aggregate(errors) {
+        return Err(error);
+    }
     app.components = r.components;
     app.imports.clear();
     Ok(ResolvedImports {
@@ -104,44 +108,52 @@ impl Resolver<'_> {
         parent_display: &str,
         imports: &[ImportDecl],
         depth: usize,
-    ) -> Result<(), SeqError> {
+        errors: &mut Vec<SeqError>,
+    ) {
         for imp in imports {
             if depth > MAX_IMPORT_DEPTH {
-                return Err(SeqError::new(
+                errors.push(SeqError::new(
                     parent_display,
                     imp.line,
                     1,
                     format!("import: nesting limit exceeded ({MAX_IMPORT_DEPTH})"),
                 ));
+                continue;
             }
             let parent = Path::new(parent_display);
-            let (id, src) = self.source.read(parent, &imp.path).map_err(|e| {
-                SeqError::new(
-                    parent_display,
-                    imp.line,
-                    1,
-                    format!("import \"{}\": {e}", imp.path),
-                )
-            })?;
+            let (id, src) = match self.source.read(parent, &imp.path) {
+                Ok(read) => read,
+                Err(e) => {
+                    errors.push(SeqError::new(
+                        parent_display,
+                        imp.line,
+                        1,
+                        format!("import \"{}\": {e}", imp.path),
+                    ));
+                    continue;
+                }
+            };
             let display = normalize_display(&join_lexical(parent, &imp.path));
             if let Some(pos) = self.stack.iter().position(|(i, _)| i == &id) {
                 let mut names: Vec<String> =
                     self.stack[pos..].iter().map(|(_, d)| d.clone()).collect();
                 names.push(display.clone());
-                return Err(SeqError::new(
+                errors.push(SeqError::new(
                     parent_display,
                     imp.line,
                     1,
                     format!("cyclic import: {}", names.join(" -> ")),
                 ));
+                continue;
             }
             if self.seen.contains_key(&id) {
                 continue;
             }
             self.seen.insert(id.clone(), ());
-            let seq = parse_seq_file(&display, &src)?;
+            let (seq, parse_errors) = parse_seq_file_all(&display, &src);
+            errors.extend(parse_errors);
             if seq.app.is_some() {
-                return Err(SeqError::new(
+                errors.push(SeqError::new(
                     parent_display,
                     imp.line,
                     1,
@@ -151,10 +163,9 @@ impl Resolver<'_> {
             self.files.push(id.clone());
             self.components.extend(seq.components);
             self.stack.push((id, display.clone()));
-            self.collect(&display, &seq.imports, depth + 1)?;
+            self.collect(&display, &seq.imports, depth + 1, errors);
             self.stack.pop();
         }
-        Ok(())
     }
 }
 

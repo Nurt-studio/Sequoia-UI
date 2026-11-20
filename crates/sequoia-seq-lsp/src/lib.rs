@@ -937,14 +937,20 @@ fn token_len(line_text: &str, col: usize) -> usize {
 }
 
 pub fn diagnostics_for(file: &str, src: &str) -> Vec<SeqDiag> {
-    let app = match sequoia_seq::parse(file, src) {
-        Ok(a) => a,
-        Err(e) => return vec![seq_err_to_diag(src, &e.line, &e.col, &e.message)],
-    };
-    if let Err(e) = sequoia_seq::check(file, &app) {
-        return vec![seq_err_to_diag(src, &e.line, &e.col, &e.message)];
+    let (app, parse_errors) = sequoia_seq::parse_all(file, src);
+    if !parse_errors.is_empty() {
+        return parse_errors
+            .iter()
+            .map(|e| seq_err_to_diag(src, &e.line, &e.col, &e.message))
+            .collect();
     }
-    Vec::new()
+    let Some(app) = app else {
+        return Vec::new();
+    };
+    sequoia_seq::check_all(file, &app)
+        .iter()
+        .map(|e| seq_err_to_diag(src, &e.line, &e.col, &e.message))
+        .collect()
 }
 
 fn seq_err_to_diag(src: &str, line1: &usize, col1: &usize, message: &str) -> SeqDiag {

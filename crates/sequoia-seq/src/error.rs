@@ -9,6 +9,8 @@ pub struct SeqError {
     pub col: usize,
 
     pub message: String,
+
+    related: Vec<SeqError>,
 }
 
 impl SeqError {
@@ -23,7 +25,34 @@ impl SeqError {
             line,
             col,
             message: message.into(),
+            related: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_related(mut self, others: Vec<SeqError>) -> Self {
+        self.related.extend(others);
+        self
+    }
+
+    #[must_use]
+    pub fn related(&self) -> &[SeqError] {
+        &self.related
+    }
+
+    #[must_use]
+    pub fn flattened(&self) -> Vec<&SeqError> {
+        let mut out = vec![self];
+        for error in &self.related {
+            out.extend(error.flattened());
+        }
+        out
+    }
+
+    pub(crate) fn aggregate(errors: Vec<SeqError>) -> Option<Self> {
+        let mut errors = errors.into_iter();
+        let first = errors.next()?;
+        Some(first.with_related(errors.collect()))
     }
 }
 
@@ -33,7 +62,11 @@ impl fmt::Display for SeqError {
             f,
             "{}:{}:{}: {}",
             self.file, self.line, self.col, self.message
-        )
+        )?;
+        for error in &self.related {
+            write!(f, "\n{error}")?;
+        }
+        Ok(())
     }
 }
 

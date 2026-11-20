@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use sequoia_core::Color;
-use sequoia_seq::{SeqLoader, check, lower, parse};
+use sequoia_seq::{SeqLoader, check, check_all, lower, parse, parse_all};
 use sequoia_test::Harness;
 
 const DEMO: &str = r#"
@@ -67,7 +67,7 @@ fn callback_needs_host() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Button(\"Go\", on_click: { go() })\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("inkrement 2"), "{err}");
     assert_eq!(err.line, 5);
@@ -78,7 +78,7 @@ fn dynamic_needs_host() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Text(dynamic: title)\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("inkrement 2"), "{err}");
 }
@@ -88,7 +88,7 @@ fn prop_block_needs_host() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  prop n: Int\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let err = match SeqLoader::load_str("Main.seq", src) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("prop"), "{err}");
     assert_eq!(err.line, 4);
@@ -116,7 +116,7 @@ fn lower_without_check_still_guards() {
     let app = parse("Main.seq", src).unwrap();
     let err = match lower("Main.seq", &app) {
         Err(e) => e,
-        Ok(_) => panic!("oczekiwano bledu"),
+        Ok(_) => panic!("expected error"),
     };
     assert!(err.message.contains("spacing"), "{err}");
 }
@@ -170,4 +170,39 @@ fn attr_expr_type_checking() {
     let src_prop = "app A {\n  title: \"A\"\n  size: (10, 10)\n  prop count: Int\n  window M {\n    If(when: count > 0) {\n      Text(\"yes\")\n    }\n  }\n}\n";
     let app = parse("Main.seq", src_prop).unwrap();
     check("Main.seq", &app).unwrap();
+}
+
+#[test]
+fn parse_all_collects_multiple_errors_in_one_log() {
+    let src = "app A {\n  title \"A\"\n  siz: (10, 10)\n  wndow M {\n    Text(\"x\")\n  }\n}\n";
+    let (_, errors) = parse_all("Main.seq", src);
+    assert!(
+        errors.len() >= 2,
+        "expected multiple parse errors: {errors:?}"
+    );
+
+    let err = parse("Main.seq", src).unwrap_err();
+    let log = format!("{err}");
+    assert!(err.related().len() >= 2, "expected related errors: {log}");
+    assert!(log.contains("title"), "{log}");
+    assert!(log.lines().count() >= 2, "{log}");
+}
+
+#[test]
+fn check_all_collects_errors_from_multiple_nodes() {
+    let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  window M {\n    Col {}\n    Rowr {}\n  }\n}\n";
+    let (app, parse_errors) = parse_all("Main.seq", src);
+    assert!(parse_errors.is_empty(), "{parse_errors:?}");
+    let app = app.unwrap();
+    let errors = check_all("Main.seq", &app);
+    assert!(
+        errors.len() >= 2,
+        "expected multiple check errors: {errors:?}"
+    );
+
+    let err = check("Main.seq", &app).unwrap_err();
+    assert!(
+        format!("{err}").lines().count() >= 2,
+        "check must print all errors: {err}"
+    );
 }

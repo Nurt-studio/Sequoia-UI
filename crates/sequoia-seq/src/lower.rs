@@ -223,7 +223,7 @@ fn expand_call(
                 file,
                 arg.line,
                 1,
-                format!("nieznany parametr '{}' w {}", arg.name, def.name),
+                format!("unknown parameter '{}' in {}", arg.name, def.name),
             ));
         };
         pmap.insert(param.name.as_str(), &arg.value);
@@ -234,7 +234,7 @@ fn expand_call(
                 file,
                 node.line,
                 1,
-                format!("brakuje parametru '{}' w {}", p.name, def.name),
+                format!("missing parameter '{}' in {}", p.name, def.name),
             ));
         }
     }
@@ -385,6 +385,7 @@ fn value_to_expr(value: &SeqValue, line: usize) -> Option<SeqExpr> {
         SeqValue::Num(n) => SeqExprKind::Float(f64::from(*n)),
         SeqValue::Bool(b) => SeqExprKind::Bool(*b),
         SeqValue::Str(s) => SeqExprKind::Str(s.clone()),
+        SeqValue::Color(hex) => SeqExprKind::Color(hex.clone()),
         SeqValue::Ident(name) => SeqExprKind::Var(name.clone()),
         SeqValue::Tuple(items) => SeqExprKind::Tuple(
             items
@@ -801,7 +802,7 @@ pub fn check_decls(file: &str, app: &SeqApp, bindings: &HostBindings) -> Result<
                         file,
                         d.line,
                         1,
-                        format!("nieznany typ prop '{want}' (String/Bool/Int/Float)"),
+                        format!("unknown prop type '{want}' (String/Bool/Int/Float)"),
                     )
                 })?;
                 match bindings.prop_type(&d.name) {
@@ -858,7 +859,7 @@ pub fn check_decls(file: &str, app: &SeqApp, bindings: &HostBindings) -> Result<
                             file,
                             d.line,
                             1,
-                            format!("nieznany typ parametru '{t}' (Int/Float/String/Bool)"),
+                            format!("unknown parameter type '{t}' (Int/Float/String/Bool)"),
                         ));
                     }
                     _ => {
@@ -1078,7 +1079,7 @@ pub fn build_styles(
                     s.line,
                     1,
                     format!(
-                        "style '{}': nieznany typ '{other}' (Box/Button/Text)",
+                        "style '{}': unknown type '{other}' (Box/Button/Text)",
                         s.name
                     ),
                 ));
@@ -1105,7 +1106,7 @@ fn base_chain<'s>(
                 file,
                 start.line,
                 1,
-                format!("style '{}': cykliczne extends", start.name),
+                format!("style '{}': cyclic extends", start.name),
             ));
         }
         seen.push(name.clone());
@@ -1114,7 +1115,7 @@ fn base_chain<'s>(
                 file,
                 start.line,
                 1,
-                format!("style '{}': nieznana baza '{name}'", start.name),
+                format!("style '{}': unknown base '{name}'", start.name),
             ));
         };
         if decl.target != start.target {
@@ -1122,10 +1123,10 @@ fn base_chain<'s>(
                 file,
                 start.line,
                 1,
-                format!(
-                    "style '{}': baza '{name}' to {}, a styl to {}",
-                    start.name, decl.target, start.target
-                ),
+                    format!(
+                        "style '{}': base '{name}' is {}, and style is {}",
+                        start.name, decl.target, start.target
+                    ),
             ));
         }
         chain.push(decl);
@@ -1135,7 +1136,7 @@ fn base_chain<'s>(
                 file,
                 start.line,
                 1,
-                format!("style '{}': cykliczne extends", start.name),
+                format!("style '{}': cyclic extends", start.name),
             ));
         }
     }
@@ -1800,7 +1801,7 @@ fn lower_node_inner(
                         file,
                         arg.line,
                         1,
-                        format!("item.{field} wymaga hosta Rust — wiersze List (inkrement 3)"),
+                        format!("item.{field} requires Rust host — List rows"),
                     ));
                 }
 
@@ -2206,7 +2207,7 @@ fn lower_node_inner(
             file,
             node.line,
             1,
-            format!("nieznany komponent '{other}'"),
+            format!("unknown component '{other}'"),
         )),
     };
     maybe_indent(built?, file, node, res, row)
@@ -3521,7 +3522,7 @@ fn easing_of(file: &str, line: usize, name: &str) -> Result<sequoia_view::Easing
                 file,
                 line,
                 1,
-                format!("nieznany easing '{other}' (np. linear, ease_out_cubic, ease_in_out)"),
+                format!("unknown easing '{other}' (e.g. linear, ease_out_cubic, ease_in_out)"),
             ));
         }
     })
@@ -3543,14 +3544,14 @@ fn spring_of(file: &str, arg: &SeqArg) -> Result<SpringSpec, SeqError> {
                 file,
                 arg.line,
                 1,
-                format!("nieznany preset behavior '{other}' (snappy/bouncy/gentle)"),
+                format!("unknown preset behavior '{other}' (snappy/bouncy/gentle)"),
             )),
         },
         _ => Err(SeqError::new(
             file,
             arg.line,
             1,
-            "behavior: spring(stiffness, damping[, mass]) albo preset (snappy/bouncy/gentle)",
+            "behavior: spring(stiffness, damping[, mass]) or preset (snappy/bouncy/gentle)",
         )),
     }
 }
@@ -3563,7 +3564,7 @@ fn anim_spec_of(file: &str, arg: &SeqArg) -> Result<AnimSpec, SeqError> {
                 file,
                 arg.line,
                 1,
-                "animate/enter/exit: nazwa presetu (fast/smooth/snappy/gentle/slow)".to_string(),
+                "animate/enter/exit: preset name (fast/smooth/snappy/gentle/slow)".to_string(),
             ));
         }
     };
@@ -3578,7 +3579,7 @@ fn anim_spec_of(file: &str, arg: &SeqArg) -> Result<AnimSpec, SeqError> {
                 file,
                 arg.line,
                 1,
-                format!("nieznany preset animacji '{name}'"),
+                format!("unknown animation preset '{name}'"),
             ));
         }
     })
@@ -6079,7 +6080,7 @@ fn lower_list(
             file,
             items.line,
             1,
-            format!("nieznany prop '{items_prop}' (HostBindings::rows())"),
+            format!("unknown prop '{items_prop}' (HostBindings::rows())"),
         )
     })?;
     let template = node.children.clone();
@@ -6193,7 +6194,7 @@ fn lower_virtual_list(
             file,
             items.line,
             1,
-            format!("nieznany prop '{items_prop}' (HostBindings::rows())"),
+            format!("unknown prop '{items_prop}' (HostBindings::rows())"),
         )
     })?;
     let template = node.children.clone();
@@ -7942,7 +7943,7 @@ fn lower_shape_list(
             file,
             items.line,
             1,
-            format!("nieznany prop '{items_prop}' (HostBindings::rows())"),
+            format!("unknown prop '{items_prop}' (HostBindings::rows())"),
         )
     })?;
     let template = node.children.clone();
@@ -9742,10 +9743,10 @@ fn button_style_of(
                     return Ok(Some(preset));
                 }
                 styles.button_style(name).map(Some).ok_or_else(|| {
-                    SeqError::new(file, arg.line, 1, format!("nieznany styl '{name}'"))
+                    SeqError::new(file, arg.line, 1, format!("unknown style '{name}'"))
                 })
             }
-            _ => Err(SeqError::new(file, arg.line, 1, "style: to nazwa stylu")),
+            _ => Err(SeqError::new(file, arg.line, 1, "style: style name")),
         },
     }
 }
