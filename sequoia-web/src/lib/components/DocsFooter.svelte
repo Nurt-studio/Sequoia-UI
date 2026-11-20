@@ -27,6 +27,13 @@
 					nav.page = 'benchmarks';
 				}}>Benchmarks</a
 			>
+			<a
+				href="/"
+				onclick={(e) => {
+					e.preventDefault();
+					nav.page = 'backend-ash';
+				}}>Vulkan backend</a
+			>
 			<a href="https://github.com/Nurt-studio/Sequoia-UI" target="_blank" rel="noreferrer">GitHub</a>
 			<a href="https://crates.io/crates/sequoia-ui" target="_blank" rel="noreferrer">crates.io</a>
 		</div>

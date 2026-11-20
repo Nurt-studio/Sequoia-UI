@@ -50,6 +50,14 @@
 		>
 		<a
 			href="/"
+			class:active={nav.page === 'backend-ash'}
+			onclick={(e) => {
+				e.preventDefault();
+				goto('backend-ash');
+			}}>Vulkan backend</a
+		>
+		<a
+			href="/"
 			class:active={nav.page === 'compare-0.1.6'}
 			onclick={(e) => {
 				e.preventDefault();

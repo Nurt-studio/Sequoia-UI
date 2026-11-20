@@ -7,6 +7,7 @@
 	import BenchmarksPage from './lib/pages/BenchmarksPage.svelte';
 	import Compare016Page from './lib/pages/Compare016Page.svelte';
 	import Release016Page from './lib/pages/Release016Page.svelte';
+	import GpuBackendPage from './lib/pages/GpuBackendPage.svelte';
 
 	$effect(() => {
 		void nav.page;
@@ -26,4 +27,6 @@
 	<Compare016Page />
 {:else if nav.page === 'release-0.1.6'}
 	<Release016Page />
+{:else if nav.page === 'backend-ash'}
+	<GpuBackendPage />
 {/if}
