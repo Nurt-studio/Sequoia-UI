@@ -60,7 +60,7 @@ fn normal_at(p: vec3<f32>) -> vec3<f32> {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let uv = (in.uv - vec2<f32>(0.5)) * vec2<f32>(1.6, 1.0);
     let origin = vec3<f32>(0.0, 0.55, 3.1);
-    let dir = normalize(vec3<f32>(uv.x, -uv.y, -1.5));
+    let dir = normalize(vec3<f32>(uv.x, uv.y, -1.5));
 
     var travel = 0.0;
     var hit = false;
@@ -95,8 +95,154 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const HEAVY_SHADER: &str = r#"
+struct VsOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    let corners = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0),
+    );
+    var out: VsOut;
+    out.clip = vec4<f32>(corners[index], 0.0, 1.0);
+    out.uv = corners[index] * 0.5 + vec2<f32>(0.5);
+    return out;
+}
+
+fn sd_torus(p: vec3<f32>, radii: vec2<f32>) -> f32 {
+    let q = vec2<f32>(length(p.xz) - radii.x, p.y);
+    return length(q) - radii.y;
+}
+
+fn sd_box(p: vec3<f32>, half_size: vec3<f32>) -> f32 {
+    let q = abs(p) - half_size;
+    return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+fn map_scene(p: vec3<f32>) -> f32 {
+    let ball_a = length(p - vec3<f32>(-0.95, -0.3, 0.1)) - 0.58;
+    let ball_b = length(p - vec3<f32>(0.85, -0.45, -0.5)) - 0.45;
+    let ball_c = length(p - vec3<f32>(0.1, 0.75, 0.6)) - 0.35;
+    let ring = sd_torus(p - vec3<f32>(0.0, 0.15, 0.0), vec2<f32>(0.95, 0.2));
+    let outer_ring = sd_torus(p - vec3<f32>(0.0, 0.15, 0.0), vec2<f32>(1.35, 0.06));
+    let block = sd_box(p - vec3<f32>(-1.5, -0.65, -1.1), vec3<f32>(0.32, 0.3, 0.32));
+    let plane = p.y + 0.95;
+    return min(min(min(ball_a, ball_b), min(ball_c, block)), min(min(ring, outer_ring), plane));
+}
+
+fn normal_at(p: vec3<f32>) -> vec3<f32> {
+    let e = vec2<f32>(0.0015, 0.0);
+    return normalize(vec3<f32>(
+        map_scene(p + e.xyy) - map_scene(p - e.xyy),
+        map_scene(p + e.yxy) - map_scene(p - e.yxy),
+        map_scene(p + e.yyx) - map_scene(p - e.yyx),
+    ));
+}
+
+fn march(ro: vec3<f32>, rd: vec3<f32>, steps: i32) -> f32 {
+    var travel = 0.05;
+    for (var i = 0; i < steps; i = i + 1) {
+        let distance = map_scene(ro + rd * travel);
+        if (distance < 0.0008 || travel > 14.0) {
+            break;
+        }
+        travel = travel + distance * 0.85;
+    }
+    return travel;
+}
+
+fn shadow(origin: vec3<f32>, light_dir: vec3<f32>) -> f32 {
+    var shade = 1.0;
+    var travel = 0.06;
+    for (var i = 0; i < 32; i = i + 1) {
+        let distance = map_scene(origin + light_dir * travel);
+        shade = min(shade, 10.0 * distance / travel);
+        travel = travel + clamp(distance, 0.03, 0.4);
+        if (distance < 0.001 || travel > 9.0) {
+            break;
+        }
+    }
+    return clamp(shade, 0.0, 1.0);
+}
+
+fn occlusion(point: vec3<f32>, normal: vec3<f32>) -> f32 {
+    var occ = 0.0;
+    var scale = 1.0;
+    for (var i = 0; i < 8; i = i + 1) {
+        let height = 0.02 + 0.07 * f32(i);
+        let distance = map_scene(point + normal * height);
+        occ = occ + (height - distance) * scale;
+        scale = scale * 0.72;
+    }
+    return clamp(1.0 - 2.2 * occ, 0.0, 1.0);
+}
+
+fn surface_color(point: vec3<f32>, ray_dir: vec3<f32>, light_dir: vec3<f32>) -> vec3<f32> {
+    let normal = normal_at(point);
+    let diffuse = max(dot(normal, light_dir), 0.0);
+    let shade = shadow(point + normal * 0.01, light_dir);
+    let ao = occlusion(point, normal);
+    var base = vec3<f32>(0.22, 0.52, 0.94);
+    if (point.y < -0.9) {
+        let checker = (floor(point.x * 2.0) + floor(point.z * 2.0)) % 2.0;
+        base = mix(vec3<f32>(0.10, 0.11, 0.16), vec3<f32>(0.24, 0.26, 0.34), checker);
+    }
+    let specular = pow(max(dot(reflect(-light_dir, normal), -ray_dir), 0.0), 42.0);
+    let rim = pow(1.0 - max(dot(normal, -ray_dir), 0.0), 3.0);
+    return base * (0.12 + 0.88 * diffuse * shade) * ao + vec3<f32>(specular * shade * 0.7 + rim * 0.15);
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let uv = (in.uv - vec2<f32>(0.5)) * vec2<f32>(1.6, 1.0);
+    let origin = vec3<f32>(0.0, 0.55, 3.1);
+    let dir = normalize(vec3<f32>(uv.x, uv.y, -1.5));
+    let light_dir = normalize(vec3<f32>(0.55, 0.85, 0.45));
+
+    var color = vec3<f32>(0.04, 0.05, 0.09);
+    let travel = march(origin, dir, 256);
+    if (travel < 14.0) {
+        let point = origin + dir * travel;
+        let normal = normal_at(point);
+        color = surface_color(point, dir, light_dir);
+
+        let reflected = reflect(dir, normal);
+        let bounce_origin = point + normal * 0.02;
+        let bounce = march(bounce_origin, reflected, 96);
+        if (bounce < 14.0) {
+            let bounce_point = bounce_origin + reflected * bounce;
+            let reflected_color = surface_color(bounce_point, reflected, light_dir);
+            let bounce_normal = normal_at(bounce_point);
+            let second = reflect(reflected, bounce_normal);
+            let second_origin = bounce_point + bounce_normal * 0.02;
+            let second_dist = march(second_origin, second, 48);
+            var second_color = vec3<f32>(0.04, 0.05, 0.09);
+            if (second_dist < 14.0) {
+                second_color = surface_color(second_origin + second * second_dist, second, light_dir);
+            }
+            let fresnel = 0.04 + 0.55 * pow(1.0 - max(dot(normal, -dir), 0.0), 5.0);
+            color = mix(color, mix(reflected_color, second_color, 0.4), fresnel);
+        }
+    }
+    return vec4<f32>(color, 1.0);
+}
+"#;
+
+fn shader_source() -> &'static str {
+    if std::env::var_os("SEQUOIA_HEAVY_3D").is_some() {
+        HEAVY_SHADER
+    } else {
+        SHADER
+    }
+}
+
 fn spirv() -> Vec<u32> {
-    let module = naga::front::wgsl::parse_str(SHADER).expect("parse 3D shader");
+    let module = naga::front::wgsl::parse_str(shader_source()).expect("parse 3D shader");
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::empty(),
@@ -128,7 +274,7 @@ impl WgpuRenderer for WgpuScene3D {
                     .device
                     .create_shader_module(wgpu::ShaderModuleDescriptor {
                         label: Some("surface-3d"),
-                        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+                        source: wgpu::ShaderSource::Wgsl(shader_source().into()),
                     });
                 let pipeline = frame
                     .device
@@ -386,7 +532,7 @@ fn run<V: View + 'static>(backend: RenderBackend, surface: V) {
 
     let app = App::new()
         .title(format!("3D surface — {}", backend.name()))
-        .size(760.0, 520.0)
+        .size(1200.0, 800.0)
         .render_backend(backend)
         .root(view);
 
