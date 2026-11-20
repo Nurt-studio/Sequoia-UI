@@ -1,0 +1,34 @@
+[package]
+name = "sequoia-render-ash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sequoia GUI framework — experimental pure-ash Vulkan renderer"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+sequoia-core = { workspace = true }
+sequoia-shader = { workspace = true }
+sequoia-text = { workspace = true }
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+ash-window = "0.13"
+bytemuck = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
+naga = { workspace = true }
+sequoia-view = { workspace = true }
+winit = { workspace = true }
+
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+too_many_arguments = "allow"
+type_complexity = "allow"

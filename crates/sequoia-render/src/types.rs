@@ -910,6 +910,8 @@ pub enum RenderError {
     Device(wgpu::RequestDeviceError),
     Surface,
     ShaderCompile(String),
+    /// An error reported by an alternative (non-wgpu) backend.
+    Backend(String),
 }
 
 impl std::fmt::Display for RenderError {
@@ -920,6 +922,7 @@ impl std::fmt::Display for RenderError {
             Self::Device(e) => write!(f, "device creation failed: {e}"),
             Self::Surface => write!(f, "surface state error"),
             Self::ShaderCompile(e) => write!(f, "shader compilation failed: {e}"),
+            Self::Backend(e) => write!(f, "backend error: {e}"),
         }
     }
 }

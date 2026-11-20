@@ -7,14 +7,19 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use sequoia_assets::AssetRegistry;
-use sequoia_core::{Color, Point, Rect, RenderList, Size};
+use sequoia_core::{Color, Point, Rect, RenderList, ShaderId, Size};
 use sequoia_elements::{SharedClipboard, SharedDataClipboard};
 use sequoia_input::{CursorIcon, ImeEvent, Key, Modifiers, PointerButton};
 use sequoia_reactive::Environment;
-use sequoia_render::{GpuOptions, GpuRenderer, PreinitGpu, RenderError, preinit_gpu};
+use sequoia_render::{
+    FrameSkip, GpuOptions, GpuRenderer, PreinitGpu, RenderError, RenderStats, preinit_gpu,
+};
+use sequoia_render_ash::{AshOptions, AshRenderer, PresentMode as AshPresentMode};
 use sequoia_style::Theme;
-use sequoia_text::TextSystem;
-use sequoia_view::{AnyView, CullCtx, FrameOutcome, Runtime, Stats as RuntimeStats, View};
+use sequoia_text::{GlyphAtlas, TextSystem};
+use sequoia_view::{
+    AnyView, CullCtx, FrameOutcome, Runtime, Stats as RuntimeStats, SurfaceDraw, View,
+};
 
 mod cli;
 mod clipboard;
@@ -40,10 +45,12 @@ pub use single_instance::SingleInstance;
 pub use window::{ResizeDirection, WindowSettings, WindowSpec, Windows};
 
 pub use sequoia_assets::AssetRegistry as Assets;
-use sequoia_render::{FrameSkip, RenderStats};
 pub use sequoia_render::{
     GpuBackend, MemoryBudget, PowerPreference as GpuPowerPreference, PresentMode as GpuPresentMode,
     QualityLevel, Region, SharedGpu, WgpuFrame, WgpuRenderer, WgpuSurface, wgpu,
+};
+pub use sequoia_render_ash::{
+    AshFrame, AshRegion, AshSurface, AshSurfaceRenderer, VulkanRenderer, VulkanSurface,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
@@ -76,6 +83,221 @@ impl std::fmt::Display for AppError {
 }
 
 impl std::error::Error for AppError {}
+
+/// Selects the renderer implementation used by every window of an [`App`].
+///
+/// [`RenderBackend::VulkanAsh`] is experimental: it bypasses wgpu and drives
+/// Vulkan directly. Set `SEQUOIA_RENDER_BACKEND=ash` to switch without changing
+/// application code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderBackend {
+    /// The stable wgpu renderer, optionally restricted to one wgpu API.
+    Wgpu(GpuBackend),
+    /// The experimental, pure-`ash` Vulkan renderer.
+    VulkanAsh,
+}
+
+impl Default for RenderBackend {
+    fn default() -> Self {
+        Self::Wgpu(GpuBackend::Auto)
+    }
+}
+
+impl From<GpuBackend> for RenderBackend {
+    fn from(backend: GpuBackend) -> Self {
+        Self::Wgpu(backend)
+    }
+}
+
+impl RenderBackend {
+    /// Returns the user-facing backend name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Wgpu(backend) => backend.name(),
+            Self::VulkanAsh => "vulkan-ash",
+        }
+    }
+
+    /// Returns the wgpu API preference, or `Auto` for the Vulkan backend.
+    pub fn wgpu_backend(self) -> GpuBackend {
+        match self {
+            Self::Wgpu(backend) => backend,
+            Self::VulkanAsh => GpuBackend::Vulkan,
+        }
+    }
+
+    fn from_env() -> Option<Self> {
+        let raw = std::env::var("SEQUOIA_RENDER_BACKEND").ok()?;
+        let value = raw.trim().to_ascii_lowercase();
+        let backend = match value.as_str() {
+            "ash" | "vulkan" | "vulkan-ash" | "vulkan_ash" | "raw-vulkan" => Self::VulkanAsh,
+            "wgpu" | "auto" | "default" => Self::Wgpu(GpuBackend::Auto),
+            other => {
+                let api = other
+                    .strip_prefix("wgpu:")
+                    .or_else(|| other.strip_prefix("wgpu-"))
+                    .unwrap_or(other);
+                let gpu = match api {
+                    "vulkan" => GpuBackend::Vulkan,
+                    "metal" => GpuBackend::Metal,
+                    "dx12" | "d3d12" => GpuBackend::Dx12,
+                    "gl" | "opengl" => GpuBackend::Gl,
+                    "webgpu" => GpuBackend::WebGpu,
+                    "auto" => GpuBackend::Auto,
+                    _ => {
+                        log::warn!(
+                            "sequoia-platform: unknown SEQUOIA_RENDER_BACKEND='{raw}' (use wgpu, ash or wgpu:vulkan)"
+                        );
+                        return None;
+                    }
+                };
+                Self::Wgpu(gpu)
+            }
+        };
+        log::info!("sequoia-platform: renderer backend from environment: {raw}");
+        Some(backend)
+    }
+}
+
+enum WindowRenderer {
+    Wgpu(GpuRenderer),
+    Ash {
+        renderer: VulkanRenderer,
+        shaders: HashMap<String, ShaderId>,
+        next_shader: u32,
+    },
+}
+
+impl WindowRenderer {
+    fn render_with_damage_regions(
+        &mut self,
+        list: &RenderList,
+        atlas: &mut GlyphAtlas,
+        scale: f32,
+        surfaces: &[SurfaceDraw],
+        damage: Option<&[Rect]>,
+    ) -> Result<(), RenderError> {
+        match self {
+            Self::Wgpu(renderer) => {
+                renderer.render_with_damage_regions(list, atlas, scale, surfaces, damage)
+            }
+            Self::Ash { renderer, .. } => renderer
+                .render_with_damage_regions(list, atlas, scale, surfaces, damage)
+                .map_err(|error| RenderError::Backend(error.to_string())),
+        }
+    }
+
+    fn take_stats(&mut self) -> RenderStats {
+        match self {
+            Self::Wgpu(renderer) => renderer.take_stats(),
+            Self::Ash { .. } => RenderStats::default(),
+        }
+    }
+
+    fn take_frame_skip(&self) -> Option<FrameSkip> {
+        match self {
+            Self::Wgpu(renderer) => renderer.take_frame_skip(),
+            Self::Ash { .. } => None,
+        }
+    }
+
+    fn take_redraw_request(&self) -> bool {
+        match self {
+            Self::Wgpu(renderer) => renderer.take_redraw_request(),
+            Self::Ash { renderer, .. } => renderer.take_redraw_request(),
+        }
+    }
+
+    fn register_shader(
+        &mut self,
+        name: impl Into<String>,
+        wgsl: impl AsRef<str>,
+    ) -> Result<ShaderId, RenderError> {
+        match self {
+            Self::Wgpu(renderer) => renderer.register_shader(name, wgsl),
+            Self::Ash {
+                shaders,
+                next_shader,
+                ..
+            } => {
+                let _ = wgsl;
+                let name = name.into();
+                if let Some(id) = shaders.get(&name) {
+                    return Ok(*id);
+                }
+                let id = ShaderId::new(*next_shader);
+                *next_shader = next_shader.saturating_add(1);
+                shaders.insert(name, id);
+                Ok(id)
+            }
+        }
+    }
+
+    fn shader_id(&self, name: &str) -> Option<ShaderId> {
+        match self {
+            Self::Wgpu(renderer) => renderer.shader_id(name),
+            Self::Ash { shaders, .. } => shaders.get(name).copied(),
+        }
+    }
+
+    fn set_clear_color(&mut self, color: Color) {
+        match self {
+            Self::Wgpu(renderer) => renderer.set_clear_color(color),
+            Self::Ash { renderer, .. } => renderer.set_clear_color(color),
+        }
+    }
+
+    fn set_memory_budget(&mut self, budget: MemoryBudget) {
+        if let Self::Wgpu(renderer) = self {
+            renderer.set_memory_budget(budget);
+        }
+    }
+
+    fn release_scratch(&mut self) {
+        if let Self::Wgpu(renderer) = self {
+            renderer.release_scratch();
+        }
+    }
+
+    fn set_resize_present_mode(&mut self, resizing: bool) {
+        if let Self::Wgpu(renderer) = self {
+            renderer.set_resize_present_mode(resizing);
+        }
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        match self {
+            Self::Wgpu(renderer) => renderer.resize(width, height),
+            Self::Ash { renderer, .. } => {
+                if let Err(error) = renderer.resize(width, height) {
+                    log::warn!("sequoia-platform: Vulkan resize failed: {error}");
+                }
+            }
+        }
+    }
+
+    fn adapter_info(&self) -> wgpu::AdapterInfo {
+        match self {
+            Self::Wgpu(renderer) => renderer.adapter_info(),
+            Self::Ash { renderer, .. } => {
+                let info = renderer.adapter_info();
+                wgpu::AdapterInfo {
+                    name: info.name,
+                    vendor: info.vendor,
+                    device: info.device,
+                    device_type: wgpu::DeviceType::DiscreteGpu,
+                    device_pci_bus_id: String::new(),
+                    driver: "ash".into(),
+                    driver_info: String::new(),
+                    backend: wgpu::Backend::Vulkan,
+                    subgroup_min_size: 32,
+                    subgroup_max_size: 64,
+                    transient_saves_memory: false,
+                }
+            }
+        }
+    }
+}
 
 static STARTUP_TRACE_MARKS: Mutex<Vec<(&'static str, f64)>> = Mutex::new(Vec::new());
 
@@ -318,7 +540,7 @@ pub struct FrameMetrics {
 pub struct App {
     windows: Vec<WindowSpec>,
     theme: Theme,
-    backend: GpuBackend,
+    backend: RenderBackend,
     redraw_mode: RedrawMode,
     assets: AssetRegistry,
     worker_threads: usize,
@@ -337,7 +559,7 @@ impl Default for App {
         Self {
             windows: vec![WindowSpec::untitled()],
             theme: Theme::dark(),
-            backend: GpuBackend::Auto,
+            backend: RenderBackend::default(),
             redraw_mode: RedrawMode::OnDemand,
             assets: AssetRegistry::with_builtin_icons(),
             worker_threads: executor::default_threads(),
@@ -390,7 +612,14 @@ impl App {
         self
     }
 
-    pub fn backend(mut self, backend: GpuBackend) -> Self {
+    /// Selects a renderer. A plain [`GpuBackend`] selects wgpu with that API.
+    pub fn backend(mut self, backend: impl Into<RenderBackend>) -> Self {
+        self.backend = backend.into();
+        self
+    }
+
+    /// Selects the full renderer backend, including the experimental Vulkan one.
+    pub fn render_backend(mut self, backend: RenderBackend) -> Self {
         self.backend = backend;
         self
     }
@@ -791,11 +1020,16 @@ impl App {
     }
 
     pub fn run(self) -> Result<(), AppError> {
-        let preinit_options = GpuOptions::with_backend(self.backend);
-        let gpu_preinit = std::thread::Builder::new()
-            .name("sequoia-gpu-preinit".into())
-            .spawn(move || preinit_gpu(preinit_options))
-            .ok();
+        let backend = RenderBackend::from_env().unwrap_or(self.backend);
+        let gpu_preinit = if let RenderBackend::Wgpu(gpu) = backend {
+            let preinit_options = GpuOptions::with_backend(gpu);
+            std::thread::Builder::new()
+                .name("sequoia-gpu-preinit".into())
+                .spawn(move || preinit_gpu(preinit_options))
+                .ok()
+        } else {
+            None
+        };
         let event_loop = EventLoop::<JobWake>::with_user_event()
             .build()
             .map_err(|e| AppError::EventLoop(e.to_string()))?;
@@ -853,7 +1087,7 @@ impl App {
             .map(|frames| Rc::new(RefCell::new(Bench::new(frames))));
         let mut handler = PlatformApp {
             theme: self.theme,
-            backend: self.backend,
+            backend,
             bench: bench.clone(),
             hooks: self.hooks,
             metrics: self.metrics,
@@ -1069,7 +1303,7 @@ struct WindowState {
     id: WindowId,
     window: Arc<Window>,
     rt: Runtime,
-    gpu: GpuRenderer,
+    gpu: WindowRenderer,
     text: TextSystem,
     cursor: Point,
     mods: Modifiers,
@@ -1497,7 +1731,7 @@ fn note_frame(gap_ms: f64, tick_ms: f64, layout_ms: f64, paint_ms: f64, render_m
 
 struct PlatformApp {
     theme: Theme,
-    backend: GpuBackend,
+    backend: RenderBackend,
     redraw_mode: RedrawMode,
     assets: AssetRegistry,
 
@@ -1683,19 +1917,47 @@ impl PlatformApp {
         }
 
         let size = window.inner_size();
-        let mut options = GpuOptions::with_backend(self.backend)
+        let mut options = GpuOptions::with_backend(self.backend.wgpu_backend())
             .present_mode(s.present_mode)
             .power_preference(s.power_preference);
         if let Some(format) = s.surface_format {
             options = options.surface_format(format);
         }
         let mut new_shared = None;
-        let mut gpu = {
+        let mut gpu = if self.backend == RenderBackend::VulkanAsh {
+            let present_mode = match s.present_mode {
+                GpuPresentMode::Vsync => AshPresentMode::Vsync,
+                GpuPresentMode::Mailbox => AshPresentMode::LowLatency,
+                GpuPresentMode::Immediate => AshPresentMode::Immediate,
+                _ => AshPresentMode::Vsync,
+            };
+            let ash_options = AshOptions {
+                present_mode,
+                preferred_format: None,
+                validation: std::env::var_os("SEQUOIA_VULKAN_VALIDATION").is_some(),
+                clear_color: window_clear_color(self.theme, s.transparent),
+            };
+            let renderer = AshRenderer::with_options(
+                window.clone(),
+                size.width,
+                size.height,
+                ash_options,
+            )
+            .map_err(|error| {
+                AppError::Gpu(format!("backend {} ({id}): {error}", self.backend.name()))
+            })?;
+            WindowRenderer::Ash {
+                renderer,
+                shaders: HashMap::new(),
+                next_shader: 1,
+            }
+        } else {
+            WindowRenderer::Wgpu({
             let _trace = StartupTrace::new("create_window.gpu_device");
             if let Some(shared) = self
             .shared_gpu
             .as_ref()
-            .filter(|shared| shared.supports(self.backend))
+            .filter(|shared| shared.supports(self.backend.wgpu_backend()))
         {
             match shared.renderer(window.clone(), size.width, size.height, options) {
                 Ok(gpu) => gpu,
@@ -1765,9 +2027,10 @@ impl PlatformApp {
                         .map_err(|e| {
                             AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
                         })?
+                    }
                 }
             }
-        }
+            })
         };
         if let Some(shared) = new_shared {
             self.shared_gpu = Some(shared);

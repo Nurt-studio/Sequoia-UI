@@ -19,12 +19,13 @@ pub use sequoia_platform::wgpu;
 pub use sequoia_platform::{
     Accelerator, AcceleratorCtx, App, CliArgs, DockLayoutStore, Executor, FileFilter,
     FrameMetrics, GlobalHotkeys, HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog,
-    RecentFiles, RedrawMode, ResizeDirection, Settings, SingleInstance, WindowSettings, WindowSpec,
-    Windows, help_text, native_message, not_editing,
+    RecentFiles, RedrawMode, RenderBackend, ResizeDirection, Settings, SingleInstance,
+    WindowSettings, WindowSpec, Windows, help_text, native_message, not_editing,
 };
 pub use sequoia_reactive as reactive;
 pub use sequoia_reactive::{Binding, Environment, Signal, Store, UndoSignal};
 pub use sequoia_render as render;
+pub use sequoia_render_ash as ash_render;
 pub use sequoia_seq as seq;
 pub use sequoia_seq::{AppMeta, HostBindings, LoadedApp, SeqError, SeqLoader};
 pub use sequoia_seq_macros::include_seq;
@@ -41,7 +42,7 @@ pub mod prelude {
         Accelerator, AcceleratorCtx, AnyView, App, AsyncRuntime, AsyncState, CliArgs, Debouncer,
         DockLayoutStore, Emitter, Environment, Executor, FileFilter, FrameMetrics, GlobalHotkeys,
         HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles, RedrawMode,
-        ResizeDirection, Resource, ScopedTask, Settings, Signal, SignalAsyncExt, SingleInstance,
+        RenderBackend, ResizeDirection, Resource, ScopedTask, Settings, Signal, SignalAsyncExt, SingleInstance,
         Store, TaskHandle, TaskId, Throttler, View, WindowId, WindowSpec, Windows, help_text,
         include_seq, native_message, not_editing,
     };

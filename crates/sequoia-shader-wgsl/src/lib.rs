@@ -16,6 +16,13 @@ pub const MAX_UNIFORM_BYTES: usize = 256;
 /// Maximum number of texture inputs a shader may declare.
 pub const MAX_TEXTURES: usize = 6;
 
+/// WGSL module implementing the renderer's built-in quad, glyph, blit, and
+/// gradient pipelines.
+///
+/// Every render backend compiles this one source so the two backends cannot
+/// drift apart in coverage math or colour handling.
+pub const WGSL_RENDER: &str = include_str!("../wgsl/render.wgsl");
+
 pub const WGSL_PRELUDE: &str = include_str!("../wgsl/prelude.wgsl");
 pub const WGSL_ARRAY_UNIFORMS: &str = include_str!("../wgsl/array_uniforms.wgsl");
 pub const WGSL_EPILOGUE: &str = include_str!("../wgsl/epilogue.wgsl");

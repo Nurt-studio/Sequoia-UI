@@ -23,6 +23,7 @@ sequoia-layout = { workspace = true }
 sequoia-platform = { workspace = true }
 sequoia-reactive = { workspace = true }
 sequoia-render = { workspace = true }
+sequoia-render-ash = { workspace = true }
 sequoia-seq = { workspace = true }
 sequoia-seq-macros = { workspace = true }
 sequoia-shader = { workspace = true }
