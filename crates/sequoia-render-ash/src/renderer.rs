@@ -33,9 +33,9 @@ use crate::surface::{
 };
 use crate::{AshError, AshOptions};
 
-const MAX_CACHED_IMAGES: usize = 256;
-const MAX_CACHED_TARGETS: usize = 16;
-const MAX_TARGET_PASSES: usize = 32;
+const MAX_CACHED_IMAGES: usize = 64;
+const MAX_CACHED_TARGETS: usize = 8;
+const MAX_TARGET_PASSES: usize = 16;
 const SCREEN_SLOTS: usize = MAX_TARGET_PASSES * 2 + 2;
 const SURFACE_SLOT: usize = MAX_TARGET_PASSES + 1;
 const SURFACE_KEY_BIT: u64 = 1 << 60;
@@ -153,14 +153,12 @@ impl Pipelines {
 struct TargetFormatState {
     clear_pass: vk::RenderPass,
     load_pass: vk::RenderPass,
-    clear_pipelines: Pipelines,
-    load_pipelines: Pipelines,
+    pipelines: Pipelines,
 }
 
 impl TargetFormatState {
     unsafe fn destroy(self, device: &Device) {
-        self.clear_pipelines.destroy(device);
-        self.load_pipelines.destroy(device);
+        self.pipelines.destroy(device);
         device.destroy_render_pass(self.clear_pass, None);
         device.destroy_render_pass(self.load_pass, None);
     }
@@ -612,7 +610,7 @@ impl AshRenderer {
         extent.width = extent.width.max(1);
         extent.height = extent.height.max(1);
 
-        let mut image_count = capabilities.min_image_count.saturating_add(1);
+        let mut image_count = capabilities.min_image_count;
         if capabilities.max_image_count > 0 {
             image_count = image_count.min(capabilities.max_image_count);
         }
@@ -1314,18 +1312,9 @@ impl AshRenderer {
                 return Err(error);
             }
         };
-        let clear_pipelines = match self.create_pipelines(clear_pass, format) {
+        let pipelines = match self.create_pipelines(clear_pass, format) {
             Ok(pipelines) => pipelines,
             Err(error) => {
-                self.device.destroy_render_pass(load_pass, None);
-                self.device.destroy_render_pass(clear_pass, None);
-                return Err(error);
-            }
-        };
-        let load_pipelines = match self.create_pipelines(load_pass, format) {
-            Ok(pipelines) => pipelines,
-            Err(error) => {
-                clear_pipelines.destroy(&self.device);
                 self.device.destroy_render_pass(load_pass, None);
                 self.device.destroy_render_pass(clear_pass, None);
                 return Err(error);
@@ -1336,8 +1325,7 @@ impl AshRenderer {
             TargetFormatState {
                 clear_pass,
                 load_pass,
-                clear_pipelines,
-                load_pipelines,
+                pipelines,
             },
         );
         Ok(())
@@ -2084,11 +2072,12 @@ impl AshRenderer {
             let (framebuffer, render_pass, pipelines) = if let Some(target) = pass.target {
                 let texture = self.render_targets.get(&target).expect("render target");
                 let state = &self.target_formats[&pass.format];
-                if pass.clear {
-                    (texture.framebuffer, state.clear_pass, state.clear_pipelines)
+                let render_pass = if pass.clear {
+                    state.clear_pass
                 } else {
-                    (texture.framebuffer, state.load_pass, state.load_pipelines)
-                }
+                    state.load_pass
+                };
+                (texture.framebuffer, render_pass, state.pipelines)
             } else {
                 (present_framebuffer, present_pass, present_pipelines)
             };
