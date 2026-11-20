@@ -95,7 +95,20 @@ impl VulkanSurface {
             .application_info(&app_info)
             .enabled_extension_names(&extensions)
             .enabled_layer_names(&layer_names);
-        let instance = entry.create_instance(&instance_info, None)?;
+        let instance = match entry.create_instance(&instance_info, None) {
+            Ok(instance) => instance,
+            Err(vk::Result::ERROR_LAYER_NOT_PRESENT) if !layer_names.is_empty() => {
+                log::warn!(
+                    "sequoia-render-ash: validation layer is unusable - retrying without it"
+                );
+                let fallback = vk::InstanceCreateInfo::default()
+                    .flags(instance_flags)
+                    .application_info(&app_info)
+                    .enabled_extension_names(&extensions);
+                entry.create_instance(&fallback, None)?
+            }
+            Err(error) => return Err(AshError::Vulkan(error)),
+        };
 
         let surface = match ash_window::create_surface(
             &entry,

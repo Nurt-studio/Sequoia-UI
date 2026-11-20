@@ -31,5 +31,21 @@ sequoia-style = { workspace = true }
 sequoia-text = { workspace = true }
 sequoia-view = { workspace = true }
 
-[lints]
-workspace = true
+[dev-dependencies]
+ash = "0.38"
+naga = { workspace = true }
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+neg_cmp_op_on_partial_ord = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+inherent_to_string = "allow"
+result_unit_err = "allow"
+should_implement_trait = "allow"
