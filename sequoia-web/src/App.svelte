@@ -4,10 +4,7 @@
 	import HomePage from './lib/pages/HomePage.svelte';
 	import DocsPage from './lib/pages/DocsPage.svelte';
 	import BlogPage from './lib/pages/BlogPage.svelte';
-	import BenchmarksPage from './lib/pages/BenchmarksPage.svelte';
-	import Compare016Page from './lib/pages/Compare016Page.svelte';
 	import Release016Page from './lib/pages/Release016Page.svelte';
-	import GpuBackendPage from './lib/pages/GpuBackendPage.svelte';
 
 	$effect(() => {
 		void nav.page;
@@ -21,12 +18,6 @@
 	<DocsPage />
 {:else if nav.page === 'blog'}
 	<BlogPage />
-{:else if nav.page === 'benchmarks'}
-	<BenchmarksPage />
-{:else if nav.page === 'compare-0.1.6'}
-	<Compare016Page />
 {:else if nav.page === 'release-0.1.6'}
 	<Release016Page />
-{:else if nav.page === 'backend-ash'}
-	<GpuBackendPage />
 {/if}

@@ -9,7 +9,6 @@
 			title: 'Product',
 			links: [
 				{ label: 'Documentation', href: '/', onClick: () => (nav.page = 'docs') },
-				{ label: 'Benchmarks', href: '/', onClick: () => (nav.page = 'benchmarks') },
 				{ label: 'Full book', href: DOCS },
 				{ label: 'API reference', href: 'https://docs.rs/sequoia-ui' },
 				{ label: 'Repository', href: REPO },

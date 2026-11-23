@@ -2,7 +2,6 @@
 	import DocsTopBar from '../components/DocsTopBar.svelte';
 	import DocsFooter from '../components/DocsFooter.svelte';
 	import { nav } from '../navigation.svelte.js';
-	import benchmarkSummary from '../../assets/benchmark-summary.png';
 
 	const BOOK = 'https://nurt-studio.github.io/Sequoia-UI/';
 
@@ -82,29 +81,6 @@
 		<div class="blog-featured-content">
 			<div class="meta">
 				<span class="blog-tag">Release</span>
-				<span class="blog-date">November 11, 2026</span>
-			</div>
-			<h2>SequoiaUI 0.1.5</h2>
-			<p>
-				Layout and performance release: cached layout, faster flex distribution, view culling,
-				stabilized text intrinsic sizing and frame hooks. Requires Rust 1.88 or newer.
-			</p>
-			<a
-				href="https://github.com/Nurt-studio/Sequoia-UI/releases/tag/0.1.5"
-				class="blog-read-more"
-				target="_blank"
-				rel="noreferrer">Read the release notes →</a
-			>
-		</div>
-	</div>
-	<div class="blog-featured-card">
-		<div class="blog-featured-img">
-			<span class="big-num">02</span>
-			<span class="img-label">0.1.6</span>
-		</div>
-		<div class="blog-featured-content">
-			<div class="meta">
-				<span class="blog-tag">Release</span>
 				<span class="blog-date">November 19, 2026</span>
 			</div>
 			<h2>SequoiaUI 0.1.6</h2>
@@ -125,29 +101,25 @@
 		</div>
 	</div>
 	<div class="blog-featured-card">
-		<div class="blog-featured-img has-image">
-			<img
-				src={benchmarkSummary}
-				alt="Cross-framework benchmark: sequoia-ui holds 60 fps in both 3,000-node scenes"
-			/>
+		<div class="blog-featured-img">
+			<span class="big-num">02</span>
+			<span class="img-label">Previous release</span>
 		</div>
 		<div class="blog-featured-content">
 			<div class="meta">
-				<span class="blog-tag">Benchmark</span>
+				<span class="blog-tag">Release</span>
 				<span class="blog-date">November 11, 2026</span>
 			</div>
-			<h2>sequoia-ui vs gpui, gpui-fast and BUI</h2>
+			<h2>SequoiaUI 0.1.5</h2>
 			<p>
-				One machine, one session, identical scenes. sequoia-ui holds 60 fps in both 3,000-node
-				scenes at 2.26 ms of CPU per frame — 6.1× gpui-fast and 7.7× gpui on the row scene.
+				Layout and performance release: cached layout, faster flex distribution, view culling,
+				stabilized text intrinsic sizing and frame hooks. Requires Rust 1.88 or newer.
 			</p>
 			<a
-				href="/"
+				href="https://github.com/Nurt-studio/Sequoia-UI/releases/tag/0.1.5"
 				class="blog-read-more"
-				onclick={(e) => {
-					e.preventDefault();
-					nav.page = 'benchmarks';
-				}}>See the full benchmark →</a
+				target="_blank"
+				rel="noreferrer">Read the release notes →</a
 			>
 		</div>
 	</div>
@@ -250,17 +222,6 @@
 		backdrop-filter: blur(8px);
 		padding: var(--space-2) var(--space-3);
 		border-radius: 20px;
-	}
-	.blog-featured-img.has-image {
-		padding: 0;
-		background: #fff;
-	}
-	.blog-featured-img.has-image img {
-		display: block;
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-		object-position: left center;
 	}
 	.blog-featured-content {
 		padding: var(--space-7);

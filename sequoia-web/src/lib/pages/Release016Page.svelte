@@ -271,14 +271,6 @@ const surfaceHtml = `<span class="kw">use</span> sequoia_ui::platform::{WgpuFram
 			motion language in <strong>.seq</strong>, typed <strong>include_seq!</strong> bindings,
 			per-frame metrics and paint-ordered GPU surfaces.
 		</p>
-		<a
-			class="bench-link"
-			href="/"
-			onclick={(e) => {
-				e.preventDefault();
-				nav.page = 'compare-0.1.6';
-			}}>See the 0.1.5 vs 0.1.6 benchmark comparison &rarr;</a
-		>
 	</header>
 
 	<section class="perf-strip">
@@ -797,17 +789,6 @@ const surfaceHtml = `<span class="kw">use</span> sequoia_ui::platform::{WgpuFram
 	}
 	.lede strong {
 		color: var(--fg);
-	}
-	.bench-link {
-		display: inline-block;
-		margin-top: var(--space-4);
-		color: var(--accent);
-		text-decoration: none;
-		font-size: var(--text-sm);
-		font-weight: 700;
-	}
-	.bench-link:hover {
-		text-decoration: underline;
 	}
 
 	.perf-strip {

@@ -40,36 +40,32 @@
 			}}
 			>Blog</a
 		>
-		<a
-			href="/"
-			class:active={nav.page === 'benchmarks'}
-			onclick={(e) => {
-				e.preventDefault();
-				goto('benchmarks');
-			}}>Benchmarks</a
-		>
-		<a
-			href="/"
-			class:active={nav.page === 'backend-ash'}
-			onclick={(e) => {
-				e.preventDefault();
-				goto('backend-ash');
-			}}>Vulkan backend</a
-		>
-		<a
-			href="/"
-			class:active={nav.page === 'compare-0.1.6'}
-			onclick={(e) => {
-				e.preventDefault();
-				goto('compare-0.1.6');
-			}}>Compare</a
-		>
 		<a href="https://nurt-studio.github.io/Sequoia-UI/guides/widgets.html" target="_blank" rel="noreferrer">Components</a>
 		<a href="https://nurt-studio.github.io/Sequoia-UI/getting-started/examples.html" target="_blank" rel="noreferrer">Examples</a>
 	</div>
 	<div class="top-bar-right">
-		<a href="https://docs.rs/sequoia-ui" class="search-box" target="_blank" rel="noreferrer">
+		<a
+			href="https://docs.rs/sequoia-ui"
+			class="search-box"
+			aria-label="API reference on docs.rs"
+			target="_blank"
+			rel="noreferrer">
+			<svg
+				width="15"
+				height="15"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+				><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path
+					d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"
+				/></svg
+			>
 			<span>API reference</span>
+			<span class="api-arrow" aria-hidden="true">↗</span>
 		</a>
 		<a href="https://github.com/Nurt-studio/Sequoia-UI" class="github-btn" aria-label="GitHub repository" target="_blank" rel="noreferrer">
 			<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"
@@ -151,22 +147,51 @@
 		gap: var(--space-3);
 	}
 	.search-box {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
-		gap: var(--space-2);
+		gap: 7px;
 		background: #fff;
 		border: 1px solid #e5e5e7;
 		border-radius: 8px;
-		padding: var(--space-2) var(--space-3);
+		padding: 7px 10px;
 		cursor: pointer;
-		transition: border-color 0.2s;
+		color: #555;
+		text-decoration: none;
+		white-space: nowrap;
+		transition:
+			color 0.18s ease,
+			border-color 0.18s ease,
+			box-shadow 0.18s ease;
 	}
 	.search-box:hover {
-		border-color: #ccc;
+		color: #1a1a1a;
+		border-color: #d3d3d7;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+	}
+	.search-box:focus-visible {
+		outline: 2px solid rgba(230, 57, 30, 0.45);
+		outline-offset: 2px;
+	}
+	.search-box svg {
+		flex-shrink: 0;
+		color: var(--accent);
 	}
 	.search-box span {
-		font-size: var(--text-sm);
-		color: #999;
+		font-size: var(--text-xs);
+		font-weight: 600;
+		color: inherit;
+	}
+	.search-box .api-arrow {
+		font-size: 11px;
+		font-weight: 500;
+		color: #aaa;
+		transition:
+			transform 0.18s ease,
+			color 0.18s ease;
+	}
+	.search-box:hover .api-arrow {
+		color: var(--accent);
+		transform: translate(1px, -1px);
 	}
 	.github-btn {
 		width: 36px;
@@ -194,7 +219,10 @@
 			display: none;
 		}
 		.search-box {
-			padding: var(--space-2);
+			padding: 7px;
+		}
+		.search-box span {
+			display: none;
 		}
 	}
 </style>
