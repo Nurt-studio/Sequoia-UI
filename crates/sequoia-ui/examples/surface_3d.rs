@@ -8,6 +8,12 @@
 //!     SEQUOIA_RENDER_BACKEND=ash          cargo run -p sequoia-ui --example surface_3d
 //!
 //! Set `SEQUOIA_BENCH_FRAMES=600` to run the built-in frame benchmark.
+//!
+//! The label at the bottom is painted *after* the surface and overlaps it.
+//! Before the Faza 2 fix the ash backend drew direct surfaces after the whole
+//! UI tree, so the surface overwrote that label; the wgpu backend composited
+//! it in paint order. This example is the visual reproduction case (and a
+//! golden-screenshot source) for that regression.
 
 use sequoia_ui::platform::{
     AshFrame, AshRegion, AshSurface, AshSurfaceRenderer, RenderBackend, WgpuFrame, WgpuRenderer,
@@ -276,33 +282,34 @@ impl WgpuRenderer for WgpuScene3D {
                         label: Some("surface-3d"),
                         source: wgpu::ShaderSource::Wgsl(shader_source().into()),
                     });
-                let pipeline = frame
-                    .device
-                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        label: Some("surface-3d"),
-                        layout: None,
-                        vertex: wgpu::VertexState {
-                            module: &module,
-                            entry_point: Some("vs_main"),
-                            compilation_options: Default::default(),
-                            buffers: &[],
-                        },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &module,
-                            entry_point: Some("fs_main"),
-                            compilation_options: Default::default(),
-                            targets: &[Some(wgpu::ColorTargetState {
-                                format: frame.format,
-                                blend: None,
-                                write_mask: wgpu::ColorWrites::ALL,
-                            })],
-                        }),
-                        primitive: wgpu::PrimitiveState::default(),
-                        depth_stencil: None,
-                        multisample: wgpu::MultisampleState::default(),
-                        multiview_mask: None,
-                        cache: None,
-                    });
+                let pipeline =
+                    frame
+                        .device
+                        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                            label: Some("surface-3d"),
+                            layout: None,
+                            vertex: wgpu::VertexState {
+                                module: &module,
+                                entry_point: Some("vs_main"),
+                                compilation_options: Default::default(),
+                                buffers: &[],
+                            },
+                            fragment: Some(wgpu::FragmentState {
+                                module: &module,
+                                entry_point: Some("fs_main"),
+                                compilation_options: Default::default(),
+                                targets: &[Some(wgpu::ColorTargetState {
+                                    format: frame.format,
+                                    blend: None,
+                                    write_mask: wgpu::ColorWrites::ALL,
+                                })],
+                            }),
+                            primitive: wgpu::PrimitiveState::default(),
+                            depth_stencil: None,
+                            multisample: wgpu::MultisampleState::default(),
+                            multiview_mask: None,
+                            cache: None,
+                        });
                 &self.pipeline.insert((frame.format, pipeline)).1
             }
         };
@@ -363,11 +370,9 @@ struct AshScene3D {
 
 impl AshScene3D {
     fn ensure_pipeline(&mut self, frame: &AshFrame<'_>) -> &AshCache {
-        if self
-            .cache
-            .as_ref()
-            .is_some_and(|cache| cache.render_pass == frame.render_pass && cache.format == frame.format)
-        {
+        if self.cache.as_ref().is_some_and(|cache| {
+            cache.render_pass == frame.render_pass && cache.format == frame.format
+        }) {
             return self.cache.as_ref().expect("checked above");
         }
 
@@ -400,16 +405,14 @@ impl AshScene3D {
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
             .line_width(1.0);
-        let multisample =
-            vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
         let attachment = [vk::PipelineColorBlendAttachmentState::default()
             .blend_enable(false)
             .color_write_mask(vk::ColorComponentFlags::RGBA)];
         let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachment);
-        let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&[
-            vk::DynamicState::VIEWPORT,
-            vk::DynamicState::SCISSOR,
-        ]);
+        let dynamic = vk::PipelineDynamicStateCreateInfo::default()
+            .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
         let info = vk::GraphicsPipelineCreateInfo::default()
             .stages(&stages)
             .vertex_input_state(&vertex_input)
@@ -519,16 +522,29 @@ fn run<V: View + 'static>(backend: RenderBackend, surface: V) {
         .background(BG)
         .padding(20.0)
         .gap(12.0)
-        .child(Text::new("Embedded 3D surface").size(22.0).bold().color(TEXT))
         .child(
-            Text::new(format!(
-                "Raymarched sphere — {} backend",
-                backend.name()
-            ))
-            .size(13.0)
-            .color(MUTED),
+            Text::new("Embedded 3D surface")
+                .size(22.0)
+                .bold()
+                .color(TEXT),
         )
-        .child(surface);
+        .child(
+            Text::new(format!("Raymarched sphere — {} backend", backend.name()))
+                .size(13.0)
+                .color(MUTED),
+        )
+        .child(
+            Stack::new()
+                .fill_size()
+                .child_at(surface, StackPos::fill())
+                .child_at(
+                    Text::new("Overlay painted after the surface")
+                        .size(18.0)
+                        .bold()
+                        .color(TEXT),
+                    StackPos::bottom().offset(0.0, -12.0),
+                ),
+        );
 
     let app = App::new()
         .title(format!("3D surface — {}", backend.name()))

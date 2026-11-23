@@ -86,6 +86,7 @@ pub(crate) enum Run {
     Glyphs { start: u32, len: u32 },
     Images { start: u32, len: u32 },
     Gradients { start: u32, len: u32 },
+    Surface(u32),
 }
 
 #[derive(Default)]
@@ -101,12 +102,6 @@ pub(crate) struct Scene {
 }
 
 impl Scene {
-    /// Appends one quad and extends (or starts) the trailing quad run.
-    pub(crate) fn push_quad(&mut self, quad: GpuQuad) {
-        self.quads.push(quad);
-        push_quad_run(self);
-    }
-
     /// Appends one blit instance with an externally managed texture key.
     pub(crate) fn push_blit(&mut self, blit: BlitQuad, key: u64) {
         self.blits.push(blit);
@@ -140,6 +135,7 @@ impl Scene {
                     start: start + gradient_base,
                     len,
                 },
+                Run::Surface(index) => Run::Surface(index),
             };
             self.runs.push(run);
         }
@@ -177,6 +173,8 @@ pub(crate) struct SceneInput<'a> {
     pub opacities: &'a [f32],
     pub scale: f32,
     pub viewport: Rect,
+    /// `(paint item index, surface job index)` markers, sorted by item index.
+    pub surface_marks: &'a [(usize, u32)],
 }
 
 pub(crate) fn build_scene(input: SceneInput<'_>, scene: &mut Scene) {
@@ -233,7 +231,15 @@ pub(crate) fn build_scene(input: SceneInput<'_>, scene: &mut Scene) {
         !rect.intersects(viewport)
     };
 
+    let mut surface_mark = 0usize;
     for (index, item) in input.items.iter().enumerate() {
+        while let Some(&(at, surface)) = input.surface_marks.get(surface_mark) {
+            if at > index {
+                break;
+            }
+            scene.runs.push(Run::Surface(surface));
+            surface_mark += 1;
+        }
         match item {
             RenderItem::Quad(quad) => {
                 if cull(quad.rect, index) {
@@ -496,7 +502,9 @@ pub(crate) fn build_scene(input: SceneInput<'_>, scene: &mut Scene) {
                     }),
                 }
             }
-            RenderItem::Blit { rect, uv, target, .. } => {
+            RenderItem::Blit {
+                rect, uv, target, ..
+            } => {
                 if cull(*rect, index) {
                     continue;
                 }
@@ -523,6 +531,10 @@ pub(crate) fn build_scene(input: SceneInput<'_>, scene: &mut Scene) {
                 scene.unsupported += 1;
             }
         }
+    }
+    while let Some(&(_, surface)) = input.surface_marks.get(surface_mark) {
+        scene.runs.push(Run::Surface(surface));
+        surface_mark += 1;
     }
 }
 

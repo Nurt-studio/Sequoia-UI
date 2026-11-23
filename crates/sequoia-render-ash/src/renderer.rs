@@ -24,7 +24,7 @@ use sequoia_text::GlyphAtlas;
 use sequoia_view::SurfaceDraw;
 
 use crate::scene::{
-    BLIT_BYTES, GLYPH_BYTES, GRADIENT_BYTES, QUAD_BYTES, BlitQuad, GpuQuad, Scene, SceneInput,
+    BLIT_BYTES, BlitQuad, GLYPH_BYTES, GRADIENT_BYTES, GpuQuad, QUAD_BYTES, Run, Scene, SceneInput,
     build_scene, decode_image, item_opacities,
 };
 use crate::shader::compile_render_module;
@@ -102,6 +102,10 @@ struct SurfaceJob {
     slot: usize,
     scale: f32,
     delta: Duration,
+    order: usize,
+    rect: Rect,
+    deco: Range<u32>,
+    blit: Option<(u32, u64)>,
 }
 
 fn target_damage_scissor(damage: Rect, scale: f32, size: (u32, u32)) -> Option<vk::Rect2D> {
@@ -241,11 +245,8 @@ impl AshRenderer {
         options: AshOptions,
     ) -> Result<Self, AshError> {
         let instance = surface.instance();
-        let (physical_device, queue_family) = Self::pick_physical_device(
-            instance,
-            surface.surface_fn(),
-            surface.raw(),
-        )?;
+        let (physical_device, queue_family) =
+            Self::pick_physical_device(instance, surface.surface_fn(), surface.raw())?;
 
         let device_extensions = instance.enumerate_device_extension_properties(physical_device)?;
         let has_device_extension = |name: &CStr| {
@@ -278,8 +279,10 @@ impl AshRenderer {
             vendor: properties.vendor_id,
             device: properties.device_id,
         };
-        let screen_alignment =
-            (properties.limits.min_uniform_buffer_offset_alignment as u64).max(16);
+        let screen_alignment = properties
+            .limits
+            .min_uniform_buffer_offset_alignment
+            .max(16);
         let screen_stride = 16u64.div_ceil(screen_alignment) * screen_alignment;
         let queue = device.get_device_queue(queue_family, 0);
         let swapchain_fn = ash::khr::swapchain::Device::new(instance, &device);
@@ -576,10 +579,10 @@ impl AshRenderer {
     }
 
     unsafe fn create_swapchain(&self, width: u32, height: u32) -> Result<SwapchainState, AshError> {
-        let capabilities = self.surface.surface_fn().get_physical_device_surface_capabilities(
-            self.physical_device,
-            self.surface.raw(),
-        )?;
+        let capabilities = self
+            .surface
+            .surface_fn()
+            .get_physical_device_surface_capabilities(self.physical_device, self.surface.raw())?;
         let formats = self
             .surface
             .surface_fn()
@@ -981,11 +984,13 @@ impl AshRenderer {
         list: &RenderList,
         scale: f32,
         extent: vk::Extent2D,
+        surface_marks: &[(usize, u32)],
     ) -> Result<Vec<DrawPass>, AshError> {
         let opacities = item_opacities(list);
         let mut scene = Scene::default();
         let mut present = Scene::default();
         let mut passes = Vec::new();
+        let mut placed_surfaces: HashSet<u32> = HashSet::new();
         let mut next_slot = 1usize;
         let max = (
             extent.width.max(1).saturating_mul(4),
@@ -1041,6 +1046,7 @@ impl AshRenderer {
                                 size.width.max(0.0),
                                 size.height.max(0.0),
                             ),
+                            surface_marks: &[],
                         },
                         &mut pass_scene,
                     );
@@ -1056,7 +1062,9 @@ impl AshRenderer {
                         runs,
                         clear: !kept || reset,
                         scissor: if kept && persistence == TargetPersistence::Preserve {
-                            damage.and_then(|rect| target_damage_scissor(rect, scale, (width, height)))
+                            damage.and_then(|rect| {
+                                target_damage_scissor(rect, scale, (width, height))
+                            })
                         } else {
                             None
                         },
@@ -1065,6 +1073,15 @@ impl AshRenderer {
                 }
                 PassNode::Present { items } => {
                     let mut pass_scene = Scene::default();
+                    let marks: Vec<(usize, u32)> = surface_marks
+                        .iter()
+                        .copied()
+                        .filter(|&(at, _)| at >= items.start && at < items.end)
+                        .map(|(at, index)| {
+                            placed_surfaces.insert(index);
+                            (at - items.start, index)
+                        })
+                        .collect();
                     build_scene(
                         SceneInput {
                             items: &list.items()[items.clone()],
@@ -1078,6 +1095,7 @@ impl AshRenderer {
                                 extent.width as f32 / scale,
                                 extent.height as f32 / scale,
                             ),
+                            surface_marks: &marks,
                         },
                         &mut pass_scene,
                     );
@@ -1087,6 +1105,11 @@ impl AshRenderer {
             }
         }
 
+        for index in 0..self.surface_jobs.len() as u32 {
+            if !placed_surfaces.contains(&index) {
+                present.runs.push(Run::Surface(index));
+            }
+        }
         let runs = scene.append(present);
         let format = self
             .swapchain
@@ -1148,12 +1171,13 @@ impl AshRenderer {
         persistent: bool,
     ) -> Result<bool, AshError> {
         let size = (extent.width, extent.height);
-        if let Some(entry) = self.render_targets.get_mut(&target) {
-            if entry.format == format && entry.size == size {
-                entry.last_used = self.frame_index;
-                entry.persistent = persistent;
-                return Ok(true);
-            }
+        if let Some(entry) = self.render_targets.get_mut(&target)
+            && entry.format == format
+            && entry.size == size
+        {
+            entry.last_used = self.frame_index;
+            entry.persistent = persistent;
+            return Ok(true);
         }
         if let Some(old) = self.render_targets.remove(&target) {
             self.destroy_render_target(old);
@@ -1275,7 +1299,9 @@ impl AshRenderer {
         ) {
             Ok(framebuffer) => framebuffer,
             Err(error) => {
-                let _ = self.device.free_descriptor_sets(self.descriptor_pool, &[set]);
+                let _ = self
+                    .device
+                    .free_descriptor_sets(self.descriptor_pool, &[set]);
                 self.device.destroy_image_view(view, None);
                 self.device.destroy_image(image, None);
                 self.device.free_memory(memory, None);
@@ -1405,8 +1431,7 @@ impl AshRenderer {
         let _ = self
             .device
             .free_descriptor_sets(self.descriptor_pool, &[target.set]);
-        self.device
-            .destroy_framebuffer(target.framebuffer, None);
+        self.device.destroy_framebuffer(target.framebuffer, None);
         self.device.destroy_image_view(target.view, None);
         self.device.destroy_image(target.image, None);
         self.device.free_memory(target.memory, None);
@@ -1429,7 +1454,13 @@ impl AshRenderer {
         )
     }
 
-    fn append_surface_decoration(&mut self, rect: Rect, frame: &SurfaceFrame, scale: f32) {
+    fn append_surface_decoration(
+        &mut self,
+        rect: Rect,
+        frame: &SurfaceFrame,
+        scale: f32,
+    ) -> Range<u32> {
+        let start = self.scene.quads.len() as u32;
         let rect = Self::phys_rect(rect, scale);
         let xywh = [rect.left(), rect.top(), rect.size.width, rect.size.height];
         let quad = |color: [f32; 4], border_color: [f32; 4], border_width: f32| GpuQuad {
@@ -1448,20 +1479,19 @@ impl AshRenderer {
             transform_b: [0.0, 0.0],
         };
         if let Some(color) = frame.background {
-            self.scene.push_quad(quad(color, [0.0; 4], 0.0));
+            self.scene.quads.push(quad(color, [0.0; 4], 0.0));
         }
         if let Some((color, width)) = frame.border {
-            self.scene
-                .push_quad(quad([0.0; 4], color, width * scale));
+            self.scene.quads.push(quad([0.0; 4], color, width * scale));
         }
+        start..self.scene.quads.len() as u32
     }
 
-    fn prepare_surfaces(
+    fn collect_surfaces(
         &mut self,
         surfaces: &[SurfaceDraw],
         scale: f32,
         delta: Duration,
-        passes: &mut [DrawPass],
     ) -> Result<(), AshError> {
         let swapchain_format = self
             .swapchain
@@ -1474,8 +1504,6 @@ impl AshRenderer {
             let Ok(binding) = draw.target.clone().downcast::<AshSurfaceBinding>() else {
                 continue;
             };
-            self.append_surface_decoration(draw.rect, &binding.frame, scale);
-
             let [left, top, right, bottom] = binding.frame.inset;
             let content = Rect::from_xywh(
                 draw.rect.left() + left,
@@ -1500,12 +1528,56 @@ impl AshRenderer {
                 0
             };
 
-            if cached {
+            self.surface_jobs.push(SurfaceJob {
+                binding,
+                content,
+                cached,
+                format,
+                slot,
+                scale,
+                delta,
+                order: draw.order,
+                rect: draw.rect,
+                deco: 0..0,
+                blit: None,
+            });
+        }
+        Ok(())
+    }
+
+    fn surface_marks(&self) -> Vec<(usize, u32)> {
+        let mut marks: Vec<(usize, u32)> = self
+            .surface_jobs
+            .iter()
+            .enumerate()
+            .map(|(index, job)| (job.order, index as u32))
+            .collect();
+        marks.sort_by_key(|&(order, index)| (order, index));
+        marks
+    }
+
+    fn prepare_surface_scene(&mut self) -> Result<(), AshError> {
+        for index in 0..self.surface_jobs.len() {
+            let (rect, frame, scale, key, cached, content, format) = {
+                let job = &self.surface_jobs[index];
+                (
+                    job.rect,
+                    job.binding.frame,
+                    job.scale,
+                    job.binding.key,
+                    job.cached,
+                    job.content,
+                    job.format,
+                )
+            };
+            let deco = self.append_surface_decoration(rect, &frame, scale);
+            let blit = if cached {
                 let texture = unsafe {
-                    self.ensure_surface_texture(binding.key, (content.width, content.height), format)?
+                    self.ensure_surface_texture(key, (content.width, content.height), format)?
                 };
-                let key = SURFACE_KEY_BIT | (binding.key as u64 & !SURFACE_KEY_BIT);
+                let key = SURFACE_KEY_BIT | (key as u64 & !SURFACE_KEY_BIT);
                 self.surface_blits.insert(key, texture);
+                let start = self.scene.blits.len() as u32;
                 self.scene.push_blit(
                     BlitQuad {
                         rect: [
@@ -1524,21 +1596,13 @@ impl AshRenderer {
                     },
                     key,
                 );
-            }
-
-            self.surface_jobs.push(SurfaceJob {
-                binding,
-                content,
-                cached,
-                format,
-                slot,
-                scale,
-                delta,
-            });
-        }
-
-        if let Some(present) = passes.iter_mut().rev().find(|pass| pass.target.is_none()) {
-            present.runs.end = self.scene.runs.len() as u32;
+                Some((start, key))
+            } else {
+                None
+            };
+            let job = &mut self.surface_jobs[index];
+            job.deco = deco;
+            job.blit = blit;
         }
         Ok(())
     }
@@ -1664,7 +1728,9 @@ impl AshRenderer {
         ) {
             Ok(framebuffer) => framebuffer,
             Err(error) => {
-                let _ = self.device.free_descriptor_sets(self.descriptor_pool, &[set]);
+                let _ = self
+                    .device
+                    .free_descriptor_sets(self.descriptor_pool, &[set]);
                 self.device.destroy_image_view(view, None);
                 self.device.destroy_image(image, None);
                 self.device.free_memory(memory, None);
@@ -1760,10 +1826,12 @@ impl AshRenderer {
             .map(|previous| previous.elapsed())
             .unwrap_or_default();
         self.last_frame = Some(Instant::now());
-        let mut passes = self.build_frame(list, scale, extent)?;
         self.surface_jobs.clear();
         self.surface_blits.clear();
-        self.prepare_surfaces(surfaces, scale, delta, &mut passes)?;
+        self.collect_surfaces(surfaces, scale, delta)?;
+        let surface_marks = self.surface_marks();
+        let passes = self.build_frame(list, scale, extent, &surface_marks)?;
+        self.prepare_surface_scene()?;
         self.sync_images()?;
 
         unsafe {
@@ -1959,11 +2027,108 @@ impl AshRenderer {
                     );
                     device.cmd_draw(command_buffer, 4, len, 0, start);
                 }
+                crate::scene::Run::Surface(_) => {}
             }
         }
     }
 
-    unsafe fn record_frame(&mut self, image_index: u32, passes: &[DrawPass]) -> Result<(), AshError> {
+    unsafe fn bind_engine_state(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        extent: vk::Extent2D,
+        scissor: vk::Rect2D,
+        screen_slot: usize,
+    ) {
+        let device = &self.device;
+        device.cmd_set_viewport(
+            command_buffer,
+            0,
+            &[vk::Viewport::default()
+                .width(extent.width as f32)
+                .height(extent.height as f32)
+                .max_depth(1.0)],
+        );
+        device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+        device.cmd_bind_descriptor_sets(
+            command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            self.pipeline_layout,
+            0,
+            &[self.screen_set],
+            &[screen_slot as u32 * self.screen_stride as u32],
+        );
+    }
+
+    unsafe fn record_surface(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        pipelines: Pipelines,
+        job: &SurfaceJob,
+        extent: vk::Extent2D,
+        scissor: vk::Rect2D,
+        screen_slot: usize,
+        render_pass: vk::RenderPass,
+        target: vk::ImageView,
+        format: vk::Format,
+    ) {
+        let device = &self.device;
+        if !job.deco.is_empty() {
+            device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipelines.quad,
+            );
+            device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.quad_buffer.buffer], &[0]);
+            device.cmd_draw(command_buffer, 4, job.deco.len() as u32, 0, job.deco.start);
+        }
+        if job.cached {
+            if let Some((index, key)) = job.blit
+                && let Some(set) = self.surface_blits.get(&key)
+            {
+                device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipelines.blit,
+                );
+                device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.blit_buffer.buffer], &[0]);
+                device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.pipeline_layout,
+                    1,
+                    &[*set],
+                    &[],
+                );
+                device.cmd_draw(command_buffer, 4, 1, 0, index);
+            }
+            return;
+        }
+        let mut frame = AshFrame {
+            device,
+            queue: &self.queue,
+            command_buffer,
+            render_pass,
+            pipeline_layout: self.pipeline_layout,
+            screen_set: self.screen_set,
+            target,
+            format,
+            size: (extent.width, extent.height),
+            scale: job.scale,
+            region: job.content,
+            adapter: self.adapter.clone(),
+            index: self.frame_index,
+            delta: job.delta,
+            redraw: &self.redraw,
+        };
+        (job.binding.draw)(&mut frame);
+        self.bind_engine_state(command_buffer, extent, scissor, screen_slot);
+    }
+
+    unsafe fn record_frame(
+        &mut self,
+        image_index: u32,
+        passes: &[DrawPass],
+    ) -> Result<(), AshError> {
         let jobs = mem::take(&mut self.surface_jobs);
         let command_buffer = self.command_buffer;
         let device = &self.device;
@@ -2100,7 +2265,8 @@ impl AshRenderer {
                     .height(pass.extent.height as f32)
                     .max_depth(1.0)],
             );
-            device.cmd_set_scissor(command_buffer, 0, &[pass.scissor.unwrap_or(area)]);
+            let scissor = pass.scissor.unwrap_or(area);
+            device.cmd_set_scissor(command_buffer, 0, &[scissor]);
             device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -2110,32 +2276,37 @@ impl AshRenderer {
                 &[pass.screen_slot as u32 * self.screen_stride as u32],
             );
 
-            self.record_runs(command_buffer, pipelines, pass.runs.clone());
-
             if pass.target.is_none() {
-                for job in &jobs {
-                    if job.cached {
+                let mut chunk_start = pass.runs.start;
+                for index in pass.runs.clone() {
+                    let Some(crate::scene::Run::Surface(surface)) =
+                        self.scene.runs.get(index as usize)
+                    else {
                         continue;
-                    }
-                    let mut frame = AshFrame {
-                        device,
-                        queue: &self.queue,
-                        command_buffer,
-                        render_pass,
-                        pipeline_layout: self.pipeline_layout,
-                        screen_set: self.screen_set,
-                        target: present_view,
-                        format: present_format,
-                        size: (pass.extent.width, pass.extent.height),
-                        scale: job.scale,
-                        region: job.content,
-                        adapter: self.adapter.clone(),
-                        index: self.frame_index,
-                        delta: job.delta,
-                        redraw: &self.redraw,
                     };
-                    (job.binding.draw)(&mut frame);
+                    if chunk_start < index {
+                        self.record_runs(command_buffer, pipelines, chunk_start..index);
+                    }
+                    if let Some(job) = jobs.get(*surface as usize) {
+                        self.record_surface(
+                            command_buffer,
+                            pipelines,
+                            job,
+                            pass.extent,
+                            scissor,
+                            pass.screen_slot,
+                            render_pass,
+                            present_view,
+                            present_format,
+                        );
+                    }
+                    chunk_start = index + 1;
                 }
+                if chunk_start < pass.runs.end {
+                    self.record_runs(command_buffer, pipelines, chunk_start..pass.runs.end);
+                }
+            } else {
+                self.record_runs(command_buffer, pipelines, pass.runs.clone());
             }
 
             device.cmd_end_render_pass(command_buffer);
@@ -2354,13 +2525,19 @@ impl Drop for AshRenderer {
             for texture in images {
                 self.destroy_texture(texture);
             }
-            let surfaces: Vec<RenderTargetTexture> =
-                self.surface_textures.drain().map(|(_, texture)| texture).collect();
+            let surfaces: Vec<RenderTargetTexture> = self
+                .surface_textures
+                .drain()
+                .map(|(_, texture)| texture)
+                .collect();
             for texture in surfaces {
                 self.destroy_render_target(texture);
             }
-            let formats: Vec<TargetFormatState> =
-                self.target_formats.drain().map(|(_, state)| state).collect();
+            let formats: Vec<TargetFormatState> = self
+                .target_formats
+                .drain()
+                .map(|(_, state)| state)
+                .collect();
             for state in formats {
                 state.destroy(&self.device);
             }

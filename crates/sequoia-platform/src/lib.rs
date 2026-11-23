@@ -87,8 +87,9 @@ impl std::error::Error for AppError {}
 /// Selects the renderer implementation used by every window of an [`App`].
 ///
 /// [`RenderBackend::VulkanAsh`] is experimental: it bypasses wgpu and drives
-/// Vulkan directly. Set `SEQUOIA_RENDER_BACKEND=ash` to switch without changing
-/// application code.
+/// Vulkan directly. An explicit choice via [`App::backend`] or
+/// [`App::render_backend`] always wins; opt in to environment selection with
+/// [`App::backend_from_env`] or query [`RenderBackend::from_env`] yourself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderBackend {
     /// The stable wgpu renderer, optionally restricted to one wgpu API.
@@ -126,7 +127,10 @@ impl RenderBackend {
         }
     }
 
-    fn from_env() -> Option<Self> {
+    /// Reads `SEQUOIA_RENDER_BACKEND`, returning `None` when it is unset or
+    /// unrecognised. This never changes an application's explicit backend
+    /// choice unless you call [`App::backend_from_env`].
+    pub fn from_env() -> Option<Self> {
         let raw = std::env::var("SEQUOIA_RENDER_BACKEND").ok()?;
         let value = raw.trim().to_ascii_lowercase();
         let backend = match value.as_str() {
@@ -500,6 +504,7 @@ impl Bench {
 struct FrameHooks {
     start: Option<Rc<dyn Fn()>>,
     update: Option<Rc<dyn Fn()>>,
+    frame: Option<Rc<dyn Fn(f64)>>,
     end: Option<Rc<dyn Fn()>>,
 }
 
@@ -621,6 +626,18 @@ impl App {
     /// Selects the full renderer backend, including the experimental Vulkan one.
     pub fn render_backend(mut self, backend: RenderBackend) -> Self {
         self.backend = backend;
+        self
+    }
+
+    /// Uses `SEQUOIA_RENDER_BACKEND` when it is set to a recognised value,
+    /// otherwise keeps the backend configured so far.
+    ///
+    /// Environment selection is opt-in: [`App::run`] no longer overrides an
+    /// explicit [`App::backend`] call.
+    pub fn backend_from_env(mut self) -> Self {
+        if let Some(backend) = RenderBackend::from_env() {
+            self.backend = backend;
+        }
         self
     }
 
@@ -982,9 +999,15 @@ impl App {
         self
     }
 
-    /// Alias for [`App::on_update`].
-    pub fn on_frame(self, f: impl Fn() + 'static) -> Self {
-        self.on_update(f)
+    /// Runs `f` on the UI thread once per frame with the elapsed time in
+    /// seconds since the previous frame.
+    ///
+    /// This is the frame-logic hook: use it for animation, simulation and
+    /// viewport ticks. [`App::on_frame_metrics`] is only for observing timing
+    /// and workload data and should not drive logic.
+    pub fn on_frame(mut self, f: impl Fn(f64) + 'static) -> Self {
+        self.hooks.frame = Some(Rc::new(f));
+        self
     }
 
     /// Runs `f` on the UI thread after the frame has been ticked, laid out,
@@ -1020,7 +1043,7 @@ impl App {
     }
 
     pub fn run(self) -> Result<(), AppError> {
-        let backend = RenderBackend::from_env().unwrap_or(self.backend);
+        let backend = self.backend;
         let gpu_preinit = if let RenderBackend::Wgpu(gpu) = backend {
             let preinit_options = GpuOptions::with_backend(gpu);
             std::thread::Builder::new()
@@ -1369,6 +1392,9 @@ impl WindowState {
         }
         let superseded = self.gate.borrow_mut().begin_paint();
         let gap_ms = frame_gap_ms(wid);
+        if let Some(f) = &self.hooks.frame {
+            f(gap_ms / 1000.0);
+        }
         if self.bench.is_some() {
             // A benchmark measures whole-frame paint/render cost, so opt out
             // of damage-based skipping for every sampled frame.
@@ -1937,15 +1963,11 @@ impl PlatformApp {
                 validation: std::env::var_os("SEQUOIA_VULKAN_VALIDATION").is_some(),
                 clear_color: window_clear_color(self.theme, s.transparent),
             };
-            let renderer = AshRenderer::with_options(
-                window.clone(),
-                size.width,
-                size.height,
-                ash_options,
-            )
-            .map_err(|error| {
-                AppError::Gpu(format!("backend {} ({id}): {error}", self.backend.name()))
-            })?;
+            let renderer =
+                AshRenderer::with_options(window.clone(), size.width, size.height, ash_options)
+                    .map_err(|error| {
+                        AppError::Gpu(format!("backend {} ({id}): {error}", self.backend.name()))
+                    })?;
             WindowRenderer::Ash {
                 renderer,
                 shaders: HashMap::new(),
@@ -1953,56 +1975,84 @@ impl PlatformApp {
             }
         } else {
             WindowRenderer::Wgpu({
-            let _trace = StartupTrace::new("create_window.gpu_device");
-            if let Some(shared) = self
-            .shared_gpu
-            .as_ref()
-            .filter(|shared| shared.supports(self.backend.wgpu_backend()))
-        {
-            match shared.renderer(window.clone(), size.width, size.height, options) {
-                Ok(gpu) => gpu,
-                Err(e) => {
-                    log::warn!(
-                        "sequoia-platform: window {id} cannot join the shared GPU ({e}) - using a private device"
-                    );
-                    GpuRenderer::new_with_options(window.clone(), size.width, size.height, options)
-                        .map_err(|e| {
-                            AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
-                        })?
-                }
-            }
-        } else {
-            let shared_result = if let Some(handle) = self.gpu_preinit.take() {
-                let _trace = StartupTrace::new("create_window.preinit_join");
-                match handle.join() {
-                    Ok(Ok(preinit)) => {
-                        SharedGpu::new_preinit(window.clone(), options, preinit)
-                    }
-                    Ok(Err(e)) => {
-                        log::info!(
-                            "sequoia-platform: GPU preinit failed for window {id} ({e}) - retrying"
-                        );
-                        SharedGpu::new(window.clone(), options)
-                    }
-                    Err(_) => SharedGpu::new(window.clone(), options),
-                }
-            } else {
-                let _trace = StartupTrace::new("create_window.shared_gpu");
-                SharedGpu::new(window.clone(), options)
-            };
-            match shared_result {
-                Ok(shared) => {
-                    match {
-                        let _trace = StartupTrace::new("create_window.renderer");
-                        shared.renderer(window.clone(), size.width, size.height, options)
-                    } {
-                        Ok(gpu) => {
-                            new_shared = Some(shared);
-                            gpu
-                        }
+                let _trace = StartupTrace::new("create_window.gpu_device");
+                if let Some(shared) = self
+                    .shared_gpu
+                    .as_ref()
+                    .filter(|shared| shared.supports(self.backend.wgpu_backend()))
+                {
+                    match shared.renderer(window.clone(), size.width, size.height, options) {
+                        Ok(gpu) => gpu,
                         Err(e) => {
                             log::warn!(
-                                "sequoia-platform: shared GPU cannot render window {id} ({e}) - using a private device"
+                                "sequoia-platform: window {id} cannot join the shared GPU ({e}) - using a private device"
+                            );
+                            GpuRenderer::new_with_options(
+                                window.clone(),
+                                size.width,
+                                size.height,
+                                options,
+                            )
+                            .map_err(|e| {
+                                AppError::Gpu(format!(
+                                    "backend {} ({id}): {e}",
+                                    self.backend.name()
+                                ))
+                            })?
+                        }
+                    }
+                } else {
+                    let shared_result = if let Some(handle) = self.gpu_preinit.take() {
+                        let _trace = StartupTrace::new("create_window.preinit_join");
+                        match handle.join() {
+                            Ok(Ok(preinit)) => {
+                                SharedGpu::new_preinit(window.clone(), options, preinit)
+                            }
+                            Ok(Err(e)) => {
+                                log::info!(
+                                    "sequoia-platform: GPU preinit failed for window {id} ({e}) - retrying"
+                                );
+                                SharedGpu::new(window.clone(), options)
+                            }
+                            Err(_) => SharedGpu::new(window.clone(), options),
+                        }
+                    } else {
+                        let _trace = StartupTrace::new("create_window.shared_gpu");
+                        SharedGpu::new(window.clone(), options)
+                    };
+                    match shared_result {
+                        Ok(shared) => {
+                            let renderer_result = {
+                                let _trace = StartupTrace::new("create_window.renderer");
+                                shared.renderer(window.clone(), size.width, size.height, options)
+                            };
+                            match renderer_result {
+                                Ok(gpu) => {
+                                    new_shared = Some(shared);
+                                    gpu
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "sequoia-platform: shared GPU cannot render window {id} ({e}) - using a private device"
+                                    );
+                                    GpuRenderer::new_with_options(
+                                        window.clone(),
+                                        size.width,
+                                        size.height,
+                                        options,
+                                    )
+                                    .map_err(|e| {
+                                        AppError::Gpu(format!(
+                                            "backend {} ({id}): {e}",
+                                            self.backend.name()
+                                        ))
+                                    })?
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::info!(
+                                "sequoia-platform: no shared GPU for window {id} ({e}) - using a private device"
                             );
                             GpuRenderer::new_with_options(
                                 window.clone(),
@@ -2019,17 +2069,6 @@ impl PlatformApp {
                         }
                     }
                 }
-                Err(e) => {
-                    log::info!(
-                        "sequoia-platform: no shared GPU for window {id} ({e}) - using a private device"
-                    );
-                    GpuRenderer::new_with_options(window.clone(), size.width, size.height, options)
-                        .map_err(|e| {
-                            AppError::Gpu(format!("backend {} ({id}): {e}", self.backend.name()))
-                        })?
-                    }
-                }
-            }
             })
         };
         if let Some(shared) = new_shared {
@@ -3209,7 +3248,10 @@ mod tests {
             t0 + Duration::from_millis(2),
         );
         assert_eq!(vertical.y, -40.0);
-        assert_eq!(horizontal.x, -40.0, "horizontal only from raw input should pass");
+        assert_eq!(
+            horizontal.x, -40.0,
+            "horizontal only from raw input should pass"
+        );
         assert_eq!(horizontal.y, 0.0, "vertical already counted by window");
     }
 
