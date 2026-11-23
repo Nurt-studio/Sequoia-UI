@@ -109,9 +109,6 @@ result_unit_err = "allow"
 should_implement_trait = "allow"
 
 
-[profile.dev.package.sequoia-seq]
-opt-level = 1
-
 [profile.release]
 opt-level = 3
 lto = "fat"

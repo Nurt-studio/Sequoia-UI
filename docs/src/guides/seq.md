@@ -187,6 +187,13 @@ are valid only inside a `Canvas`.
 children. A `Canvas` accepts shapes and `List`, not ordinary UI views or
 components.
 
+`Container` normally takes a single child, but it accepts several: when more
+than one child is present they are automatically wrapped in a `Column` (each
+child's `flex` weight is preserved). This shorthand is intentional and keeps
+markup short, but the implicit `Column` adds one level of nesting to both the
+lowering and the layout tree. In deeply nested markup, write the `Column`
+explicitly so the structure is visible and the nesting cost is obvious.
+
 ## Motion
 
 `enter:` and `exit:` accept a preset (`fast`, `smooth`, `snappy`, `gentle`,
@@ -392,6 +399,38 @@ A component without a `children` placeholder rejects children. `children` is
 only valid inside a component body and cannot appear inside a `Canvas`.
 Components cannot be used inside a `Canvas`; canvas content is limited to shapes
 and `List`.
+
+### Component instances
+
+A component can declare its own `prop` and `state` members. Each call gets its
+own signals for parameters and members, so instances do not share state:
+
+```text
+component Counter(label: String) {
+  prop count: Int
+  state clicks: Int = 0
+  Column {
+    Text(text: label)
+    Text(text: count)
+  }
+}
+app Counters {
+  title: "Counters"
+  size: (240, 160)
+  prop label: String
+  window Main {
+    Counter(id: "left", label: label, count: 3)
+    Counter(id: "right", label: "Right", count: 10)
+  }
+}
+```
+
+`id` is a string literal and must be unique. The instance's props can be read
+and written from `.seq` functions with `id.prop`, e.g.
+`left.count = left.count + 1;`. Passing a reactive expression to a parameter or
+prop keeps the instance signal in sync without rebuilding the component's
+views. A component call whose arguments depend on `item.field` inside a `List`
+is expanded per row instead, as before.
 
 Components in another file must be `pub component`:
 
@@ -641,8 +680,16 @@ node can be checked with `Harness::text`; a canvas can be checked with
 - Function evaluation is limited to 100,000 steps and 64 nested calls.
 - Static loading rejects host properties, callbacks, `dynamic`, `env`, `List`,
   `Async`, and `Effect`.
-- `SeqError` exposes `file`, `line`, `col`, and `message`; its display form is
-  `file:line:col: message`. Some checker messages are still in Polish.
+- `SeqError` exposes `file`, `line`, `col`, `message`, and `severity()`
+  (`Severity::Error` or `Severity::Warning`); errors display as
+  `file:line:col: message`, warnings with a `warning: ` prefix. Some checker
+  messages are still in Polish.
+- `SeqLoader::load_str_all` / `load_file_all` return
+  `(Option<LoadedApp>, Vec<SeqError>)` with every diagnostic from parsing,
+  imports, and checking (including warnings about unused functions,
+  components, styles, and states). The `load_*` methods keep the old
+  fail-fast behaviour and ignore warnings. Warnings also appear in the LSP
+  as severity 2.
 
 ## Related guides
 

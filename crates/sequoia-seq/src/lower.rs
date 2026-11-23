@@ -12,9 +12,9 @@ use sequoia_style::{BoxStyle, ButtonStyle, ShadowSpec, TextStyle, Theme};
 use sequoia_view::{
     Align, AnimSpec, AnimatedSize, AnyView, AsyncView, Axis, Canvas, Column, EventCtx, Grid,
     GridFlow, GridPlacement, Icon, Image, Indents, Justify, Live, LiveOffset, LiveOpacity,
-    MAX_ANIM_DT, Margined, Masonry, Motion, Overflow, Painter, Panel, Pulse, Rebuild, Rotated,
-    Row, Scaled, ScrollAxis, ScrollView, Shake, Spacer, SplitPanel, SpringSpec, Stack, StackPos,
-    Text, TextVAlign, Track, View, VirtualList, Wrap, when,
+    MAX_ANIM_DT, Margined, Masonry, Motion, Overflow, Painter, Panel, Pulse, Rebuild, Rotated, Row,
+    Scaled, ScrollAxis, ScrollView, Shake, Spacer, SplitPanel, SpringSpec, Stack, StackPos, Text,
+    TextVAlign, Track, View, VirtualList, Wrap, when,
 };
 
 use crate::bindings::{ActionSig, FieldSignal, HostBindings, PropType, SeqRowData};
@@ -79,7 +79,7 @@ pub fn lower(file: &str, app: &SeqApp) -> Result<AnyView, SeqError> {
             file,
             d.line,
             1,
-            format!("{what} '{}' wymaga hosta Rust — inkrement 2", d.name),
+            format!("{what} '{}' requires a Rust host", d.name),
         ));
     }
     let resolved;
@@ -91,10 +91,14 @@ pub fn lower(file: &str, app: &SeqApp) -> Result<AnyView, SeqError> {
     };
     let app = expand_components(file, app)?;
     let theme = resolve_theme(file, &app)?;
-    let window = app
-        .windows
-        .first()
-        .ok_or_else(|| SeqError::new(file, 1, 1, "app wymaga min. 1 bloku `window`".to_string()))?;
+    let window = app.windows.first().ok_or_else(|| {
+        SeqError::new(
+            file,
+            1,
+            1,
+            "app requires at least one `window` block".to_string(),
+        )
+    })?;
     let styles = build_styles(file, &theme, &app.styles)?;
     lower_window(file, &theme, &styles, window)
 }
@@ -131,15 +135,21 @@ pub fn lower_with(file: &str, app: &SeqApp, bindings: &HostBindings) -> Result<A
     };
     let app = expand_components(file, app)?;
     let theme = resolve_theme(file, &app)?;
-    let window = app
-        .windows
-        .first()
-        .ok_or_else(|| SeqError::new(file, 1, 1, "app wymaga min. 1 bloku `window`".to_string()))?;
+    let window = app.windows.first().ok_or_else(|| {
+        SeqError::new(
+            file,
+            1,
+            1,
+            "app requires at least one `window` block".to_string(),
+        )
+    })?;
     let styles = build_styles(file, &theme, &app.styles)?;
     lower_window_with(file, &theme, &styles, window, bindings)
 }
 
 const MAX_COMP_DEPTH: usize = 32;
+
+const MAX_LOWER_DEPTH: usize = 64;
 
 const MAX_EXPANDED_NODES: usize = 100_000;
 
@@ -574,12 +584,18 @@ fn resolve_expr(
             then: Box::new(resolve_expr(then, res, row, tracked)),
             els: Box::new(resolve_expr(els, res, row, tracked)),
         },
-        SeqExprKind::Tuple(items) => {
-            SeqExprKind::Tuple(items.iter().map(|e| resolve_expr(e, res, row, tracked)).collect())
-        }
-        SeqExprKind::Array(items) => {
-            SeqExprKind::Array(items.iter().map(|e| resolve_expr(e, res, row, tracked)).collect())
-        }
+        SeqExprKind::Tuple(items) => SeqExprKind::Tuple(
+            items
+                .iter()
+                .map(|e| resolve_expr(e, res, row, tracked))
+                .collect(),
+        ),
+        SeqExprKind::Array(items) => SeqExprKind::Array(
+            items
+                .iter()
+                .map(|e| resolve_expr(e, res, row, tracked))
+                .collect(),
+        ),
         SeqExprKind::Call { name, args } => {
             if name == "dynamic"
                 && args.len() == 1
@@ -595,7 +611,10 @@ fn resolve_expr(
             }
             SeqExprKind::Call {
                 name: name.clone(),
-                args: args.iter().map(|e| resolve_expr(e, res, row, tracked)).collect(),
+                args: args
+                    .iter()
+                    .map(|e| resolve_expr(e, res, row, tracked))
+                    .collect(),
             }
         }
         _ => expr.kind.clone(),
@@ -974,7 +993,7 @@ pub(crate) fn box_style_of(
                 file,
                 arg.line,
                 1,
-                "style: to nazwa bloku (style: Card)",
+                "style: is a block name (style: Card)",
             ));
         }
     };
@@ -1003,7 +1022,7 @@ fn text_style_of(
                 file,
                 arg.line,
                 1,
-                "style: to nazwa bloku (style: Card)",
+                "style: is a block name (style: Card)",
             ));
         }
     };
@@ -1123,10 +1142,10 @@ fn base_chain<'s>(
                 file,
                 start.line,
                 1,
-                    format!(
-                        "style '{}': base '{name}' is {}, and style is {}",
-                        start.name, decl.target, start.target
-                    ),
+                format!(
+                    "style '{}': base '{name}' is {}, and style is {}",
+                    start.name, decl.target, start.target
+                ),
             ));
         }
         chain.push(decl);
@@ -1209,7 +1228,7 @@ fn shadow_spec(
             file,
             arg.line,
             1,
-            format!("'{style}' w style: [kolor, blur] albo [kolor, blur, ox, oy]"),
+            format!("'{style}' in style: [kolor, blur] or [kolor, blur, ox, oy]"),
         )
     };
     let SeqValue::Array(items) = &arg.value else {
@@ -1283,7 +1302,7 @@ fn apply_box_args(
                     file,
                     arg.line,
                     1,
-                    format!("nieznane pole '{}' w style Box", arg.name),
+                    format!("unknown field '{}' in style Box", arg.name),
                 ));
             }
         }
@@ -1329,7 +1348,7 @@ fn apply_button_args(
                             file,
                             arg.line,
                             1,
-                            "'padding' w style: [x, y]",
+                            "'padding' in style: [x, y]",
                         ));
                     };
                     *v = v.padding_xy(x, y);
@@ -1339,7 +1358,7 @@ fn apply_button_args(
                         file,
                         arg.line,
                         1,
-                        "'padding' w style: [x, y]",
+                        "'padding' in style: [x, y]",
                     ));
                 }
             },
@@ -1354,7 +1373,7 @@ fn apply_button_args(
                     file,
                     arg.line,
                     1,
-                    format!("nieznane pole '{}' w style Button", arg.name),
+                    format!("unknown field '{}' in style Button", arg.name),
                 ));
             }
         }
@@ -1392,7 +1411,7 @@ fn apply_text_args(
                     file,
                     arg.line,
                     1,
-                    format!("nieznane pole '{}' w style Text", arg.name),
+                    format!("unknown field '{}' in style Text", arg.name),
                 ));
             }
         }
@@ -1456,6 +1475,39 @@ impl Drop for RebuildScope {
     }
 }
 
+thread_local! {
+    static LOWER_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+struct LowerDepthGuard;
+
+impl LowerDepthGuard {
+    fn enter(file: &str, node: &SeqNode) -> Result<Self, SeqError> {
+        let depth = LOWER_DEPTH.with(|depth| {
+            let next = depth.get() + 1;
+            depth.set(next);
+            next
+        });
+        if depth > MAX_LOWER_DEPTH {
+            LOWER_DEPTH.with(|depth| depth.set(depth.get() - 1));
+            return Err(SeqError::new(
+                file,
+                node.line,
+                1,
+                format!("lowering nesting limit exceeded ({MAX_LOWER_DEPTH})"),
+            ));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for LowerDepthGuard {
+    fn drop(&mut self) {
+        LOWER_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+#[inline(never)]
 fn lower_node(
     file: &str,
     theme: &Theme,
@@ -1464,6 +1516,7 @@ fn lower_node(
     res: &Resolver<'_>,
     row: Option<&SeqRowData>,
 ) -> Result<AnyView, SeqError> {
+    let _depth = LowerDepthGuard::enter(file, node)?;
     let view = if matches!(res, Resolver::Host(_)) && node_wants_rebuild(node, res) {
         lower_rebuild_node(file, theme, styles, node, res, row)?
     } else {
@@ -1578,7 +1631,9 @@ fn is_write_source(value: &SeqValue) -> bool {
 
 fn value_is_reactive(value: &SeqValue, res: &Resolver<'_>) -> bool {
     match value {
-        SeqValue::Expr(_) | SeqValue::Dynamic(_) | SeqValue::Env(_) | SeqValue::ItemField(_) => true,
+        SeqValue::Expr(_) | SeqValue::Dynamic(_) | SeqValue::Env(_) | SeqValue::ItemField(_) => {
+            true
+        }
         SeqValue::Ident(name) => resolve_binding(name, res, false).is_some(),
         SeqValue::Tuple(items) | SeqValue::Array(items) => {
             items.iter().any(|v| value_is_reactive(v, res))
@@ -1661,12 +1716,14 @@ fn bind_value(
                 .map(|v| bind_value(file, line, v, res, row, tracked))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        SeqValue::Ident(name) => Ok(resolve_binding(name, res, tracked)
-            .unwrap_or_else(|| SeqValue::Ident(name.clone()))),
+        SeqValue::Ident(name) => Ok(
+            resolve_binding(name, res, tracked).unwrap_or_else(|| SeqValue::Ident(name.clone()))
+        ),
         other => Ok(other.clone()),
     }
 }
 
+#[inline(never)]
 fn lower_rebuild_node(
     file: &str,
     theme: &Theme,
@@ -1695,8 +1752,8 @@ fn lower_rebuild_node(
     let build = move || -> AnyView {
         let _scope = RebuildScope::enter();
         let res = Resolver::Host(&bindings);
-        let result = bind_node(&file_owned, &node, &res, row_owned.as_ref(), true)
-            .and_then(|bound| {
+        let result =
+            bind_node(&file_owned, &node, &res, row_owned.as_ref(), true).and_then(|bound| {
                 lower_node_inner(
                     &file_owned,
                     &theme_owned,
@@ -1712,6 +1769,515 @@ fn lower_rebuild_node(
     Ok(AnyView::new(Rebuild::new(initial, build)))
 }
 
+#[inline(never)]
+fn validate_node_args(file: &str, node: &SeqNode, res: &Resolver<'_>) -> Result<(), SeqError> {
+    for arg in &node.args {
+        if let SeqValue::Callback { action, .. } = &arg.value
+            && matches!(res, Resolver::Static)
+        {
+            return Err(SeqError::new(
+                file,
+                arg.line,
+                1,
+                format!("callback '{action}' requires a Rust host"),
+            ));
+        }
+        if let SeqValue::CallSeq { name, .. } = &arg.value
+            && matches!(res, Resolver::Static)
+        {
+            return Err(SeqError::new(
+                file,
+                arg.line,
+                1,
+                format!("function '{name}' (.seq) requires a Rust host (lower_with)"),
+            ));
+        }
+        if let SeqValue::Dynamic(name) = &arg.value
+            && matches!(res, Resolver::Static)
+        {
+            return Err(SeqError::new(
+                file,
+                arg.line,
+                1,
+                format!("dynamic({name}) requires a Rust host"),
+            ));
+        }
+        if let SeqValue::Env(name) = &arg.value
+            && matches!(res, Resolver::Static)
+        {
+            return Err(SeqError::new(
+                file,
+                arg.line,
+                1,
+                format!("env.{name} requires a Rust host (HostBindings::env_..)"),
+            ));
+        }
+        if let SeqValue::ItemField(field) = &arg.value
+            && matches!(res, Resolver::Static)
+        {
+            return Err(SeqError::new(
+                file,
+                arg.line,
+                1,
+                format!("item.{field} requires a Rust host - List rows"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn lower_column(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let v = apply_flex_box(file, theme, node, Column::new(), res, row)?;
+    boxed_children(file, theme, styles, node, v, res, row)
+}
+
+#[inline(never)]
+fn lower_row(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let v = apply_flex_box(file, theme, node, Row::new(), res, row)?;
+    boxed_children(file, theme, styles, node, v, res, row)
+}
+
+#[inline(never)]
+fn lower_container(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let mut v = Container::new();
+    if let Some(s) = box_style_of(file, styles, node)? {
+        v = v.box_style(s);
+    }
+    for arg in &node.args {
+        match arg.name.as_str() {
+            "style" => {}
+            "width" => v = v.width(len(file, arg, res, row)?),
+            "height" => v = v.height(len(file, arg, res, row)?),
+            "padding" => v = apply_padding(v, file, arg, res, row)?,
+            "padding_x" => v = v.padding_x(num(file, arg, res, row)?),
+            "padding_y" => v = v.padding_y(num(file, arg, res, row)?),
+            "background" => v = v.background(color(file, theme, arg)?),
+            "flex" => v = v.flex(num(file, arg, res, row)?),
+            "radius" => v = v.radius(num(file, arg, res, row)?),
+            "border" => {
+                let (w, c) = border_pair(file, theme, arg)?;
+                v = v.border(w, c);
+            }
+            "border_left" => {
+                let (w, c) = border_side(file, theme, "border_left", arg)?;
+                v = v.border_left(w, c);
+            }
+            "border_right" => {
+                let (w, c) = border_side(file, theme, "border_right", arg)?;
+                v = v.border_right(w, c);
+            }
+            "border_top" => {
+                let (w, c) = border_side(file, theme, "border_top", arg)?;
+                v = v.border_top(w, c);
+            }
+            "border_bottom" => {
+                let (w, c) = border_side(file, theme, "border_bottom", arg)?;
+                v = v.border_bottom(w, c);
+            }
+            "border_x" => {
+                let (w, c) = border_side(file, theme, "border_x", arg)?;
+                v = v.border_x(w, c);
+            }
+            "border_y" => {
+                let (w, c) = border_side(file, theme, "border_y", arg)?;
+                v = v.border_y(w, c);
+            }
+            "min_width" => v = v.min_width(num(file, arg, res, row)?),
+            "max_width" => v = v.max_width(num(file, arg, res, row)?),
+            "min_height" => v = v.min_height(num(file, arg, res, row)?),
+            "max_height" => v = v.max_height(num(file, arg, res, row)?),
+            "margin" => v = apply_container_margin(v, file, arg, res, row)?,
+            "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
+            "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
+            "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
+            "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
+            "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
+            "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
+            "overflow" => v = v.overflow(overflow_val(file, arg)?),
+            "on_click" => match res {
+                Resolver::Static => {
+                    return Err(SeqError::new(
+                        file,
+                        arg.line,
+                        1,
+                        "on_click requires a Rust host",
+                    ));
+                }
+                Resolver::Host(b) => match &arg.value {
+                    SeqValue::Callback { .. } | SeqValue::CallSeq { .. } => {
+                        let fire = wire_action(file, arg.line, b, &arg.value, row)?;
+                        v = v.on_click(move || fire());
+                    }
+                    _ => {
+                        return Err(SeqError::new(
+                            file,
+                            arg.line,
+                            1,
+                            "on_click: { action(args) }",
+                        ));
+                    }
+                },
+            },
+            "hover" => v = v.hover(color(file, theme, arg)?),
+            "hit" => v = v.hit_testable(flag(file, arg, res, row)?),
+            "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right" | "indent_top"
+            | "indent_bottom" => {}
+            _ => unreachable_checked(file, node, arg)?,
+        }
+    }
+    if let Some(kid) = single_child(file, theme, styles, node, res, row)? {
+        v = v.child(kid);
+    }
+    Ok(AnyView::new(v))
+}
+
+#[inline(never)]
+fn lower_panel(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    if !node.children.is_empty() {
+        return Err(SeqError::new(
+            file,
+            node.line,
+            1,
+            "Panel is a leaf (only background/frame, no children) - put content in Container or Column",
+        ));
+    }
+    let mut v = Panel::new();
+    if let Some(s) = box_style_of(file, styles, node)? {
+        v = v.box_style(s);
+    }
+    for arg in &node.args {
+        match arg.name.as_str() {
+            "style" => {}
+            "width" => v = v.width(len(file, arg, res, row)?),
+            "height" => v = v.height(len(file, arg, res, row)?),
+            "padding" => v = apply_padding(v, file, arg, res, row)?,
+            "padding_x" => v = v.padding_x(num(file, arg, res, row)?),
+            "padding_y" => v = v.padding_y(num(file, arg, res, row)?),
+            "background" => v = v.background(color(file, theme, arg)?),
+            "flex" => v = v.flex(num(file, arg, res, row)?),
+            "radius" => v = v.radius(num(file, arg, res, row)?),
+            "border" => {
+                let (w, c) = border_pair(file, theme, arg)?;
+                v = v.border(w, c);
+            }
+            "border_left" => {
+                let (w, c) = border_side(file, theme, "border_left", arg)?;
+                v = v.border_left(w, c);
+            }
+            "border_right" => {
+                let (w, c) = border_side(file, theme, "border_right", arg)?;
+                v = v.border_right(w, c);
+            }
+            "border_top" => {
+                let (w, c) = border_side(file, theme, "border_top", arg)?;
+                v = v.border_top(w, c);
+            }
+            "border_bottom" => {
+                let (w, c) = border_side(file, theme, "border_bottom", arg)?;
+                v = v.border_bottom(w, c);
+            }
+            "border_x" => {
+                let (w, c) = border_side(file, theme, "border_x", arg)?;
+                v = v.border_x(w, c);
+            }
+            "border_y" => {
+                let (w, c) = border_side(file, theme, "border_y", arg)?;
+                v = v.border_y(w, c);
+            }
+            "min_width" => v = v.min_width(num(file, arg, res, row)?),
+            "max_width" => v = v.max_width(num(file, arg, res, row)?),
+            "min_height" => v = v.min_height(num(file, arg, res, row)?),
+            "max_height" => v = v.max_height(num(file, arg, res, row)?),
+            "margin" => v = apply_panel_margin(v, file, arg, res, row)?,
+            "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
+            "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
+            "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
+            "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
+            "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
+            "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
+            "overflow" => v = v.overflow(overflow_val(file, arg)?),
+            "hit" => v = v.hit_testable(flag(file, arg, res, row)?),
+            "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right" | "indent_top"
+            | "indent_bottom" => {}
+            _ => unreachable_checked(file, node, arg)?,
+        }
+    }
+    Ok(AnyView::new(v))
+}
+
+#[inline(never)]
+fn lower_scroll_view(
+    file: &str,
+    theme: &Theme,
+    styles: &BuiltStyles,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let mut axis = ScrollAxis::Vertical;
+    for arg in &node.args {
+        match arg.name.as_str() {
+            "axis" => {
+                axis = match ident(file, arg)?.as_str() {
+                    "vertical" => ScrollAxis::Vertical,
+                    "horizontal" => ScrollAxis::Horizontal,
+                    "both" => ScrollAxis::Both,
+                    other => {
+                        return Err(SeqError::new(
+                            file,
+                            arg.line,
+                            1,
+                            format!("axis to vertical/horizontal/both, not '{other}'"),
+                        ));
+                    }
+                };
+            }
+            "width" | "height" | "padding" | "padding_x" | "padding_y" | "background" => {
+                return Err(SeqError::new(
+                    file,
+                    arg.line,
+                    1,
+                    format!(
+                        "property '{}' on ScrollView in increment 1 - wrap content in Column",
+                        arg.name
+                    ),
+                ));
+            }
+            "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right" | "indent_top"
+            | "indent_bottom" => {}
+            _ => unreachable_checked(file, node, arg)?,
+        }
+    }
+    let inner = match node.children.len() {
+        0 => AnyView::new(Column::new()),
+        1 => lower_node(file, theme, styles, &node.children[0], res, row)?,
+        _ => {
+            let mut col = Column::new();
+            for c in &node.children {
+                let kid = lower_node(file, theme, styles, c, res, row)?;
+                col = match child_flex_weight(file, res, row, c)? {
+                    Some(w) => col.child_flex(kid, w),
+                    None => col.child(kid),
+                };
+            }
+            AnyView::new(col)
+        }
+    };
+    let mut v = ScrollView::new(inner);
+    v = match axis {
+        ScrollAxis::Vertical => v.vertical(),
+        ScrollAxis::Horizontal => v.horizontal(),
+        _ => v.axis(axis),
+    };
+    Ok(AnyView::new(v))
+}
+
+#[inline(never)]
+fn lower_spacer(
+    file: &str,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let mut flex = 1.0;
+    let mut hit: Option<bool> = None;
+    let mut width: Option<Length> = None;
+    let mut height: Option<Length> = None;
+    let mut min_width: Option<f32> = None;
+    let mut max_width: Option<f32> = None;
+    let mut min_height: Option<f32> = None;
+    let mut max_height: Option<f32> = None;
+    for arg in &node.args {
+        match arg.name.as_str() {
+            "flex" => flex = num(file, arg, res, row)?,
+            "width" => width = Some(len(file, arg, res, row)?),
+            "height" => height = Some(len(file, arg, res, row)?),
+            "min_width" => min_width = Some(num(file, arg, res, row)?),
+            "max_width" => max_width = Some(num(file, arg, res, row)?),
+            "min_height" => min_height = Some(num(file, arg, res, row)?),
+            "max_height" => max_height = Some(num(file, arg, res, row)?),
+            "hit" => hit = Some(flag(file, arg, res, row)?),
+            "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right" | "indent_top"
+            | "indent_bottom" => {}
+            _ => unreachable_checked(file, node, arg)?,
+        }
+    }
+    let mut v = Spacer::flex(flex);
+    if let Some(on) = hit {
+        v = v.hit_testable(on);
+    }
+    if let Some(w) = width {
+        v = v.width(w);
+    }
+    if let Some(h) = height {
+        v = v.height(h);
+    }
+    if let Some(x) = min_width {
+        v = v.min_width(x);
+    }
+    if let Some(x) = max_width {
+        v = v.max_width(x);
+    }
+    if let Some(x) = min_height {
+        v = v.min_height(x);
+    }
+    if let Some(x) = max_height {
+        v = v.max_height(x);
+    }
+    Ok(AnyView::new(v))
+}
+
+#[inline(never)]
+fn lower_icon(
+    file: &str,
+    theme: &Theme,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let name = opt_str(file, node, "name", res, row)?.ok_or_else(|| {
+        SeqError::new(
+            file,
+            node.line,
+            1,
+            "Icon requires name: \"...\"".to_string(),
+        )
+    })?;
+    let mut v = Icon::new(name);
+    for arg in &node.args {
+        match arg.name.as_str() {
+            "name" => {}
+            "size" => v = v.size(num(file, arg, res, row)?),
+            "color" => v = v.color(color(file, theme, arg)?),
+            "width" => v = v.width(len(file, arg, res, row)?),
+            "height" => v = v.height(len(file, arg, res, row)?),
+            "min_width" => v = v.min_width(num(file, arg, res, row)?),
+            "max_width" => v = v.max_width(num(file, arg, res, row)?),
+            "min_height" => v = v.min_height(num(file, arg, res, row)?),
+            "max_height" => v = v.max_height(num(file, arg, res, row)?),
+            "margin" => v = apply_icon_margin(v, file, arg, res, row)?,
+            "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
+            "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
+            "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
+            "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
+            "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
+            "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
+            "flex" => {}
+            "hit" => v = v.hit_testable(flag(file, arg, res, row)?),
+            "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right" | "indent_top"
+            | "indent_bottom" => {}
+            _ => unreachable_checked(file, node, arg)?,
+        }
+    }
+    Ok(AnyView::new(v))
+}
+
+#[inline(never)]
+fn lower_image(
+    file: &str,
+    node: &SeqNode,
+    res: &Resolver<'_>,
+    row: Option<&SeqRowData>,
+) -> Result<AnyView, SeqError> {
+    let path = opt_str(file, node, "path", res, row)?
+        .or_else(|| node.label.clone())
+        .ok_or_else(|| {
+            SeqError::new(
+                file,
+                node.line,
+                1,
+                "Image requires path: \"...\"".to_string(),
+            )
+        })?;
+    let mut v = Image::file(path);
+    for arg in &node.args {
+        match arg.name.as_str() {
+            "path" => {}
+            "width" => v = v.width(len(file, arg, res, row)?),
+            "height" => v = v.height(len(file, arg, res, row)?),
+            "min_width" => v = v.min_width(num(file, arg, res, row)?),
+            "max_width" => v = v.max_width(num(file, arg, res, row)?),
+            "min_height" => v = v.min_height(num(file, arg, res, row)?),
+            "max_height" => v = v.max_height(num(file, arg, res, row)?),
+            "margin" => v = apply_image_margin(v, file, arg, res, row)?,
+            "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
+            "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
+            "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
+            "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
+            "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
+            "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
+            "flex" => {}
+            "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right" | "indent_top"
+            | "indent_bottom" => {}
+            _ => unreachable_checked(file, node, arg)?,
+        }
+    }
+    Ok(AnyView::new(v))
+}
+
+#[inline(never)]
+fn lower_gpu_surface(file: &str, node: &SeqNode, res: &Resolver<'_>) -> Result<AnyView, SeqError> {
+    let name = find_arg(node, "name")
+        .and_then(|arg| match &arg.value {
+            SeqValue::Str(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            SeqError::new(
+                file,
+                node.line,
+                1,
+                "GpuSurface requires name: \"...\"".to_string(),
+            )
+        })?;
+    match res {
+        Resolver::Host(bindings) => bindings.view(name).ok_or_else(|| {
+            SeqError::new(
+                file,
+                node.line,
+                1,
+                format!("no host view registered as `{name}`"),
+            )
+        }),
+        Resolver::Static => Err(SeqError::new(
+            file,
+            node.line,
+            1,
+            "GpuSurface requires a Rust host".to_string(),
+        )),
+    }
+}
+
+#[inline(never)]
 fn lower_node_inner(
     file: &str,
     theme: &Theme,
@@ -1731,7 +2297,10 @@ fn lower_node_inner(
     // node dispatch cannot see them as unknown properties.
     let motionless;
     let node = if node.kind != "If"
-        && node.args.iter().any(|a| a.name == "enter" || a.name == "exit")
+        && node
+            .args
+            .iter()
+            .any(|a| a.name == "enter" || a.name == "exit")
     {
         let mut n = node.clone();
         n.args.retain(|a| a.name != "enter" && a.name != "exit");
@@ -1740,75 +2309,7 @@ fn lower_node_inner(
     } else {
         node
     };
-    for arg in &node.args {
-        if let SeqValue::Callback { action, .. } = &arg.value {
-            match res {
-                Resolver::Static => {
-                    return Err(SeqError::new(
-                        file,
-                        arg.line,
-                        1,
-                        format!("callback '{action}' wymaga hosta Rust — inkrement 2"),
-                    ));
-                }
-                Resolver::Host(_) => {}
-            }
-        }
-        if let SeqValue::CallSeq { name, .. } = &arg.value {
-            match res {
-                Resolver::Static => {
-                    return Err(SeqError::new(
-                        file,
-                        arg.line,
-                        1,
-                        format!("funkcja '{name}' (.seq) wymaga hosta Rust (lower_with)"),
-                    ));
-                }
-                Resolver::Host(_) => {}
-            }
-        }
-        if let SeqValue::Dynamic(name) = &arg.value {
-            match res {
-                Resolver::Static => {
-                    return Err(SeqError::new(
-                        file,
-                        arg.line,
-                        1,
-                        format!("dynamic({name}) wymaga hosta Rust — inkrement 2"),
-                    ));
-                }
-
-                Resolver::Host(_) => {}
-            }
-        }
-        if let SeqValue::Env(name) = &arg.value {
-            match res {
-                Resolver::Static => {
-                    return Err(SeqError::new(
-                        file,
-                        arg.line,
-                        1,
-                        format!("env.{name} wymaga hosta Rust (HostBindings::env_..)"),
-                    ));
-                }
-                Resolver::Host(_) => {}
-            }
-        }
-        if let SeqValue::ItemField(field) = &arg.value {
-            match res {
-                Resolver::Static => {
-                    return Err(SeqError::new(
-                        file,
-                        arg.line,
-                        1,
-                        format!("item.{field} requires Rust host — List rows"),
-                    ));
-                }
-
-                Resolver::Host(_) => {}
-            }
-        }
-    }
+    validate_node_args(file, node, res)?;
     let built = match node.kind.as_str() {
         "Column" => {
             if has_click(node) {
@@ -1820,8 +2321,7 @@ fn lower_node_inner(
                     row,
                 );
             }
-            let v = apply_flex_box(file, theme, node, Column::new(), res, row)?;
-            Ok(boxed_children(file, theme, styles, node, v, res, row)?)
+            lower_column(file, theme, styles, node, res, row)
         }
         "Row" => {
             if has_click(node) {
@@ -1833,345 +2333,17 @@ fn lower_node_inner(
                     row,
                 );
             }
-            let v = apply_flex_box(file, theme, node, Row::new(), res, row)?;
-            Ok(boxed_children(file, theme, styles, node, v, res, row)?)
+            lower_row(file, theme, styles, node, res, row)
         }
-        "Container" => {
-            let mut v = Container::new();
-            if let Some(s) = box_style_of(file, styles, node)? {
-                v = v.box_style(s);
-            }
-            for arg in &node.args {
-                match arg.name.as_str() {
-                    "style" => {}
-                    "width" => v = v.width(len(file, arg, res, row)?),
-                    "height" => v = v.height(len(file, arg, res, row)?),
-                    "padding" => v = apply_padding(v, file, arg, res, row)?,
-                    "padding_x" => v = v.padding_x(num(file, arg, res, row)?),
-                    "padding_y" => v = v.padding_y(num(file, arg, res, row)?),
-                    "background" => v = v.background(color(file, theme, arg)?),
-                    "flex" => v = v.flex(num(file, arg, res, row)?),
-                    "radius" => v = v.radius(num(file, arg, res, row)?),
-                    "border" => {
-                        let (w, c) = border_pair(file, theme, arg)?;
-                        v = v.border(w, c);
-                    }
-                    "border_left" => {
-                        let (w, c) = border_side(file, theme, "border_left", arg)?;
-                        v = v.border_left(w, c);
-                    }
-                    "border_right" => {
-                        let (w, c) = border_side(file, theme, "border_right", arg)?;
-                        v = v.border_right(w, c);
-                    }
-                    "border_top" => {
-                        let (w, c) = border_side(file, theme, "border_top", arg)?;
-                        v = v.border_top(w, c);
-                    }
-                    "border_bottom" => {
-                        let (w, c) = border_side(file, theme, "border_bottom", arg)?;
-                        v = v.border_bottom(w, c);
-                    }
-                    "border_x" => {
-                        let (w, c) = border_side(file, theme, "border_x", arg)?;
-                        v = v.border_x(w, c);
-                    }
-                    "border_y" => {
-                        let (w, c) = border_side(file, theme, "border_y", arg)?;
-                        v = v.border_y(w, c);
-                    }
-                    "min_width" => v = v.min_width(num(file, arg, res, row)?),
-                    "max_width" => v = v.max_width(num(file, arg, res, row)?),
-                    "min_height" => v = v.min_height(num(file, arg, res, row)?),
-                    "max_height" => v = v.max_height(num(file, arg, res, row)?),
-                    "margin" => v = apply_container_margin(v, file, arg, res, row)?,
-                    "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
-                    "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
-                    "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
-                    "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
-                    "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
-                    "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
-                    "overflow" => v = v.overflow(overflow_val(file, arg)?),
-                    "on_click" => match res {
-                        Resolver::Static => {
-                            return Err(SeqError::new(
-                                file,
-                                arg.line,
-                                1,
-                                "on_click wymaga hosta Rust",
-                            ));
-                        }
-                        Resolver::Host(b) => match &arg.value {
-                            SeqValue::Callback { .. } | SeqValue::CallSeq { .. } => {
-                                let fire = wire_action(file, arg.line, b, &arg.value, row)?;
-                                v = v.on_click(move || fire());
-                            }
-                            _ => {
-                                return Err(SeqError::new(
-                                    file,
-                                    arg.line,
-                                    1,
-                                    "on_click: { akcja(args) }",
-                                ));
-                            }
-                        },
-                    },
-                    "hover" => v = v.hover(color(file, theme, arg)?),
-                    "hit" => v = v.hit_testable(flag(file, arg, res, row)?),
-                    "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right"
-                    | "indent_top" | "indent_bottom" => {}
-                    _ => unreachable_checked(file, node, arg)?,
-                }
-            }
-            if let Some(kid) = single_child(file, theme, styles, node, res, row)? {
-                v = v.child(kid);
-            }
-            Ok(AnyView::new(v))
-        }
-        "Panel" => {
-            if !node.children.is_empty() {
-                return Err(SeqError::new(
-                    file,
-                    node.line,
-                    1,
-                    "Panel is a leaf (only background/frame, no children) - put content in Container or Column",
-                ));
-            }
-            let mut v = Panel::new();
-            if let Some(s) = box_style_of(file, styles, node)? {
-                v = v.box_style(s);
-            }
-            for arg in &node.args {
-                match arg.name.as_str() {
-                    "style" => {}
-                    "width" => v = v.width(len(file, arg, res, row)?),
-                    "height" => v = v.height(len(file, arg, res, row)?),
-                    "padding" => v = apply_padding(v, file, arg, res, row)?,
-                    "padding_x" => v = v.padding_x(num(file, arg, res, row)?),
-                    "padding_y" => v = v.padding_y(num(file, arg, res, row)?),
-                    "background" => v = v.background(color(file, theme, arg)?),
-                    "flex" => v = v.flex(num(file, arg, res, row)?),
-                    "radius" => v = v.radius(num(file, arg, res, row)?),
-                    "border" => {
-                        let (w, c) = border_pair(file, theme, arg)?;
-                        v = v.border(w, c);
-                    }
-                    "border_left" => {
-                        let (w, c) = border_side(file, theme, "border_left", arg)?;
-                        v = v.border_left(w, c);
-                    }
-                    "border_right" => {
-                        let (w, c) = border_side(file, theme, "border_right", arg)?;
-                        v = v.border_right(w, c);
-                    }
-                    "border_top" => {
-                        let (w, c) = border_side(file, theme, "border_top", arg)?;
-                        v = v.border_top(w, c);
-                    }
-                    "border_bottom" => {
-                        let (w, c) = border_side(file, theme, "border_bottom", arg)?;
-                        v = v.border_bottom(w, c);
-                    }
-                    "border_x" => {
-                        let (w, c) = border_side(file, theme, "border_x", arg)?;
-                        v = v.border_x(w, c);
-                    }
-                    "border_y" => {
-                        let (w, c) = border_side(file, theme, "border_y", arg)?;
-                        v = v.border_y(w, c);
-                    }
-                    "min_width" => v = v.min_width(num(file, arg, res, row)?),
-                    "max_width" => v = v.max_width(num(file, arg, res, row)?),
-                    "min_height" => v = v.min_height(num(file, arg, res, row)?),
-                    "max_height" => v = v.max_height(num(file, arg, res, row)?),
-                    "margin" => v = apply_panel_margin(v, file, arg, res, row)?,
-                    "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
-                    "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
-                    "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
-                    "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
-                    "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
-                    "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
-                    "overflow" => v = v.overflow(overflow_val(file, arg)?),
-                    "hit" => v = v.hit_testable(flag(file, arg, res, row)?),
-                    "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right"
-                    | "indent_top" | "indent_bottom" => {}
-                    _ => unreachable_checked(file, node, arg)?,
-                }
-            }
-            Ok(AnyView::new(v))
-        }
-        "ScrollView" => {
-            let mut axis = ScrollAxis::Vertical;
-            for arg in &node.args {
-                match arg.name.as_str() {
-                    "axis" => {
-                        axis = match ident(file, arg)?.as_str() {
-                            "vertical" => ScrollAxis::Vertical,
-                            "horizontal" => ScrollAxis::Horizontal,
-                            "both" => ScrollAxis::Both,
-                            other => {
-                                return Err(SeqError::new(
-                                    file,
-                                    arg.line,
-                                    1,
-                                    format!("axis to vertical/horizontal/both, nie '{other}'"),
-                                ));
-                            }
-                        };
-                    }
-                    "width" | "height" | "padding" | "padding_x" | "padding_y" | "background" => {
-                        return Err(SeqError::new(
-                            file,
-                            arg.line,
-                            1,
-                            format!(
-                                "propka '{}' on ScrollView in increment 1 - wrap content in Column",
-                                arg.name
-                            ),
-                        ));
-                    }
-                    "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right"
-                    | "indent_top" | "indent_bottom" => {}
-                    _ => unreachable_checked(file, node, arg)?,
-                }
-            }
-            let inner = match node.children.len() {
-                0 => AnyView::new(Column::new()),
-                1 => lower_node(file, theme, styles, &node.children[0], res, row)?,
-                _ => {
-                    let mut col = Column::new();
-                    for c in &node.children {
-                        let kid = lower_node(file, theme, styles, c, res, row)?;
-                        col = match child_flex_weight(file, res, row, c)? {
-                            Some(w) => col.child_flex(kid, w),
-                            None => col.child(kid),
-                        };
-                    }
-                    AnyView::new(col)
-                }
-            };
-            let mut v = ScrollView::new(inner);
-            v = match axis {
-                ScrollAxis::Vertical => v.vertical(),
-                ScrollAxis::Horizontal => v.horizontal(),
-                _ => v.axis(axis),
-            };
-            Ok(AnyView::new(v))
-        }
+        "Container" => lower_container(file, theme, styles, node, res, row),
+        "Panel" => lower_panel(file, theme, styles, node, res, row),
+        "ScrollView" => lower_scroll_view(file, theme, styles, node, res, row),
         "Text" => lower_text(file, theme, styles, node, res, row),
         "Button" => lower_button(file, styles, node, res, row),
-        "Spacer" => {
-            let mut flex = 1.0;
-            let mut hit: Option<bool> = None;
-            let mut width: Option<Length> = None;
-            let mut height: Option<Length> = None;
-            let mut min_width: Option<f32> = None;
-            let mut max_width: Option<f32> = None;
-            let mut min_height: Option<f32> = None;
-            let mut max_height: Option<f32> = None;
-            for arg in &node.args {
-                match arg.name.as_str() {
-                    "flex" => flex = num(file, arg, res, row)?,
-                    "width" => width = Some(len(file, arg, res, row)?),
-                    "height" => height = Some(len(file, arg, res, row)?),
-                    "min_width" => min_width = Some(num(file, arg, res, row)?),
-                    "max_width" => max_width = Some(num(file, arg, res, row)?),
-                    "min_height" => min_height = Some(num(file, arg, res, row)?),
-                    "max_height" => max_height = Some(num(file, arg, res, row)?),
-                    "hit" => hit = Some(flag(file, arg, res, row)?),
-                    "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right"
-                    | "indent_top" | "indent_bottom" => {}
-                    _ => unreachable_checked(file, node, arg)?,
-                }
-            }
-            let mut v = Spacer::flex(flex);
-            if let Some(on) = hit {
-                v = v.hit_testable(on);
-            }
-            if let Some(w) = width {
-                v = v.width(w);
-            }
-            if let Some(h) = height {
-                v = v.height(h);
-            }
-            if let Some(x) = min_width {
-                v = v.min_width(x);
-            }
-            if let Some(x) = max_width {
-                v = v.max_width(x);
-            }
-            if let Some(x) = min_height {
-                v = v.min_height(x);
-            }
-            if let Some(x) = max_height {
-                v = v.max_height(x);
-            }
-            Ok(AnyView::new(v))
-        }
-        "Icon" => {
-            let name = opt_str(file, node, "name", res, row)?.ok_or_else(|| {
-                SeqError::new(file, node.line, 1, "Icon wymaga name: \"...\"".to_string())
-            })?;
-            let mut v = Icon::new(name);
-            for arg in &node.args {
-                match arg.name.as_str() {
-                    "name" => {}
-                    "size" => v = v.size(num(file, arg, res, row)?),
-                    "color" => v = v.color(color(file, theme, arg)?),
-                    "width" => v = v.width(len(file, arg, res, row)?),
-                    "height" => v = v.height(len(file, arg, res, row)?),
-                    "min_width" => v = v.min_width(num(file, arg, res, row)?),
-                    "max_width" => v = v.max_width(num(file, arg, res, row)?),
-                    "min_height" => v = v.min_height(num(file, arg, res, row)?),
-                    "max_height" => v = v.max_height(num(file, arg, res, row)?),
-                    "margin" => v = apply_icon_margin(v, file, arg, res, row)?,
-                    "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
-                    "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
-                    "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
-                    "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
-                    "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
-                    "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
-                    "flex" => {}
-                    "hit" => v = v.hit_testable(flag(file, arg, res, row)?),
-                    "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right"
-                    | "indent_top" | "indent_bottom" => {}
-                    _ => unreachable_checked(file, node, arg)?,
-                }
-            }
-            Ok(AnyView::new(v))
-        }
-        "Image" => {
-            let path = opt_str(file, node, "path", res, row)?
-                .or_else(|| node.label.clone())
-                .ok_or_else(|| {
-                    SeqError::new(file, node.line, 1, "Image wymaga path: \"...\"".to_string())
-                })?;
-            let mut v = Image::file(path);
-            for arg in &node.args {
-                match arg.name.as_str() {
-                    "path" => {}
-                    "width" => v = v.width(len(file, arg, res, row)?),
-                    "height" => v = v.height(len(file, arg, res, row)?),
-                    "min_width" => v = v.min_width(num(file, arg, res, row)?),
-                    "max_width" => v = v.max_width(num(file, arg, res, row)?),
-                    "min_height" => v = v.min_height(num(file, arg, res, row)?),
-                    "max_height" => v = v.max_height(num(file, arg, res, row)?),
-                    "margin" => v = apply_image_margin(v, file, arg, res, row)?,
-                    "margin_x" => v = v.margin_x(num(file, arg, res, row)?),
-                    "margin_y" => v = v.margin_y(num(file, arg, res, row)?),
-                    "margin_left" => v = v.margin_left(num(file, arg, res, row)?),
-                    "margin_right" => v = v.margin_right(num(file, arg, res, row)?),
-                    "margin_top" => v = v.margin_top(num(file, arg, res, row)?),
-                    "margin_bottom" => v = v.margin_bottom(num(file, arg, res, row)?),
-
-                    "flex" => {}
-                    "indent" | "indent_x" | "indent_y" | "indent_left" | "indent_right"
-                    | "indent_top" | "indent_bottom" => {}
-                    _ => unreachable_checked(file, node, arg)?,
-                }
-            }
-            Ok(AnyView::new(v))
-        }
+        "Spacer" => lower_spacer(file, node, res, row),
+        "Icon" => lower_icon(file, theme, node, res, row),
+        "Image" => lower_image(file, node, res, row),
+        "GpuSurface" => lower_gpu_surface(file, node, res),
         "List" => lower_list(file, theme, styles, node, res),
         "VirtualList" => lower_virtual_list(file, theme, styles, node, res, row),
         "SplitPanel" => lower_split(file, theme, styles, node, res, row),
@@ -2273,13 +2445,13 @@ fn lower_text(
                     file,
                     t_arg.line,
                     1,
-                    "t: wymaga hosta Rust (HostBindings::i18n)",
+                    "t: requires a Rust host (HostBindings::i18n)",
                 ));
             }
             Resolver::Host(b) => match &t_arg.value {
                 SeqValue::Str(key) => {
                     let i18n = b.get_i18n().ok_or_else(|| {
-                        SeqError::new(file, t_arg.line, 1, "t: wymaga HostBindings::i18n()")
+                        SeqError::new(file, t_arg.line, 1, "t: requires HostBindings::i18n()")
                     })?;
                     let key = key.clone();
                     let mut v = Text::with(move || i18n.t(&key));
@@ -2305,7 +2477,7 @@ fn lower_text(
                     file,
                     arg.line,
                     1,
-                    "dynamic: wymaga hosta Rust — inkrement 2",
+                    "dynamic: requires a Rust host",
                 )),
                 Resolver::Host(b) => match &arg.value {
                     SeqValue::Dynamic(name) | SeqValue::Ident(name) => {
@@ -2330,7 +2502,7 @@ fn lower_text(
                         file,
                         arg.line,
                         1,
-                        "dynamic: to nazwa propertu (dynamic: tytul)",
+                        "dynamic: is a prop name (dynamic: title)",
                     )),
                 },
             };
@@ -2343,7 +2515,7 @@ fn lower_text(
                     file,
                     arg.line,
                     1,
-                    "dynamic() wymaga hosta Rust — inkrement 2",
+                    "dynamic() requires a Rust host",
                 )),
                 Resolver::Host(b) => {
                     let read = display_of(file, arg.line, b, name)?;
@@ -2357,7 +2529,12 @@ fn lower_text(
             && let SeqValue::Env(name) = &arg.value
         {
             return match res {
-                Resolver::Static => Err(SeqError::new(file, arg.line, 1, "env. wymaga hosta Rust")),
+                Resolver::Static => Err(SeqError::new(
+                    file,
+                    arg.line,
+                    1,
+                    "env. requires a Rust host",
+                )),
                 Resolver::Host(b) => {
                     let read = display_env_of(file, arg.line, b, name)?;
                     let mut v = Text::with(move || read());
@@ -2709,7 +2886,7 @@ fn lower_button(
                         file,
                         arg.line,
                         1,
-                        "on_click wymaga hosta Rust — inkrement 2",
+                        "on_click requires a Rust host",
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -2722,7 +2899,7 @@ fn lower_button(
                             file,
                             arg.line,
                             1,
-                            "on_click: { akcja(args) }",
+                            "on_click: { action(args) }",
                         ));
                     }
                 },
@@ -2775,7 +2952,7 @@ fn stack_pos_of(file: &str, node: &SeqNode) -> Result<StackPos, SeqError> {
                     arg.line,
                     1,
                     format!(
-                        "at to top/bottom/left/right/top_left/top_right/bottom_left/bottom_right/fill/center, nie '{other}'"
+                        "at to top/bottom/left/right/top_left/top_right/bottom_left/bottom_right/fill/center, not '{other}'"
                     ),
                 )),
             },
@@ -2783,7 +2960,7 @@ fn stack_pos_of(file: &str, node: &SeqNode) -> Result<StackPos, SeqError> {
                 file,
                 arg.line,
                 1,
-                "at: to nazwa (at: top_left)",
+                "at: is a name (at: top_left)",
             )),
         },
     }
@@ -2831,7 +3008,7 @@ fn stack_z_of(
                 }
             }
             SeqValue::Ident(prop) | SeqValue::Dynamic(prop) => match res {
-                Resolver::Static => Err(SeqError::new(file, arg.line, 1, "'z' to liczba")),
+                Resolver::Static => Err(SeqError::new(file, arg.line, 1, "'z' must be a number")),
                 Resolver::Host(b) => {
                     let v = prop_num_env(file, arg.line, b, prop)?;
                     #[allow(clippy::cast_possible_truncation)]
@@ -2983,7 +3160,7 @@ fn grid_int(
                         file,
                         arg.line,
                         1,
-                        format!("'{name}' to liczba >= 0"),
+                        format!("'{name}' must be a number >= 0"),
                     ))
                 }
             }
@@ -2992,7 +3169,7 @@ fn grid_int(
                     file,
                     arg.line,
                     1,
-                    format!("'{name}' to liczba"),
+                    format!("'{name}' must be a number"),
                 )),
                 Resolver::Host(b) => {
                     let v = prop_num_env(file, arg.line, b, prop)?;
@@ -3004,7 +3181,7 @@ fn grid_int(
                             file,
                             arg.line,
                             1,
-                            format!("'{name}' to liczba >= 0"),
+                            format!("'{name}' must be a number >= 0"),
                         ))
                     }
                 }
@@ -3013,7 +3190,7 @@ fn grid_int(
                 file,
                 arg.line,
                 1,
-                format!("'{name}' to liczba"),
+                format!("'{name}' must be a number"),
             )),
         },
     }
@@ -3078,7 +3255,7 @@ fn lower_grid(
                             file,
                             arg.line,
                             1,
-                            format!("auto_flow to row/column, nie '{other}'"),
+                            format!("auto_flow to row/column, not '{other}'"),
                         ));
                     }
                 };
@@ -3170,7 +3347,7 @@ fn lower_wrap(
                             file,
                             arg.line,
                             1,
-                            format!("axis to horizontal/vertical, nie '{other}'"),
+                            format!("axis to horizontal/vertical, not '{other}'"),
                         ));
                     }
                 };
@@ -3283,7 +3460,7 @@ fn when_signal(
                 file,
                 line,
                 1,
-                "'when' z propertu wymaga hosta",
+                "'when' from a prop requires a host",
             )),
             Resolver::Host(b) => {
                 if let Some(sig) = b.get_bool(prop) {
@@ -3323,7 +3500,7 @@ fn when_signal(
                 file,
                 line,
                 1,
-                "'when' z wiersza wymaga hosta",
+                "'when' from a row requires a host",
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Bool(sig)) => Ok(sig),
@@ -3331,7 +3508,7 @@ fn when_signal(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to nie Bool"),
+                    format!("row field '{field}' to not Bool"),
                 )),
             },
         },
@@ -3339,7 +3516,7 @@ fn when_signal(
             file,
             line,
             1,
-            "'when' to true/false albo dynamic(nazwa)",
+            "'when' to true/false or dynamic(nazwa)",
         )),
     }
 }
@@ -3357,7 +3534,7 @@ fn lower_if(
             file,
             node.line,
             1,
-            "If wymaga when: true/false/dynamic()".to_string(),
+            "If requires when: true/false/dynamic()".to_string(),
         )
     })?;
 
@@ -3387,7 +3564,7 @@ fn lower_if(
                 file,
                 when_arg.line,
                 1,
-                "If(when: prop) wymaga hosta Rust (HostBindings::prop_bool)",
+                "If(when: prop) requires a Rust host (HostBindings::prop_bool)",
             ));
         }
         Resolver::Host(b) => (*b).clone(),
@@ -3798,7 +3975,12 @@ fn lower_async(
     row: Option<&SeqRowData>,
 ) -> Result<AnyView, SeqError> {
     let source = find_arg(node, "source").ok_or_else(|| {
-        SeqError::new(file, node.line, 1, "Async wymaga source: nazwa".to_string())
+        SeqError::new(
+            file,
+            node.line,
+            1,
+            "Async requires source: nazwa".to_string(),
+        )
     })?;
     let source_name = match &source.value {
         SeqValue::Ident(name) => name.clone(),
@@ -3807,7 +3989,7 @@ fn lower_async(
                 file,
                 source.line,
                 1,
-                "source: to nazwa zasobu z hosta (source: users)",
+                "source: is a host resource name (source: users)",
             ));
         }
     };
@@ -3817,7 +3999,7 @@ fn lower_async(
                 file,
                 node.line,
                 1,
-                "Async(source:) wymaga hosta Rust (HostBindings::resource())",
+                "Async(source:) requires a Rust host (HostBindings::resource())",
             ));
         }
         Resolver::Host(b) => (*b).clone(),
@@ -3935,7 +4117,7 @@ fn lower_effect(
             file,
             node.line,
             1,
-            "Effect wymaga track: dynamic()".to_string(),
+            "Effect requires track: dynamic()".to_string(),
         )
     })?;
     let on_run = find_arg(node, "on_run").ok_or_else(|| {
@@ -3943,7 +4125,7 @@ fn lower_effect(
             file,
             node.line,
             1,
-            "Effect wymaga on_run: { akcja() }".to_string(),
+            "Effect requires on_run: { action() }".to_string(),
         )
     })?;
     let bindings = match res {
@@ -3952,7 +4134,7 @@ fn lower_effect(
                 file,
                 node.line,
                 1,
-                "Effect wymaga hosta Rust",
+                "Effect requires a Rust host",
             ));
         }
         Resolver::Host(b) => (*b).clone(),
@@ -3993,7 +4175,7 @@ fn lower_effect(
                 file,
                 on_run.line,
                 1,
-                "on_run: { akcja(args) }",
+                "on_run: { action(args) }",
             ));
         }
     };
@@ -4137,7 +4319,7 @@ fn lower_checkable(
             file,
             node.line,
             1,
-            format!("{what} wymaga checked: true/false/prop"),
+            format!("{what} requires checked: true/false/prop"),
         )
     })?;
     let sig = writable_bool(
@@ -4178,7 +4360,7 @@ fn lower_checkable(
                         file,
                         arg.line,
                         1,
-                        "on_toggle wymaga hosta Rust",
+                        "on_toggle requires a Rust host",
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -4198,7 +4380,7 @@ fn lower_checkable(
                             file,
                             arg.line,
                             1,
-                            "on_toggle: { akcja() } albo { akcja(value) }",
+                            "on_toggle: { action() } or { action(value) }",
                         ));
                     }
                 },
@@ -4366,7 +4548,7 @@ fn lower_textfield(
             file,
             node.line,
             1,
-            "TextField wymaga value: prop".to_string(),
+            "TextField requires value: prop".to_string(),
         )
     })?;
     let sig = writable_str(file, value_arg.line, res, row, &value_arg.value, "value")?;
@@ -4401,7 +4583,7 @@ fn lower_textfield(
                         file,
                         arg.line,
                         1,
-                        "on_submit wymaga hosta Rust",
+                        "on_submit requires a Rust host",
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -4416,7 +4598,7 @@ fn lower_textfield(
                             file,
                             arg.line,
                             1,
-                            "on_submit: { akcja() } albo { akcja(value) }",
+                            "on_submit: { action() } or { action(value) }",
                         ));
                     }
                 },
@@ -4455,7 +4637,7 @@ fn count_val(
                 file,
                 arg.line,
                 1,
-                format!("'{name}' z propertu wymaga hosta"),
+                format!("'{name}' from a prop requires a host"),
             )),
             Resolver::Host(b) => b
                 .get_int(prop)
@@ -4489,7 +4671,7 @@ fn count_val(
                 file,
                 arg.line,
                 1,
-                format!("'{name}' z wiersza wymaga hosta"),
+                format!("'{name}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, arg.line, row, field)? {
                 RowVal::Sig(FieldSignal::Int(sig)) => Ok(Some(sig.get_untracked().max(0) as usize)),
@@ -4498,7 +4680,7 @@ fn count_val(
                     file,
                     arg.line,
                     1,
-                    format!("pole wiersza '{field}' to nie Int"),
+                    format!("row field '{field}' to not Int"),
                 )),
             },
         },
@@ -4513,8 +4695,14 @@ fn label_arg(
     row: Option<&SeqRowData>,
     kind: &str,
 ) -> Result<String, SeqError> {
-    opt_str(file, node, "label", res, row)?
-        .ok_or_else(|| SeqError::new(file, node.line, 1, format!("{kind} wymaga label: \"...\"")))
+    opt_str(file, node, "label", res, row)?.ok_or_else(|| {
+        SeqError::new(
+            file,
+            node.line,
+            1,
+            format!("{kind} requires label: \"...\""),
+        )
+    })
 }
 
 fn str_list_arg(file: &str, node: &SeqNode, name: &str) -> Result<Vec<String>, SeqError> {
@@ -4523,7 +4711,7 @@ fn str_list_arg(file: &str, node: &SeqNode, name: &str) -> Result<Vec<String>, S
             file,
             node.line,
             1,
-            format!("{0} wymaga {name}: [\"...\", ...]", node.kind),
+            format!("{0} requires {name}: [\"...\", ...]", node.kind),
         )
     })?;
     match &arg.value {
@@ -4535,7 +4723,7 @@ fn str_list_arg(file: &str, node: &SeqNode, name: &str) -> Result<Vec<String>, S
                     file,
                     arg.line,
                     1,
-                    format!("'{name}' to [\"...\", ...] (same napisy)"),
+                    format!("'{name}' to [\"...\", ...] (all strings)"),
                 )),
             })
             .collect(),
@@ -4560,7 +4748,7 @@ fn lower_textarea(
             file,
             node.line,
             1,
-            "TextArea wymaga value: prop".to_string(),
+            "TextArea requires value: prop".to_string(),
         )
     })?;
     let sig = writable_str(file, value_arg.line, res, row, &value_arg.value, "value")?;
@@ -4612,7 +4800,7 @@ fn lower_textarea(
                         file,
                         arg.line,
                         1,
-                        "on_edit_end wymaga hosta Rust",
+                        "on_edit_end requires a Rust host",
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -4627,7 +4815,7 @@ fn lower_textarea(
                             file,
                             arg.line,
                             1,
-                            "on_edit_end: { akcja() } albo { akcja(value) }",
+                            "on_edit_end: { action() } or { action(value) }",
                         ));
                     }
                 },
@@ -4647,8 +4835,9 @@ fn lower_form_field(
     res: &Resolver<'_>,
     row: Option<&SeqRowData>,
 ) -> Result<AnyView, SeqError> {
-    let value_arg = find_arg(node, "value")
-        .ok_or_else(|| SeqError::new(file, node.line, 1, "Field wymaga value: prop".to_string()))?;
+    let value_arg = find_arg(node, "value").ok_or_else(|| {
+        SeqError::new(file, node.line, 1, "Field requires value: prop".to_string())
+    })?;
     let sig = writable_str(file, value_arg.line, res, row, &value_arg.value, "value")?;
     let label = label_arg(file, node, res, row, "Field")?;
     let mut v = Field::new(sig.clone(), label);
@@ -4678,7 +4867,7 @@ fn lower_number_field(
             file,
             node.line,
             1,
-            "NumberField wymaga value: prop".to_string(),
+            "NumberField requires value: prop".to_string(),
         )
     })?;
     let sig = bridge_f32(file, value_arg.line, res, row, &value_arg.value, "value")?;
@@ -4705,7 +4894,7 @@ fn lower_number_field(
             file,
             node.line,
             1,
-            "NumberField wymaga min <= max",
+            "NumberField requires min <= max",
         ));
     }
     v = v.min(min).max(max);
@@ -4724,7 +4913,7 @@ fn lower_date_field(
             file,
             node.line,
             1,
-            "DateField wymaga value: prop".to_string(),
+            "DateField requires value: prop".to_string(),
         )
     })?;
     let sig = writable_str(file, value_arg.line, res, row, &value_arg.value, "value")?;
@@ -4784,7 +4973,7 @@ fn lower_drag_value(
             file,
             node.line,
             1,
-            "DragValue wymaga value: prop".to_string(),
+            "DragValue requires value: prop".to_string(),
         )
     })?;
     let sig = bridge_f32(file, value_arg.line, res, row, &value_arg.value, "value")?;
@@ -4825,7 +5014,7 @@ fn lower_drag_value(
                         file,
                         arg.line,
                         1,
-                        "on_commit wymaga hosta Rust",
+                        "on_commit requires a Rust host",
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -4840,7 +5029,7 @@ fn lower_drag_value(
                             file,
                             arg.line,
                             1,
-                            "on_commit: { akcja() } albo { akcja(value) }",
+                            "on_commit: { action() } or { action(value) }",
                         ));
                     }
                 },
@@ -4855,7 +5044,7 @@ fn lower_drag_value(
             file,
             node.line,
             1,
-            "DragValue wymaga min <= max",
+            "DragValue requires min <= max",
         ));
     }
     v = v.min(min).max(max);
@@ -4870,7 +5059,12 @@ fn lower_slider(
     row: Option<&SeqRowData>,
 ) -> Result<AnyView, SeqError> {
     let value_arg = find_arg(node, "value").ok_or_else(|| {
-        SeqError::new(file, node.line, 1, "Slider wymaga value: prop".to_string())
+        SeqError::new(
+            file,
+            node.line,
+            1,
+            "Slider requires value: prop".to_string(),
+        )
     })?;
     let sig = bridge_f32(file, value_arg.line, res, row, &value_arg.value, "value")?;
     let mut min = 0.0;
@@ -4911,7 +5105,7 @@ fn lower_slider(
                         file,
                         arg.line,
                         1,
-                        "on_change wymaga hosta Rust",
+                        "on_change requires a Rust host",
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -4926,7 +5120,7 @@ fn lower_slider(
                             file,
                             arg.line,
                             1,
-                            "on_change: { akcja() } albo { akcja(value) }",
+                            "on_change: { action() } or { action(value) }",
                         ));
                     }
                 },
@@ -4952,7 +5146,7 @@ fn lower_dropdown(
             file,
             node.line,
             1,
-            "Dropdown wymaga selected: prop".to_string(),
+            "Dropdown requires selected: prop".to_string(),
         )
     })?;
     let sig = bridge_usize(file, sel_arg.line, res, row, &sel_arg.value, "selected")?;
@@ -4961,7 +5155,7 @@ fn lower_dropdown(
             file,
             node.line,
             1,
-            "Dropdown wymaga items: [\"A\", \"B\"]".to_string(),
+            "Dropdown requires items: [\"A\", \"B\"]".to_string(),
         )
     })?;
     let options = match &items_arg.value {
@@ -5017,7 +5211,7 @@ fn lower_dropdown(
                         file,
                         arg.line,
                         1,
-                        "on_select wymaga hosta Rust",
+                        "on_select requires a Rust host",
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -5032,7 +5226,7 @@ fn lower_dropdown(
                             file,
                             arg.line,
                             1,
-                            "on_select: { akcja() } albo { akcja(value) }",
+                            "on_select: { action() } or { action(value) }",
                         ));
                     }
                 },
@@ -5058,7 +5252,7 @@ fn lower_progress(
             file,
             node.line,
             1,
-            "Progress wymaga value: prop".to_string(),
+            "Progress requires value: prop".to_string(),
         )
     })?;
     let sig = live_f32(file, value_arg.line, res, row, &value_arg.value, "value")?;
@@ -5093,7 +5287,7 @@ fn writable_bool(
                 file,
                 line,
                 1,
-                format!("'{what}' z propertu wymaga hosta"),
+                format!("'{what}' from a prop requires a host"),
             )),
             Resolver::Host(b) => {
                 if let Some(sig) = b.get_bool(prop) {
@@ -5103,7 +5297,7 @@ fn writable_bool(
                         file,
                         line,
                         1,
-                        format!("'{what}' z memo jest tylko do odczytu — podepnij prop Bool"),
+                        format!("'{what}' from a memo is read-only — podepnij prop Bool"),
                     ))
                 } else {
                     Err(prop_err(file, line, prop, "Bool"))
@@ -5131,7 +5325,7 @@ fn writable_bool(
                 file,
                 line,
                 1,
-                format!("'{what}' z wiersza wymaga hosta"),
+                format!("'{what}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Bool(sig)) => Ok(sig),
@@ -5139,7 +5333,7 @@ fn writable_bool(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to nie Bool"),
+                    format!("row field '{field}' to not Bool"),
                 )),
             },
         },
@@ -5147,7 +5341,7 @@ fn writable_bool(
             file,
             line,
             1,
-            format!("'{what}' to true/false albo nazwa propertu"),
+            format!("'{what}' must be true/false or a prop name"),
         )),
     }
 }
@@ -5167,7 +5361,7 @@ fn writable_str(
                 file,
                 line,
                 1,
-                format!("'{what}' z propertu wymaga hosta"),
+                format!("'{what}' from a prop requires a host"),
             )),
             Resolver::Host(b) => {
                 if let Some(sig) = b.get_str(prop) {
@@ -5177,7 +5371,7 @@ fn writable_str(
                         file,
                         line,
                         1,
-                        format!("'{what}' z memo jest tylko do odczytu — podepnij prop String"),
+                        format!("'{what}' from a memo is read-only — podepnij prop String"),
                     ))
                 } else {
                     Err(prop_err(file, line, prop, "String"))
@@ -5205,7 +5399,7 @@ fn writable_str(
                 file,
                 line,
                 1,
-                format!("'{what}' z wiersza wymaga hosta"),
+                format!("'{what}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Str(sig)) => Ok(sig),
@@ -5213,7 +5407,7 @@ fn writable_str(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to tekst (String), nie '{field}'"),
+                    format!("row field '{field}' must be a string (String)"),
                 )),
             },
         },
@@ -5221,7 +5415,7 @@ fn writable_str(
             file,
             line,
             1,
-            format!("'{what}' to napis albo nazwa propertu"),
+            format!("'{what}' must be a string or a prop name"),
         )),
     }
 }
@@ -5243,7 +5437,7 @@ fn bridge_f32(
                 file,
                 line,
                 1,
-                format!("'{what}' z propertu wymaga hosta"),
+                format!("'{what}' from a prop requires a host"),
             )),
             Resolver::Host(b) => {
                 if let Some(host) = b.get_float(prop) {
@@ -5255,7 +5449,7 @@ fn bridge_f32(
                         file,
                         line,
                         1,
-                        format!("'{what}' z memo jest tylko do odczytu — podepnij prop Float/Int"),
+                        format!("'{what}' from a memo is read-only — podepnij prop Float/Int"),
                     ))
                 } else {
                     Err(prop_err(file, line, prop, "Float/Int"))
@@ -5289,7 +5483,7 @@ fn bridge_f32(
                 file,
                 line,
                 1,
-                format!("'{what}' z wiersza wymaga hosta"),
+                format!("'{what}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Float(host)) => Ok(sync_f64_f32(&host)),
@@ -5298,7 +5492,7 @@ fn bridge_f32(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to nie liczba (Float/Int)"),
+                    format!("row field '{field}' is not a number (Float/Int)"),
                 )),
             },
         },
@@ -5306,7 +5500,7 @@ fn bridge_f32(
             file,
             line,
             1,
-            format!("'{what}' to liczba albo nazwa propertu"),
+            format!("'{what}' must be a number or a prop name"),
         )),
     }
 }
@@ -5348,7 +5542,7 @@ fn live_f32(
                 file,
                 line,
                 1,
-                format!("'{what}' z propertu wymaga hosta"),
+                format!("'{what}' from a prop requires a host"),
             )),
             Resolver::Host(b) => {
                 if let Some(host) = b.get_float(prop) {
@@ -5409,7 +5603,7 @@ fn live_f32(
                 file,
                 line,
                 1,
-                format!("'{what}' z wiersza wymaga hosta"),
+                format!("'{what}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Float(host)) => {
@@ -5428,7 +5622,7 @@ fn live_f32(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to nie liczba (Float/Int)"),
+                    format!("row field '{field}' is not a number (Float/Int)"),
                 )),
             },
         },
@@ -5436,7 +5630,7 @@ fn live_f32(
             file,
             line,
             1,
-            format!("'{what}' to liczba albo nazwa propertu"),
+            format!("'{what}' must be a number or a prop name"),
         )),
     }
 }
@@ -5459,7 +5653,7 @@ fn bridge_usize(
                     file,
                     line,
                     1,
-                    format!("'{what}' to liczba >= 0"),
+                    format!("'{what}' must be a number >= 0"),
                 ))
             }
         }
@@ -5468,7 +5662,7 @@ fn bridge_usize(
                 file,
                 line,
                 1,
-                format!("'{what}' z propertu wymaga hosta"),
+                format!("'{what}' from a prop requires a host"),
             )),
             Resolver::Host(b) => {
                 if let Some(host) = b.get_int(prop) {
@@ -5483,7 +5677,7 @@ fn bridge_usize(
                         file,
                         line,
                         1,
-                        format!("'{what}' z memo jest tylko do odczytu — podepnij prop Int"),
+                        format!("'{what}' from a memo is read-only — podepnij prop Int"),
                     ))
                 } else {
                     Err(prop_err(file, line, prop, "Int"))
@@ -5520,7 +5714,7 @@ fn bridge_usize(
                 file,
                 line,
                 1,
-                format!("'{what}' z wiersza wymaga hosta"),
+                format!("'{what}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Int(host)) => {
@@ -5535,7 +5729,7 @@ fn bridge_usize(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to nie Int"),
+                    format!("row field '{field}' to not Int"),
                 )),
             },
         },
@@ -5543,7 +5737,7 @@ fn bridge_usize(
             file,
             line,
             1,
-            format!("'{what}' to liczba albo nazwa propertu"),
+            format!("'{what}' must be a number or a prop name"),
         )),
     }
 }
@@ -5588,7 +5782,7 @@ fn wire_live_action(
             file,
             line,
             1,
-            format!("'{what}' to {{ fn() }} albo {{ fn(value) }}"),
+            format!("'{what}' to {{ fn() }} or {{ fn(value) }}"),
         ));
     }
     let SeqValue::Callback { action, args } = value else {
@@ -5596,7 +5790,7 @@ fn wire_live_action(
             file,
             line,
             1,
-            format!("'{what}': {{ akcja() }}"),
+            format!("'{what}': {{ action() }}"),
         ));
     };
     if args.is_empty() {
@@ -5667,7 +5861,7 @@ fn wire_live_action(
         file,
         line,
         1,
-        format!("'{what}' to {{ akcja() }} albo {{ akcja(value) }}"),
+        format!("'{what}' to {{ action() }} or {{ action(value) }}"),
     ))
 }
 
@@ -5796,7 +5990,7 @@ fn arg_val(
             file,
             line,
             1,
-            "argument to liczba/tekst/Bool/value/item.pole".to_string(),
+            "argument must be a number/string/Bool/value/item.field".to_string(),
         )),
     }
 }
@@ -5812,7 +6006,7 @@ fn seq_target(
             file,
             line,
             1,
-            format!("funkcja '{name}' wymaga hosta (lower_with z runtime .seq)"),
+            format!("funkcja '{name}' requires a host (lower_with with a .seq runtime)"),
         )
     })?;
     if !rt.has_fn(name) {
@@ -5820,7 +6014,7 @@ fn seq_target(
             file,
             line,
             1,
-            format!("nieznana funkcja '{name}'"),
+            format!("unknown function '{name}'"),
         ));
     }
     Ok((rt, b.clone(), name.to_string()))
@@ -5945,7 +6139,7 @@ fn wire_action(
         return seq_fire(file, line, b, name, vec![arg.to_value()]);
     }
     let SeqValue::Callback { action, args } = value else {
-        return Err(SeqError::new(file, line, 1, "{ akcja(args) }"));
+        return Err(SeqError::new(file, line, 1, "{ action(args) }"));
     };
     if args.len() > 1 {
         return Err(SeqError::new(
@@ -6037,7 +6231,7 @@ fn lower_list(
             file,
             node.line,
             1,
-            "List wymaga items: nazwa_propertu".to_string(),
+            "List requires items: prop_name".to_string(),
         )
     })?;
     let items_prop = match &items.value {
@@ -6047,7 +6241,7 @@ fn lower_list(
                 file,
                 items.line,
                 1,
-                "items: to nazwa propertu z hosta (items: warstwy)",
+                "items: is a host prop name (items: layers)",
             ));
         }
     };
@@ -6059,7 +6253,7 @@ fn lower_list(
                     file,
                     key.line,
                     1,
-                    "key: tylko id w inkrementcie 3",
+                    "key: only id in increment 3",
                 ));
             }
         }
@@ -6070,7 +6264,7 @@ fn lower_list(
                 file,
                 node.line,
                 1,
-                "List(items:) wymaga hosta Rust (HostBindings::rows())",
+                "List(items:) requires a Rust host (HostBindings::rows())",
             ));
         }
         Resolver::Host(b) => (*b).clone(),
@@ -6124,7 +6318,7 @@ fn lower_virtual_list(
             file,
             node.line,
             1,
-            "VirtualList wymaga items: nazwa_propertu".to_string(),
+            "VirtualList requires items: prop_name".to_string(),
         )
     })?;
     let items_prop = match &items.value {
@@ -6134,7 +6328,7 @@ fn lower_virtual_list(
                 file,
                 items.line,
                 1,
-                "items: to nazwa propertu z hosta (items: warstwy)",
+                "items: is a host prop name (items: layers)",
             ));
         }
     };
@@ -6146,7 +6340,7 @@ fn lower_virtual_list(
                     file,
                     key.line,
                     1,
-                    "key: tylko id w inkrementcie 3",
+                    "key: only id in increment 3",
                 ));
             }
         }
@@ -6159,7 +6353,7 @@ fn lower_virtual_list(
                 file,
                 arg.line,
                 1,
-                "'item_height' to dodatnia liczba",
+                "'item_height' must be a positive number",
             ));
         }
         item_height = Some(h);
@@ -6173,7 +6367,7 @@ fn lower_virtual_list(
                 file,
                 arg.line,
                 1,
-                "'overscan' to liczba >= 0",
+                "'overscan' must be a number >= 0",
             ));
         }
         overscan = Some(n as usize);
@@ -6184,7 +6378,7 @@ fn lower_virtual_list(
                 file,
                 node.line,
                 1,
-                "VirtualList(items:) wymaga hosta Rust (HostBindings::rows())",
+                "VirtualList(items:) requires a Rust host (HostBindings::rows())",
             ));
         }
         Resolver::Host(b) => (*b).clone(),
@@ -6422,7 +6616,7 @@ fn dyn_f32(
                 file,
                 line,
                 1,
-                format!("'{what}' z propertu wymaga hosta — inkrement 2"),
+                format!("'{what}' from a prop requires a host — "),
             )),
             Resolver::Host(b) => {
                 if let Some(cell) = b.get_tick_angle(prop) {
@@ -6450,7 +6644,7 @@ fn dyn_f32(
                 file,
                 line,
                 1,
-                format!("'{what}' z wiersza wymaga hosta"),
+                format!("'{what}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Int(sig)) => {
@@ -6470,7 +6664,7 @@ fn dyn_f32(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to nie liczba (Int/Float/id)"),
+                    format!("row field '{field}' is not a number (Int/Float/id)"),
                 )),
             },
         },
@@ -6479,7 +6673,7 @@ fn dyn_f32(
                 file,
                 line,
                 1,
-                format!("dynamic({name}) wymaga hosta Rust"),
+                format!("dynamic({name}) requires a Rust host"),
             )),
             Resolver::Host(b) => {
                 if let Some(cell) = b.get_tick_angle(name) {
@@ -6517,7 +6711,7 @@ fn dyn_f32(
                 file,
                 line,
                 1,
-                format!("env.{name} wymaga hosta Rust"),
+                format!("env.{name} requires a Rust host"),
             )),
             Resolver::Host(b) => {
                 if let Some(sig) = b.get_env_float(name) {
@@ -6540,7 +6734,7 @@ fn dyn_f32(
             file,
             line,
             1,
-            format!("'{what}' to liczba albo dynamic(nazwa)"),
+            format!("'{what}' must be a number or dynamic(nazwa)"),
         )),
     }
 }
@@ -6560,7 +6754,7 @@ fn dyn_bool(
                 file,
                 line,
                 1,
-                format!("'{what}' z propertu wymaga hosta"),
+                format!("'{what}' from a prop requires a host"),
             )),
             Resolver::Host(b) => b
                 .get_bool(prop)
@@ -6595,7 +6789,7 @@ fn dyn_bool(
                 file,
                 line,
                 1,
-                format!("'{what}' z wiersza wymaga hosta"),
+                format!("'{what}' from a row requires a host"),
             )),
             Resolver::Host(_) => match row_value(file, line, row, field)? {
                 RowVal::Sig(FieldSignal::Bool(sig)) => Ok(BoolSrc::Dyn(Rc::new(move || sig.get()))),
@@ -6603,7 +6797,7 @@ fn dyn_bool(
                     file,
                     line,
                     1,
-                    format!("pole wiersza '{field}' to nie Bool"),
+                    format!("row field '{field}' to not Bool"),
                 )),
             },
         },
@@ -6611,7 +6805,7 @@ fn dyn_bool(
             file,
             line,
             1,
-            format!("'{what}' to true/false albo dynamic(nazwa)"),
+            format!("'{what}' to true/false or dynamic(nazwa)"),
         )),
     }
 }
@@ -6724,7 +6918,7 @@ fn shape_color(file: &str, theme: &Theme, node: &SeqNode) -> Result<Color, SeqEr
         file,
         node.line,
         1,
-        format!("{} wymaga fill: albo color:", node.kind),
+        format!("{} requires fill: or color:", node.kind),
     ))
 }
 
@@ -6755,7 +6949,7 @@ fn shape_name(
                     file,
                     arg.line,
                     1,
-                    "name: z wiersza wymaga hosta",
+                    "name: from a row requires a host",
                 )),
                 Resolver::Host(_) => match row_value(file, arg.line, row, field)? {
                     RowVal::Id(id) => Ok(Some(id.to_string())),
@@ -6791,7 +6985,7 @@ fn shape_num(
             file,
             node.line,
             1,
-            format!("{} wymaga {name}:", node.kind),
+            format!("{} requires {name}:", node.kind),
         )),
         Some(arg) => dyn_f32(file, arg.line, res, row, &arg.value, name),
     }
@@ -6809,7 +7003,7 @@ fn shape_pt(
             file,
             node.line,
             1,
-            format!("{} wymaga {name}: (x, y)", node.kind),
+            format!("{} requires {name}: (x, y)", node.kind),
         )),
         Some(arg) => pt_src(file, arg.line, res, row, &arg.value, name),
     }
@@ -6866,14 +7060,14 @@ fn shape_str(file: &str, node: &SeqNode, name: &str) -> Result<String, SeqError>
                 file,
                 arg.line,
                 1,
-                format!("{} wymaga {name}: \"...\"", node.kind),
+                format!("{} requires {name}: \"...\"", node.kind),
             )),
         },
         None => Err(SeqError::new(
             file,
             node.line,
             1,
-            format!("{} wymaga {name}: \"...\"", node.kind),
+            format!("{} requires {name}: \"...\"", node.kind),
         )),
     }
 }
@@ -6889,7 +7083,7 @@ fn points_src_of(
             file,
             node.line,
             1,
-            format!("{} wymaga points: [(x, y), ...]", node.kind),
+            format!("{} requires points: [(x, y), ...]", node.kind),
         )),
         Some(arg) => points_src(file, arg.line, res, row, &arg.value, "points"),
     }
@@ -7051,7 +7245,7 @@ fn wire_gesture(
                                 file,
                                 line,
                                 1,
-                                format!("'{name}': trzeci argument gestu to `name` albo `d`"),
+                                format!("'{name}': trzeci argument gestu to `name` or `d`"),
                             ));
                         }
                     };
@@ -7065,7 +7259,7 @@ fn wire_gesture(
                     file,
                     line,
                     1,
-                    format!("'{name}': gest to fn(), fn(name) albo fn(x, y[, name|d])"),
+                    format!("'{name}': gest to fn(), fn(name) or fn(x, y[, name|d])"),
                 )),
             };
         }
@@ -7074,7 +7268,7 @@ fn wire_gesture(
                 file,
                 line,
                 1,
-                "gest: { akcja(x, y) } albo { fn(x, y) }",
+                "gest: { action(x, y) } or { fn(x, y) }",
             ));
         }
     };
@@ -7112,7 +7306,7 @@ fn wire_gesture(
             file,
             line,
             1,
-            format!("'{action}': gest to 0, 2 albo 3 argumenty (x, y[, name|d])"),
+            format!("'{action}': gest to 0, 2 or 3 argumenty (x, y[, name|d])"),
         )),
     }
 }
@@ -7140,7 +7334,7 @@ fn canvas_cursor(file: &str, line: usize, name: &str) -> Result<CursorIcon, SeqE
             file,
             line,
             1,
-            format!("cursor to default/pointer/crosshair/grab/grabbing/text, nie '{other}'"),
+            format!("cursor to default/pointer/crosshair/grab/grabbing/text, not '{other}'"),
         )),
     }
 }
@@ -7158,7 +7352,7 @@ fn lower_split(
             file,
             node.line,
             1,
-            "SplitPanel wymaga value: prop".to_string(),
+            "SplitPanel requires value: prop".to_string(),
         )
     })?;
     let sig = bridge_f32(file, value_arg.line, res, row, &value_arg.value, "value")?;
@@ -7175,7 +7369,7 @@ fn lower_split(
                             file,
                             arg.line,
                             1,
-                            format!("axis to horizontal/vertical, nie '{other}'"),
+                            format!("axis to horizontal/vertical, not '{other}'"),
                         ));
                     }
                 };
@@ -7270,7 +7464,7 @@ fn lower_canvas(
                     file,
                     arg.line,
                     1,
-                    "tick: to nazwa (tick: kat)".to_string(),
+                    "tick: is a name (tick: angle)".to_string(),
                 ));
             }
         },
@@ -7284,7 +7478,7 @@ fn lower_canvas(
                     file,
                     node.line,
                     1,
-                    "tick: wymaga hosta Rust".to_string(),
+                    "tick: requires a Rust host".to_string(),
                 ));
             }
             Resolver::Host(b) => {
@@ -7340,7 +7534,12 @@ fn lower_canvas(
                 let step = match find_arg(node, "grid") {
                     Some(g) => num(file, g, res, row)?,
                     None => {
-                        return Err(SeqError::new(file, arg.line, 1, "grid_color wymaga grid:"));
+                        return Err(SeqError::new(
+                            file,
+                            arg.line,
+                            1,
+                            "grid_color requires grid:",
+                        ));
                     }
                 };
                 v = v.grid_colored(step, color(file, theme, arg)?);
@@ -7385,7 +7584,7 @@ fn lower_canvas(
                         file,
                         arg.line,
                         1,
-                        format!("{} wymaga hosta Rust", arg.name),
+                        format!("{} requires a Rust host", arg.name),
                     ));
                 }
                 Resolver::Host(b) => match &arg.value {
@@ -7399,7 +7598,7 @@ fn lower_canvas(
                                         file,
                                         arg.line,
                                         1,
-                                        "on_wheel: { akcja(x, y, d) }",
+                                        "on_wheel: { action(x, y, d) }",
                                     )),
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
@@ -7408,7 +7607,7 @@ fn lower_canvas(
                                     file,
                                     arg.line,
                                     1,
-                                    "on_wheel: { akcja(x, y, d) }",
+                                    "on_wheel: { action(x, y, d) }",
                                 ));
                             }
                             wheel = Some(b.get_action_wheel(action).ok_or_else(|| {
@@ -7430,7 +7629,7 @@ fn lower_canvas(
                                         file,
                                         arg.line,
                                         1,
-                                        "on_pinch: { akcja(x, y, s) }",
+                                        "on_pinch: { action(x, y, s) }",
                                     )),
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
@@ -7439,7 +7638,7 @@ fn lower_canvas(
                                     file,
                                     arg.line,
                                     1,
-                                    "on_pinch: { akcja(x, y, s) }",
+                                    "on_pinch: { action(x, y, s) }",
                                 ));
                             }
                             pinch = Some(b.get_action_pinch(action).ok_or_else(|| {
@@ -7520,7 +7719,7 @@ fn lower_canvas(
                             file,
                             arg.line,
                             1,
-                            format!("{}: {{ akcja(x, y[, name]) }}", arg.name),
+                            format!("{}: {{ action(x, y[, name]) }}", arg.name),
                         ));
                     }
                 },
@@ -7900,7 +8099,7 @@ fn lower_shape_list(
             file,
             node.line,
             1,
-            "List wymaga items: nazwa_propertu".to_string(),
+            "List requires items: prop_name".to_string(),
         )
     })?;
     let items_prop = match &items.value {
@@ -7910,7 +8109,7 @@ fn lower_shape_list(
                 file,
                 items.line,
                 1,
-                "items: to nazwa propertu z hosta (items: wezly)",
+                "items: is a host prop name (items: nodes)",
             ));
         }
     };
@@ -7922,7 +8121,7 @@ fn lower_shape_list(
                     file,
                     key.line,
                     1,
-                    "key: tylko id w inkrementcie 3",
+                    "key: only id in increment 3",
                 ));
             }
         }
@@ -7933,7 +8132,7 @@ fn lower_shape_list(
                 file,
                 node.line,
                 1,
-                "List(items:) wymaga hosta Rust (HostBindings::rows())",
+                "List(items:) requires a Rust host (HostBindings::rows())",
             ));
         }
         Resolver::Host(b) => (*b).clone(),
@@ -8334,12 +8533,17 @@ fn lower_shape(
                                 file,
                                 t_arg.line,
                                 1,
-                                "t: wymaga hosta Rust (HostBindings::i18n)",
+                                "t: requires a Rust host (HostBindings::i18n)",
                             ));
                         }
                         Resolver::Host(b) => {
                             let i18n = b.get_i18n().ok_or_else(|| {
-                                SeqError::new(file, t_arg.line, 1, "t: wymaga HostBindings::i18n()")
+                                SeqError::new(
+                                    file,
+                                    t_arg.line,
+                                    1,
+                                    "t: requires HostBindings::i18n()",
+                                )
                             })?;
                             let key = key.clone();
                             TextSrc::Dyn(Rc::new(move || i18n.t(&key)))
@@ -8361,7 +8565,7 @@ fn lower_shape(
                             file,
                             node.line,
                             1,
-                            "Text2d wymaga str: \"...\"",
+                            "Text2d requires str: \"...\"",
                         ));
                     }
                     Some(arg) => match &arg.value {
@@ -8372,7 +8576,7 @@ fn lower_shape(
                                     file,
                                     arg.line,
                                     1,
-                                    "str: z propertu wymaga hosta",
+                                    "str: from a prop requires a host",
                                 ));
                             }
                             Resolver::Host(b) => TextSrc::Dyn(display_of(file, arg.line, b, prop)?),
@@ -8396,7 +8600,7 @@ fn lower_shape(
                                     file,
                                     arg.line,
                                     1,
-                                    "str: z wiersza wymaga hosta",
+                                    "str: from a row requires a host",
                                 ));
                             }
                             Resolver::Host(_) => {
@@ -8537,7 +8741,7 @@ fn lower_shape(
                         file,
                         node.line,
                         1,
-                        "Image2d wymaga src: \"...\"",
+                        "Image2d requires src: \"...\"",
                     ));
                 }
                 Some(arg) => match &arg.value {
@@ -8548,7 +8752,7 @@ fn lower_shape(
                                 file,
                                 arg.line,
                                 1,
-                                "src: z propertu wymaga hosta",
+                                "src: from a prop requires a host",
                             ));
                         }
                         Resolver::Host(b) => TextSrc::Dyn(display_of(file, arg.line, b, prop)?),
@@ -8570,7 +8774,7 @@ fn lower_shape(
                                 file,
                                 arg.line,
                                 1,
-                                "src: z wiersza wymaga hosta",
+                                "src: from a row requires a host",
                             ));
                         }
                         Resolver::Host(_) => {
@@ -8848,7 +9052,7 @@ where
                     file,
                     arg.line,
                     1,
-                    "on_click wymaga hosta Rust",
+                    "on_click requires a Rust host",
                 ));
             }
             Resolver::Host(b) => match &arg.value {
@@ -8861,7 +9065,7 @@ where
                         file,
                         arg.line,
                         1,
-                        "on_click: { akcja(args) }",
+                        "on_click: { action(args) }",
                     ));
                 }
             },
@@ -9034,12 +9238,22 @@ fn child_flex_weight(
                     };
                     Ok(Some(num(file, &arg, res, row)?))
                 }
-                _ => Err(SeqError::new(file, arg.line, 1, "'flex' to liczba")),
+                _ => Err(SeqError::new(file, arg.line, 1, "'flex' must be a number")),
             }
         }
     }
 }
 
+/// Lowers the children of a single-child container such as `Container`.
+///
+/// Zero children produce no child view. One child is lowered directly.
+/// More than one child are automatically wrapped in a `Column` (honouring
+/// each child's `flex` weight), so writing several children under a
+/// `Container` is equivalent to writing an explicit `Column`. This is
+/// intentional: it keeps markup terse, but each automatic wrapper adds a
+/// nesting level to the lowering and layout tree, so prefer an explicit
+/// `Column` in deeply nested markup.
+#[inline(never)]
 fn single_child(
     file: &str,
     theme: &Theme,
@@ -9124,10 +9338,7 @@ fn row_value(
                     file,
                     line,
                     1,
-                    format!(
-                        "nieznane pole wiersza '{field}' (pola: {})",
-                        names.join(", ")
-                    ),
+                    format!("unknown row field '{field}' (pola: {})", names.join(", ")),
                 )
             }),
     }
@@ -9148,7 +9359,7 @@ fn row_num(
             file,
             line,
             1,
-            format!("pole wiersza '{field}' to nie liczba (Int/Float/id)"),
+            format!("row field '{field}' is not a number (Int/Float/id)"),
         )),
     }
 }
@@ -9200,7 +9411,7 @@ fn opt_str(
                         file,
                         arg.line,
                         1,
-                        format!("pole wiersza '{field}' to nie tekst (String/id)"),
+                        format!("row field '{field}' must be a string (String/id)"),
                     )),
                 },
             },
@@ -9317,7 +9528,12 @@ fn num(
 }
 
 fn num_err(file: &str, arg: &crate::ir::SeqArg) -> SeqError {
-    SeqError::new(file, arg.line, 1, format!("'{}' to liczba", arg.name))
+    SeqError::new(
+        file,
+        arg.line,
+        1,
+        format!("'{}' must be a number", arg.name),
+    )
 }
 
 fn flag(
@@ -9344,7 +9560,7 @@ fn flag(
                     file,
                     arg.line,
                     1,
-                    format!("pole wiersza '{field}' to nie Bool"),
+                    format!("row field '{field}' to not Bool"),
                 )),
             },
         },
@@ -9445,7 +9661,7 @@ fn margin_val(
                         file,
                         arg.line,
                         1,
-                        "'margin' to liczba albo [x, y]",
+                        "'margin' must be a number or [x, y]",
                     )),
                 }
             } else {
@@ -9453,7 +9669,7 @@ fn margin_val(
                     file,
                     arg.line,
                     1,
-                    "'margin' to liczba albo [x, y]",
+                    "'margin' must be a number or [x, y]",
                 ))
             }
         }
@@ -9461,13 +9677,13 @@ fn margin_val(
             file,
             arg.line,
             1,
-            "'margin' to liczba albo [x, y]",
+            "'margin' must be a number or [x, y]",
         )),
     }
 }
 
 fn margin_err(file: &str, arg: &crate::ir::SeqArg) -> SeqError {
-    SeqError::new(file, arg.line, 1, "'margin' to liczba albo [x, y]")
+    SeqError::new(file, arg.line, 1, "'margin' must be a number or [x, y]")
 }
 
 fn overflow_val(file: &str, arg: &crate::ir::SeqArg) -> Result<Overflow, SeqError> {
@@ -9480,7 +9696,7 @@ fn overflow_val(file: &str, arg: &crate::ir::SeqArg) -> Result<Overflow, SeqErro
             file,
             arg.line,
             1,
-            format!("overflow to visible/hidden/scroll/auto, nie '{other}'"),
+            format!("overflow to visible/hidden/scroll/auto, not '{other}'"),
         )),
     }
 }
@@ -9513,7 +9729,7 @@ fn padding_val(
                         file,
                         arg.line,
                         1,
-                        "'padding' to liczba albo [x, y]",
+                        "'padding' must be a number or [x, y]",
                     )),
                 }
             } else {
@@ -9521,7 +9737,7 @@ fn padding_val(
                     file,
                     arg.line,
                     1,
-                    "'padding' to liczba albo [x, y]",
+                    "'padding' must be a number or [x, y]",
                 ))
             }
         }
@@ -9529,13 +9745,13 @@ fn padding_val(
             file,
             arg.line,
             1,
-            "'padding' to liczba albo [x, y]",
+            "'padding' must be a number or [x, y]",
         )),
     }
 }
 
 fn padding_err(file: &str, arg: &crate::ir::SeqArg) -> SeqError {
-    SeqError::new(file, arg.line, 1, "'padding' to liczba albo [x, y]")
+    SeqError::new(file, arg.line, 1, "'padding' must be a number or [x, y]")
 }
 
 fn apply_padding<V>(
@@ -9612,7 +9828,7 @@ fn color(file: &str, theme: &Theme, arg: &crate::ir::SeqArg) -> Result<Color, Se
             file,
             arg.line,
             1,
-            format!("'{}' to #RRGGBB albo theme.pole", arg.name),
+            format!("'{}' to #RRGGBB or theme.pole", arg.name),
         )),
     }
 }
@@ -9638,7 +9854,7 @@ fn theme_color(file: &str, line: usize, theme: &Theme, field: &str) -> Result<Co
             file,
             line,
             1,
-            format!("nieznane pole theme '{field}' (bg/surface/border/ink/muted/accent/disabled)"),
+            format!("unknown field theme '{field}' (bg/surface/border/ink/muted/accent/disabled)"),
         )),
     }
 }
@@ -9695,7 +9911,7 @@ fn align_val(file: &str, arg: &crate::ir::SeqArg) -> Result<Align, SeqError> {
             file,
             arg.line,
             1,
-            format!("align to center/start/end/stretch/baseline, nie '{other}'"),
+            format!("align to center/start/end/stretch/baseline, not '{other}'"),
         )),
     }
 }
@@ -9710,7 +9926,7 @@ fn text_valign(file: &str, arg: &crate::ir::SeqArg) -> Result<TextVAlign, SeqErr
             file,
             arg.line,
             1,
-            format!("align_y to top/center/bottom/baseline, nie '{other}'"),
+            format!("align_y to top/center/bottom/baseline, not '{other}'"),
         )),
     }
 }
@@ -9725,7 +9941,7 @@ fn justify_val(file: &str, arg: &crate::ir::SeqArg) -> Result<Justify, SeqError>
             file,
             arg.line,
             1,
-            format!("justify to start/center/end/between, nie '{other}'"),
+            format!("justify to start/center/end/between, not '{other}'"),
         )),
     }
 }

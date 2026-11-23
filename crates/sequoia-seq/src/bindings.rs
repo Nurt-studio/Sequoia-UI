@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use sequoia_async::Resource;
 use sequoia_reactive::{I18n, Memo, Signal};
+use sequoia_view::AnyView;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropType {
@@ -113,6 +114,7 @@ pub struct HostBindings {
     i18n: Option<I18n>,
     resources: HashMap<String, Resource<String>>,
     rows: HashMap<String, RowsFn>,
+    views: HashMap<String, AnyView>,
     actions0: HashMap<String, Rc<dyn Fn()>>,
     actions_int: HashMap<String, Rc<dyn Fn(i64)>>,
     actions_float: HashMap<String, Rc<dyn Fn(f64)>>,
@@ -124,6 +126,9 @@ pub struct HostBindings {
     actions_pinch: HashMap<String, PinchAction>,
 
     tick_angles: HashMap<String, Rc<Cell<f32>>>,
+
+    /// Maps a component instance `id` to its signal namespace (`@iN:`).
+    instances: HashMap<String, String>,
 
     seq: Option<Rc<crate::eval::SeqRuntime>>,
 }
@@ -163,9 +168,23 @@ impl HostBindings {
         self
     }
 
+    /// Registers a Rust-built view that a `GpuSurface` node can reference by name.
+    pub fn prop_view(mut self, name: impl Into<String>, view: AnyView) -> Self {
+        self.views.insert(name.into(), view);
+        self
+    }
+
+    pub(crate) fn view(&self, name: &str) -> Option<AnyView> {
+        self.views.get(name).cloned()
+    }
+
     pub fn tick_angle(mut self, name: impl Into<String>, angle: Rc<Cell<f32>>) -> Self {
         self.tick_angles.insert(name.into(), angle);
         self
+    }
+
+    pub(crate) fn instance_namespace(&self, id: &str) -> Option<&str> {
+        self.instances.get(id).map(String::as_str)
     }
 
     pub fn memo_str(mut self, name: impl Into<String>, memo: Memo<String>) -> Self {
