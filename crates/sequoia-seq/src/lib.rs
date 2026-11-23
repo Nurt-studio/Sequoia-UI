@@ -10,20 +10,23 @@ mod lower;
 mod parser;
 mod resolve;
 mod value;
+mod warn;
 
 pub use bindings::{ActionSig, FieldSignal, HostBindings, PropType, SeqRow, SeqRowData};
 pub use check::{check, check_all};
-pub use error::SeqError;
+pub use error::{SeqError, Severity};
 pub use ir::{
     BinOp, CompParam, ComponentDef, DeferredDecl, DeferredKind, FnParam, ImportDecl, LengthVal,
     MatchPat, SeqApp, SeqArg, SeqExpr, SeqExprKind, SeqFile, SeqFn, SeqMatchArm, SeqNode, SeqStmt,
     SeqValue, SeqWindow, StateDecl, StyleDecl, ThemeName, UnOp, Visibility, resolve_seq_calls,
 };
 pub use loader::{AppMeta, LoadedApp, SeqLoader};
-pub use sequoia_reactive::{Memo, Signal};
 pub use lower::{
     BuiltStyles, SeqTextStyle, TextWeight, build_styles, check_decls, expand_components, lower,
     lower_window, lower_window_with, lower_with, resolve_theme,
 };
 pub use parser::{parse, parse_all, parse_seq_file, parse_seq_file_all};
-pub use resolve::{FsSource, MapSource, ResolvedImports, SeqSource, resolve_imports};
+pub use resolve::{
+    FsSource, MapSource, ResolvedImports, SeqSource, resolve_imports, resolve_imports_all,
+};
+pub use sequoia_reactive::{Memo, Signal};

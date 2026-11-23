@@ -90,7 +90,7 @@ fn unknown_variable_in_fn() {
         "  fn f() { nope = 1; }",
         "Button(\"x\", on_click: { f() })",
     ));
-    assert!(e.message.contains("nieznana zmienna 'nope'"), "{e}");
+    assert!(e.message.contains("unknown variable 'nope'"), "{e}");
 }
 
 #[test]
@@ -124,14 +124,14 @@ fn duplicate_fn_is_rejected() {
         "  fn f() { }\n  fn f() { }",
         "Button(\"x\", on_click: { f() })",
     ));
-    assert!(e.message.contains("zdefiniowana dwa razy"), "{e}");
+    assert!(e.message.contains("defined twice"), "{e}");
 }
 
 #[test]
 fn state_collides_with_prop() {
     let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  prop n: Int\n  state n: Int = 0\n  window M {\n    Text(\"x\")\n  }\n}\n";
     let e = err(src);
-    assert!(e.message.contains("koliduje z `prop n`"), "{e}");
+    assert!(e.message.contains("conflicts with `prop n`"), "{e}");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn match_pattern_type_mismatch() {
         "  fn f(n: Int) { match n { \"a\" => { out = 1; } _ => { out = 2; } } }",
         "Button(\"x\", on_click: { f(0) })",
     ));
-    assert!(e.message.contains("nie pasuje"), "{e}");
+    assert!(e.message.contains("does not match"), "{e}");
 }
 
 #[test]
@@ -165,7 +165,10 @@ fn callseq_outside_callback_is_rejected() {
 fn fn_call_needs_host_in_static_mode() {
     let src = "app A {\n  title: \"A\"\n  size: (400, 200)\n  fn f() { }\n  window M {\n    Button(\"x\", on_click: { f() })\n  }\n}\n";
     let e = err(src);
-    assert!(e.message.contains("wymaga hosta Rust (lower_with)"), "{e}");
+    assert!(
+        e.message.contains("requires a Rust host (lower_with)"),
+        "{e}"
+    );
 }
 
 #[test]

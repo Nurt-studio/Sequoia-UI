@@ -40,7 +40,10 @@ fn app_file_with_import_parses() {
 #[test]
 fn parse_still_requires_app() {
     let err = parse("ui/widgets.seq", LIB).unwrap_err();
-    assert!(err.message.contains("missing `app Name { }` block"), "{err}");
+    assert!(
+        err.message.contains("missing `app Name { }` block"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -68,7 +71,8 @@ fn pub_inside_app_rejected() {
 fn unknown_top_level_rejected() {
     let err = parse_seq_file("Main.seq", "module Foo {}\n").unwrap_err();
     assert!(
-        err.message.contains("expected `app`, `component` or `import`"),
+        err.message
+            .contains("expected `app`, `component` or `import`"),
         "{err}"
     );
 }

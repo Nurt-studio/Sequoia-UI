@@ -1,9 +1,9 @@
 use crate::error::SeqError;
 use crate::ir::{
-    BinOp, CompParam, ComponentDef, DeferredDecl, DeferredKind, FnParam, ImportDecl, LengthVal,
-    MatchPat, MotionSpec, SeqApp, SeqArg, SeqExpr, SeqExprKind, SeqFile, SeqFn, SeqMatchArm,
-    SeqNode, SeqStmt, SeqValue, SeqWindow, SpringIr, StateDecl, StyleDecl, ThemeName, UnOp,
-    Visibility,
+    BinOp, CompMember, CompMemberKind, CompParam, ComponentDef, DeferredDecl, DeferredKind,
+    FnParam, ImportDecl, LengthVal, MatchPat, MotionSpec, SeqApp, SeqArg, SeqExpr, SeqExprKind,
+    SeqFile, SeqFn, SeqMatchArm, SeqNode, SeqStmt, SeqValue, SeqWindow, SpringIr, StateDecl,
+    StyleDecl, ThemeName, UnOp, Visibility,
 };
 
 pub fn parse(file: &str, src: &str) -> Result<SeqApp, SeqError> {
@@ -641,6 +641,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect('{', "'{' after `component` header")?;
+        let mut members = Vec::new();
         let mut body = Vec::new();
         loop {
             self.skip_trivia();
@@ -652,6 +653,18 @@ impl<'a> Parser<'a> {
                 self.push_error(self.err(self.line, self.col, "unclosed `component` block"));
                 break;
             }
+            let save = (self.pos, self.line, self.col);
+            let mut member_kw = None;
+            if let Ok((word, kline, _)) = self.ident()
+                && (word == "prop" || word == "state")
+            {
+                member_kw = Some((word, kline));
+            }
+            if let Some((word, kline)) = member_kw {
+                members.push(self.component_member(kline, word == "prop")?);
+                continue;
+            }
+            (self.pos, self.line, self.col) = save;
             let before = self.pos;
             match self.node() {
                 Ok(node) => body.push(node),
@@ -671,9 +684,34 @@ impl<'a> Parser<'a> {
             name,
             line,
             params,
+            members,
             body,
             visibility,
             file: self.file.to_string(),
+        })
+    }
+
+    fn component_member(&mut self, line: usize, is_prop: bool) -> Result<CompMember, SeqError> {
+        let (name, _, _) = self.ident()?;
+        self.expect(':', "':' after component prop name")?;
+        let ty = self.fn_type()?;
+        let init = if is_prop {
+            None
+        } else {
+            self.expect('=', "'=' after component state type")?;
+            Some(self.state_literal()?)
+        };
+        self.eat(';');
+        Ok(CompMember {
+            kind: if is_prop {
+                CompMemberKind::Prop
+            } else {
+                CompMemberKind::State
+            },
+            name,
+            line,
+            ty,
+            init,
         })
     }
 
@@ -781,7 +819,11 @@ impl<'a> Parser<'a> {
                 });
             }
             "component" => {
-                return Err(self.err(line, col, "component block outside `app` (define alongside `app`)"));
+                return Err(self.err(
+                    line,
+                    col,
+                    "component block outside `app` (define alongside `app`)",
+                ));
             }
             "import" => {
                 return Err(self.err(
@@ -1049,6 +1091,17 @@ impl<'a> Parser<'a> {
                     self.expect(';', "';' po przypisaniu")?;
                     return Ok(Some(SeqStmt::Assign {
                         name: kw,
+                        value,
+                        line,
+                    }));
+                }
+                if self.eat('.') {
+                    let (field, _, _) = self.ident()?;
+                    self.expect('=', "'=' after instance field")?;
+                    let value = self.fn_expr()?;
+                    self.expect(';', "';' after assignment")?;
+                    return Ok(Some(SeqStmt::Assign {
+                        name: format!("{kw}.{field}"),
                         value,
                         line,
                     }));
@@ -1840,8 +1893,7 @@ impl<'a> Parser<'a> {
             (self.pos, self.line, self.col) = save;
             return self.value();
         };
-        if !matches!(id.as_str(), "fade" | "slide" | "slide_x" | "slide_y") || !self.peek_paren()
-        {
+        if !matches!(id.as_str(), "fade" | "slide" | "slide_x" | "slide_y") || !self.peek_paren() {
             (self.pos, self.line, self.col) = save;
             return self.value();
         }

@@ -42,7 +42,7 @@ fn image_label_as_path() {
 #[test]
 fn image_requires_path() {
     let err = load_err(&app_with("    Image(width: px(40))"));
-    assert!(err.message.contains("Image wymaga path"), "{err}");
+    assert!(err.message.contains("Image requires path"), "{err}");
 }
 
 #[test]

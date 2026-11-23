@@ -92,6 +92,26 @@ pub struct CompParam {
     pub ty: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompMemberKind {
+    Prop,
+    State,
+}
+
+/// A property or state owned by every instance of a component.
+#[derive(Clone, Debug)]
+pub struct CompMember {
+    pub kind: CompMemberKind,
+
+    pub name: String,
+
+    pub line: usize,
+
+    pub ty: String,
+
+    pub init: Option<SeqExpr>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ComponentDef {
     pub name: String,
@@ -99,6 +119,8 @@ pub struct ComponentDef {
     pub line: usize,
 
     pub params: Vec<CompParam>,
+
+    pub members: Vec<CompMember>,
 
     pub body: Vec<SeqNode>,
 

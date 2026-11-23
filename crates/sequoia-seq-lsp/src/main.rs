@@ -34,9 +34,23 @@ fn cmd_check(path: &str) -> i32 {
     };
     let diags = diagnostics_for(path, &src);
     for d in &diags {
-        println!("{}:{}:{}: {}", path, d.line + 1, d.col + 1, d.message);
+        println!(
+            "{}:{}:{}: {}: {}",
+            path,
+            d.line + 1,
+            d.col + 1,
+            d.severity,
+            d.message
+        );
     }
-    if diags.is_empty() { 0 } else { 1 }
+    if diags
+        .iter()
+        .any(|d| d.severity == sequoia_seq::Severity::Error)
+    {
+        1
+    } else {
+        0
+    }
 }
 
 const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
@@ -252,7 +266,7 @@ fn publish(uri: &str, text: &str) {
                     "start": {"line": d.line, "character": d.col},
                     "end": {"line": d.line, "character": d.end_col}
                 },
-                "severity": 1,
+                "severity": d.severity.as_lsp(),
                 "source": "seq",
                 "message": d.message
             })

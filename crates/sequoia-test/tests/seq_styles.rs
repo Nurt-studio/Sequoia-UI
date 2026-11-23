@@ -219,7 +219,7 @@ fn style_on_column_is_rejected() {
     let m = style_err(
         "app A {\n  title: \"A\"\n  size: (10, 10)\n  style Card: Box {\n    background: #FFFFFF\n  }\n  window M {\n    Column(style: Card) {\n      Text(\"x\")\n    }\n  }\n}\n",
     );
-    assert!(m.contains("nieznana propka 'style'"), "{m}");
+    assert!(m.contains("unknown property 'style'"), "{m}");
 }
 
 #[test]

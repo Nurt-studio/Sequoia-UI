@@ -111,6 +111,6 @@ fn unknown_type_in_signature_is_rejected() {
         Err(e) => e,
         Ok(_) => panic!("expected error"),
     };
-    assert!(err.message.contains("nieznany typ parametru"), "{err}");
+    assert!(err.message.contains("unknown parameter type"), "{err}");
     assert_eq!(err.line, 4, "linia parametru: {err}");
 }

@@ -1,7 +1,7 @@
 use crate::error::SeqError;
 use crate::ir::{
-    BinOp, ComponentDef, MatchPat, SeqApp, SeqExpr, SeqExprKind, SeqFn, SeqNode, SeqStmt, SeqValue,
-    StyleDecl, UnOp, Visibility,
+    BinOp, CompMemberKind, ComponentDef, MatchPat, SeqApp, SeqExpr, SeqExprKind, SeqFn, SeqNode,
+    SeqStmt, SeqValue, StyleDecl, UnOp, Visibility,
 };
 
 const COMPONENTS: &[&str] = &[
@@ -15,6 +15,7 @@ const COMPONENTS: &[&str] = &[
     "Spacer",
     "Icon",
     "Image",
+    "GpuSurface",
     "List",
     "VirtualList",
     "Canvas",
@@ -93,18 +94,55 @@ const LAYOUT_PROPS: &[&str] = &[
 ];
 
 pub fn check(file: &str, app: &SeqApp) -> Result<(), SeqError> {
-    match SeqError::aggregate(check_all(file, app)) {
+    let errors: Vec<_> = check_all(file, app)
+        .into_iter()
+        .filter(SeqError::is_error)
+        .collect();
+    match SeqError::aggregate(errors) {
         Some(error) => Err(error),
         None => Ok(()),
     }
 }
 
 pub fn check_all(file: &str, app: &SeqApp) -> Vec<SeqError> {
+    let mut errors = check_all_impl(file, app);
+    errors.extend(crate::warn::unused_diagnostics(file, app));
+    errors
+}
+
+fn check_all_impl(file: &str, app: &SeqApp) -> Vec<SeqError> {
     let mut errors = Vec::new();
     if let Err(error) = check_styles(file, app) {
         errors.push(error);
     }
-    let (fns, props, states) = match check_fns(file, app) {
+    let mut early_comps = CompTable::new();
+    for (i, c) in app.components.iter().enumerate() {
+        early_comps.insert(c.name.clone(), i);
+    }
+    let mut instances = InstanceTable::new();
+    let mut duplicate_ids = Vec::new();
+    for w in &app.windows {
+        collect_instances(
+            file,
+            &w.nodes,
+            &app.components,
+            &early_comps,
+            &mut instances,
+            &mut duplicate_ids,
+        );
+    }
+    for c in &app.components {
+        collect_instances(
+            &c.file,
+            &c.body,
+            &app.components,
+            &early_comps,
+            &mut instances,
+            &mut duplicate_ids,
+        );
+    }
+    errors.extend(duplicate_ids);
+    let (fns, props, states) = match check_fns(file, app, &instances) {
         Ok(tables) => tables,
         Err(error) => {
             errors.push(error);
@@ -128,25 +166,94 @@ pub fn check_all(file: &str, app: &SeqApp) -> Vec<SeqError> {
         fns: &fns,
         props,
         states,
+        instances,
         in_comp: false,
     };
     for w in &app.windows {
         for n in &w.nodes {
-            if let Err(error) = check_node(file, n, None, false, &ctx) {
-                if !errors.iter().any(|e| {
-                    e.file == error.file && e.line == error.line && e.message == error.message
-                }) {
-                    errors.push(error);
-                }
-            }
+            check_node_collect(file, n, None, false, &ctx, &mut errors);
         }
     }
     errors
 }
 
+fn check_node_collect(
+    file: &str,
+    node: &SeqNode,
+    parent: Option<&str>,
+    in_canvas: bool,
+    ctx: &CheckCtx<'_>,
+    errors: &mut Vec<SeqError>,
+) {
+    if let Err(error) = check_node(file, node, parent, in_canvas, ctx)
+        && !errors
+            .iter()
+            .any(|e| e.file == error.file && e.line == error.line && e.message == error.message)
+    {
+        errors.push(error);
+    }
+    let nested_canvas = in_canvas || matches!(parent, Some("Canvas" | "Clip" | "Group"));
+    for child in &node.children {
+        check_node_collect(
+            file,
+            child,
+            Some(node.kind.as_str()),
+            nested_canvas,
+            ctx,
+            errors,
+        );
+    }
+}
+
 const COMP_PARAM_TYPES: &[&str] = &["String", "Bool", "Int", "Float", "Color"];
 
 type CompTable = std::collections::HashMap<String, usize>;
+
+type InstanceTable = std::collections::HashMap<String, std::collections::HashMap<String, Ty>>;
+
+fn collect_instances(
+    file: &str,
+    nodes: &[SeqNode],
+    components: &[ComponentDef],
+    comps: &CompTable,
+    out: &mut InstanceTable,
+    errors: &mut Vec<SeqError>,
+) {
+    for node in nodes {
+        if let Some(&idx) = comps.get(&node.kind) {
+            let def = &components[idx];
+            let mut fields = std::collections::HashMap::new();
+            for p in &def.params {
+                if let Some(ty) = Ty::from_sig(&p.ty) {
+                    fields.insert(p.name.clone(), ty);
+                }
+            }
+            for m in &def.members {
+                if let Some(ty) = Ty::from_sig(&m.ty) {
+                    fields.insert(m.name.clone(), ty);
+                }
+            }
+            let id = node.args.iter().find(|a| a.name == "id").and_then(|a| {
+                if let SeqValue::Str(name) = &a.value {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(id) = id
+                && out.insert(id.clone(), fields).is_some()
+            {
+                errors.push(SeqError::new(
+                    file,
+                    node.line,
+                    1,
+                    format!("component instance id '{id}' defined twice"),
+                ));
+            }
+        }
+        collect_instances(file, &node.children, components, comps, out, errors);
+    }
+}
 
 struct CheckCtx<'a> {
     styles: &'a [StyleDecl],
@@ -155,6 +262,7 @@ struct CheckCtx<'a> {
     fns: &'a FnTable,
     props: std::collections::HashMap<String, Ty>,
     states: std::collections::HashMap<String, Ty>,
+    instances: InstanceTable,
     in_comp: bool,
 }
 
@@ -174,10 +282,10 @@ fn check_components(
                 &c.file,
                 c.line,
                 1,
-                    format!(
-                        "component '{}' defined twice (first in {}:{})",
-                        c.name, first.file, first.line
-                    ),
+                format!(
+                    "component '{}' defined twice (first in {}:{})",
+                    c.name, first.file, first.line
+                ),
             ));
         }
         if COMPONENTS.contains(&c.name.as_str()) {
@@ -216,9 +324,36 @@ fn check_components(
                     p.line,
                     1,
                     format!(
-                         "unknown parameter type '{}' (String/Bool/Int/Float/Color)",
+                        "unknown parameter type '{}' (String/Bool/Int/Float/Color)",
                         p.ty
                     ),
+                ));
+            }
+        }
+        for m in &c.members {
+            if seen.contains(&m.name.as_str()) {
+                return Err(SeqError::new(
+                    &c.file,
+                    m.line,
+                    1,
+                    format!("'{}' is already a parameter of {}", m.name, c.name),
+                ));
+            }
+            seen.push(m.name.as_str());
+            if !COMP_PARAM_TYPES.contains(&m.ty.as_str()) {
+                return Err(SeqError::new(
+                    &c.file,
+                    m.line,
+                    1,
+                    format!("unknown component member type '{}'", m.ty),
+                ));
+            }
+            if m.kind == CompMemberKind::State && m.init.is_none() {
+                return Err(SeqError::new(
+                    &c.file,
+                    m.line,
+                    1,
+                    format!("component state '{}' needs an initial value", m.name),
                 ));
             }
         }
@@ -242,13 +377,37 @@ fn check_components(
                 comp_props.insert(p.name.clone(), ty);
             }
         }
+        let mut comp_states = states.clone();
+        for m in &c.members {
+            if let Some(ty) = Ty::from_sig(&m.ty) {
+                match m.kind {
+                    CompMemberKind::Prop => {
+                        comp_props.insert(m.name.clone(), ty);
+                    }
+                    CompMemberKind::State => {
+                        comp_states.insert(m.name.clone(), ty);
+                    }
+                }
+            }
+        }
+        let mut body_instances = InstanceTable::new();
+        let mut ignored = Vec::new();
+        collect_instances(
+            &c.file,
+            &c.body,
+            components,
+            &comps,
+            &mut body_instances,
+            &mut ignored,
+        );
         let body_ctx = CheckCtx {
             styles,
             components,
             comps: &comps,
             fns,
             props: comp_props,
-            states: states.clone(),
+            states: comp_states,
+            instances: body_instances,
             in_comp: true,
         };
         for n in &c.body {
@@ -426,7 +585,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                     s.line,
                     1,
                     format!(
-                         "style '{}': unknown type '{other}' (Box/Button/Text)",
+                        "style '{}': unknown type '{other}' (Box/Button/Text)",
                         s.name
                     ),
                 ));
@@ -484,10 +643,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                         file,
                         s.line,
                         1,
-                        format!(
-                            "style '{}': nieznana baza '{cur}' (preset albo styl)",
-                            s.name
-                        ),
+                        format!("style '{}': unknown base '{cur}' (preset or style)", s.name),
                     ));
                 };
                 if parent.target != s.target {
@@ -496,7 +652,7 @@ fn check_styles(file: &str, app: &SeqApp) -> Result<(), SeqError> {
                         s.line,
                         1,
                         format!(
-                            "style '{}': baza '{}' to {}, a styl to {}",
+                            "style '{}': base '{}' is {}, while the style is {}",
                             s.name, cur, parent.target, s.target
                         ),
                     ));
@@ -533,7 +689,7 @@ fn check_node(
                 file,
                 node.line,
                 1,
-                "znacznik `children` tylko w ciele component".to_string(),
+                "`children` tag only in a component body".to_string(),
             ));
         }
         if in_canvas {
@@ -625,7 +781,7 @@ fn check_node(
             node.line,
             1,
             format!(
-                "etykieta pozycyjna tylko w Text/Button/Image, nie w {}",
+                "positional label only in Text/Button/Image, not in {}",
                 node.kind
             ),
         ));
@@ -667,10 +823,10 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
             file,
             node.line,
             1,
-                format!(
-                    "component '{}' is private (defined in {})",
-                    def.name, def.file
-                ),
+            format!(
+                "component '{}' is private (defined in {})",
+                def.name, def.file
+            ),
         ));
     }
     if node.label.is_some() {
@@ -679,7 +835,7 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
             node.line,
             1,
             format!(
-                "parametry {} tylko nazwane (bez etykiety pozycyjnej)",
+                "{} parameters are named only (no positional label)",
                 def.name
             ),
         ));
@@ -687,6 +843,25 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
     let mut seen: Vec<&str> = Vec::new();
     for arg in &node.args {
         if arg.name == "flex" {
+            continue;
+        }
+        if arg.name == "id" {
+            if !matches!(arg.value, SeqValue::Str(_)) {
+                return Err(SeqError::new(
+                    file,
+                    arg.line,
+                    1,
+                    "component `id` must be a string literal",
+                ));
+            }
+            continue;
+        }
+        if def
+            .members
+            .iter()
+            .any(|m| m.name == arg.name && m.kind == CompMemberKind::Prop)
+        {
+            seen.push(arg.name.as_str());
             continue;
         }
         let Some(param) = def.params.iter().find(|p| p.name == arg.name) else {
@@ -735,10 +910,10 @@ fn check_call(file: &str, node: &SeqNode, ctx: &CheckCtx<'_>, idx: usize) -> Res
             file,
             node.line,
             1,
-                format!(
-                    "{} does not accept children (missing `children` in body)",
-                    def.name
-                ),
+            format!(
+                "{} does not accept children (missing `children` in body)",
+                def.name
+            ),
         ));
     }
     for child in &node.children {
@@ -762,7 +937,7 @@ fn check_comp_value(
             format!("unknown parameter type '{}'", param.ty),
         ));
     };
-    let ty = value_ty(&arg.value, ctx, file, arg.line)?;
+    let ty = value_ty(&arg.value, ctx, file)?;
     if !ty.fits(&expected) {
         return Err(SeqError::new(
             file,
@@ -789,12 +964,7 @@ fn expected_attr_ty(attr: &str) -> Option<Ty> {
     }
 }
 
-fn value_ty(
-    value: &SeqValue,
-    ctx: &CheckCtx<'_>,
-    file: &str,
-    line: usize,
-) -> Result<Ty, SeqError> {
+fn value_ty(value: &SeqValue, ctx: &CheckCtx<'_>, file: &str) -> Result<Ty, SeqError> {
     match value {
         SeqValue::Str(_) => Ok(Ty::Str),
         SeqValue::Theme(_) => Ok(Ty::Color),
@@ -816,7 +986,7 @@ fn value_ty(
         SeqValue::Tuple(items) => {
             let mut tys = Vec::with_capacity(items.len());
             for item in items {
-                tys.push(value_ty(item, ctx, file, line)?);
+                tys.push(value_ty(item, ctx, file)?);
             }
             Ok(Ty::Tuple(tys))
         }
@@ -833,6 +1003,7 @@ fn value_ty(
                 fns: ctx.fns,
                 props: &fn_props,
                 states: &ctx.states,
+                instances: &ctx.instances,
             };
             let mut locals = Vec::new();
             expr_ty(&fn_ctx, &mut locals, expr)
@@ -1240,6 +1411,7 @@ fn check_arg(
             "margin_top",
             "margin_bottom",
         ],
+        "GpuSurface" => &["name", "width", "height", "flex"],
         "List" => &["items", "key"],
         "VirtualList" => &["items", "key", "item_height", "overscan"],
         "SplitPanel" => &[
@@ -1581,7 +1753,7 @@ fn check_arg(
             arg.line,
             1,
             format!(
-                "nieznana propka '{name}' w {} (dozwolone: {})",
+                "unknown property '{name}' in {} (allowed: {})",
                 node.kind,
                 allowed.join(", ")
             ),
@@ -1589,7 +1761,7 @@ fn check_arg(
     }
 
     if let Some(expected_ty) = expected_attr_ty(name) {
-        let ty = value_ty(&arg.value, ctx, file, arg.line)?;
+        let ty = value_ty(&arg.value, ctx, file)?;
         if !ty.fits(&expected_ty) {
             return Err(SeqError::new(
                 file,
@@ -1640,7 +1812,7 @@ fn check_arg(
                     arg.line,
                     1,
                     format!(
-                        "style '{style_name}' to {}, a {} wymaga {}",
+                        "style '{style_name}' is {}, but {} requires {}",
                         s.target, node.kind, want_target
                     ),
                 ));
@@ -1756,10 +1928,10 @@ impl Ty {
             (_, Self::Any) | (Self::Any, _) => true,
             (Self::Int, Self::Int) | (Self::Int, Self::Float) | (Self::Float, Self::Float) => true,
             (Self::Str, Self::Str)
-                | (Self::Bool, Self::Bool)
-                | (Self::Color, Self::Color)
-                | (Self::Row, Self::Row)
-                | (Self::Array, Self::Array) => true,
+            | (Self::Bool, Self::Bool)
+            | (Self::Color, Self::Color)
+            | (Self::Row, Self::Row)
+            | (Self::Array, Self::Array) => true,
             (Self::Tuple(a), Self::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.fits(y))
             }
@@ -1787,11 +1959,13 @@ struct FnCtx<'a> {
     fns: &'a FnTable,
     props: &'a std::collections::HashMap<&'a str, Ty>,
     states: &'a std::collections::HashMap<String, Ty>,
+    instances: &'a InstanceTable,
 }
 
 fn check_fns(
     file: &str,
     app: &SeqApp,
+    instances: &InstanceTable,
 ) -> Result<
     (
         FnTable,
@@ -1931,7 +2105,7 @@ fn check_fns(
                     p.line,
                     1,
                     format!(
-                         "fn {}: unknown parameter type '{}' (Int/Float/String/Bool)",
+                        "fn {}: unknown parameter type '{}' (Int/Float/String/Bool)",
                         f.name, p.ty
                     ),
                 ));
@@ -1947,7 +2121,7 @@ fn check_fns(
                         f.line,
                         1,
                         format!(
-                             "fn {}: unknown return type '{r}' (Int/Float/String/Bool/(A, B))",
+                            "fn {}: unknown return type '{r}' (Int/Float/String/Bool/(A, B))",
                             f.name
                         ),
                     ));
@@ -1958,9 +2132,11 @@ fn check_fns(
         table.insert(f.name.clone(), FnSig { params, ret });
     }
     for f in &app.fns {
-        let prop_refs: std::collections::HashMap<&str, Ty> =
-            prop_tys.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-        check_fn_body(file, f, &table, &prop_refs, &states)?;
+        let prop_refs: std::collections::HashMap<&str, Ty> = prop_tys
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect();
+        check_fn_body(file, f, &table, &prop_refs, &states, instances)?;
     }
     Ok((table, prop_tys, states))
 }
@@ -1971,12 +2147,14 @@ fn check_fn_body(
     fns: &FnTable,
     props: &std::collections::HashMap<&str, Ty>,
     states: &std::collections::HashMap<String, Ty>,
+    instances: &InstanceTable,
 ) -> Result<(), SeqError> {
     let ctx = FnCtx {
         file,
         fns,
         props,
         states,
+        instances,
     };
     let mut frame = std::collections::HashMap::new();
     for p in &f.params {
@@ -2139,11 +2317,28 @@ fn check_stmt(
                 }
                 return Ok(false);
             }
+            if let Some((base, field)) = name.split_once('.')
+                && let Some(ft) = ctx.instances.get(base).and_then(|f| f.get(field))
+            {
+                if !ty.fits(ft) {
+                    return Err(SeqError::new(
+                        ctx.file,
+                        *line,
+                        1,
+                        format!(
+                            "wrong write type to '{name}' (instance {}, given {})",
+                            ft.name(),
+                            ty.name()
+                        ),
+                    ));
+                }
+                return Ok(false);
+            }
             Err(SeqError::new(
                 ctx.file,
                 *line,
                 1,
-                format!("nieznana zmienna '{name}' (lokalna/state/prop)"),
+                format!("unknown variable '{name}' (local/state/prop)"),
             ))
         }
         SeqStmt::If {
@@ -2206,8 +2401,8 @@ fn check_stmt(
                 );
                 if !ok {
                     let what = match &arm.pattern {
-                        MatchPat::Str(_) => "tekst",
-                        MatchPat::Int(_) => "liczba",
+                        MatchPat::Str(_) => "string",
+                        MatchPat::Int(_) => "number",
                         MatchPat::Bool(_) => "true/false",
                         MatchPat::Wildcard => "_",
                     };
@@ -2215,7 +2410,7 @@ fn check_stmt(
                         ctx.file,
                         arm.line,
                         1,
-                        format!("wzorzec '{what}' nie pasuje do {}", vty.name()),
+                        format!("pattern '{what}' does not match {}", vty.name()),
                     ));
                 }
                 all = check_scoped(ctx, locals, &arm.body, ret)? && all;
@@ -2319,7 +2514,7 @@ fn expr_ty(
                 ctx.file,
                 e.line,
                 1,
-                format!("nieznana zmienna '{name}' (parametr/lokalna/state/prop)"),
+                format!("unknown variable '{name}' (parameter/local/state/prop)"),
             ))
         }
         SeqExprKind::Field { base, field } => {
@@ -2328,6 +2523,9 @@ fn expr_ty(
             }
             if base == "env" || base == "item" {
                 return Ok(Ty::Any);
+            }
+            if let Some(fields) = ctx.instances.get(base) {
+                return Ok(fields.get(field).cloned().unwrap_or(Ty::Any));
             }
             for frame in locals.iter().rev() {
                 if let Some(local) = frame.get(base) {
@@ -2342,7 +2540,7 @@ fn expr_ty(
                                     ctx.file,
                                     e.line,
                                     1,
-                                    format!("pole krotki '{base}' to `.0`/`.1` (jest '.{field}')"),
+                                    format!("tuple field '{base}' to `.0`/`.1` (is '.{field}')"),
                                 ));
                             };
                             return items.get(i).cloned().ok_or_else(|| {
@@ -2363,7 +2561,7 @@ fn expr_ty(
                                 e.line,
                                 1,
                                 format!(
-                                    "'{base}' to {}, nie wiersz `for` ani krotka",
+                                    "'{base}' to {}, not wiersz `for` ani krotka",
                                     other.name()
                                 ),
                             ));
@@ -2428,7 +2626,7 @@ fn expr_ty(
                     e.line,
                     1,
                     format!(
-                         "`?:` branches have different types ({} and {})",
+                        "`?:` branches have different types ({} and {})",
                         then_ty.name(),
                         else_ty.name()
                     ),
@@ -2446,7 +2644,7 @@ fn expr_ty(
                         ctx.file,
                         e.line,
                         1,
-                        format!("`-` wymaga liczby (jest {})", ty.name()),
+                        format!("`-` requires a number (is {})", ty.name()),
                     )),
                 },
                 UnOp::Not => match ty {
@@ -2455,7 +2653,7 @@ fn expr_ty(
                         ctx.file,
                         e.line,
                         1,
-                        format!("`!` wymaga Bool (jest {})", ty.name()),
+                        format!("`!` requires Bool (is {})", ty.name()),
                     )),
                 },
             }
@@ -2505,7 +2703,7 @@ fn expr_ty(
                         args[i].line,
                         1,
                         format!(
-                            "fn {name}: argument {} to {}, a parametr oczekuje {}",
+                            "fn {name}: argument {} is {}, but parameter expects {}",
                             i + 1,
                             ty.name(),
                             p.name()
@@ -2653,7 +2851,7 @@ fn binary_ty(
             ctx.file,
             line,
             1,
-            format!("{what} (jest {} i {})", a.name(), b.name()),
+            format!("{what} (is {} and {})", a.name(), b.name()),
         )
     };
     match op {
@@ -2664,7 +2862,7 @@ fn binary_ty(
                 }
                 return Err(bad("`+` concatenates String + String"));
             }
-            numeric(&a, &b).ok_or_else(|| bad("`+` wymaga liczb"))
+            numeric(&a, &b).ok_or_else(|| bad("`+` requires numbers"))
         }
         BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
             let op_name = match op {
@@ -2673,7 +2871,7 @@ fn binary_ty(
                 BinOp::Div => "/",
                 _ => "%",
             };
-            numeric(&a, &b).ok_or_else(|| bad(&format!("`{op_name}` wymaga liczb")))
+            numeric(&a, &b).ok_or_else(|| bad(&format!("`{op_name}` requires numbers")))
         }
         BinOp::Eq | BinOp::Ne => {
             let ok = (a.is_number() && b.is_number())
@@ -2701,7 +2899,7 @@ fn binary_ty(
             if ok {
                 Ok(Ty::Bool)
             } else {
-                Err(bad("`&&`/`||` wymaga Bool"))
+                Err(bad("`&&`/`||` requires Bool"))
             }
         }
     }
@@ -2788,7 +2986,7 @@ fn check_callback_call(
             file,
             arg.line,
             1,
-            format!("nieznana funkcja '{name}'"),
+            format!("unknown function '{name}'"),
         ));
     };
     let all_idents = || args.iter().all(|a| matches!(a, SeqValue::Ident(_)));
@@ -2823,7 +3021,7 @@ fn check_callback_call(
                         file,
                         arg.line,
                         1,
-                        "on_click: argument to liczba/tekst/Bool/item.pole (albo bez argumentu)"
+                        "on_click: argument must be a number/string/Bool/item.field (or no argument)"
                             .to_string(),
                     ));
                 }
@@ -2863,7 +3061,7 @@ fn check_callback_call(
                         file,
                         arg.line,
                         1,
-                        format!("{attr}: {{ {name}(name) }} albo {{ {name}(x, y[, name|d]) }}"),
+                        format!("{attr}: {{ {name}(name) }} or {{ {name}(x, y[, name|d]) }}"),
                     ));
                 }
             }

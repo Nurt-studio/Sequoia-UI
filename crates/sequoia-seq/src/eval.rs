@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use sequoia_reactive::batch;
+
 use crate::bindings::{FieldSignal, HostBindings};
 use crate::error::SeqError;
 use crate::ir::{BinOp, MatchPat, SeqExpr, SeqExprKind, SeqFn, SeqStmt, StateDecl, UnOp};
@@ -58,14 +60,16 @@ impl SeqRuntime {
         name: &str,
         args: Vec<Value>,
     ) -> Result<Value, SeqError> {
-        let mut ev = Eval {
-            rt: self,
-            b,
-            frames: Vec::new(),
-            stack: Vec::new(),
-            steps: MAX_STEPS,
-        };
-        ev.call_fn(name, args, 1)
+        batch(|| {
+            let mut ev = Eval {
+                rt: self,
+                b,
+                frames: Vec::new(),
+                stack: Vec::new(),
+                steps: MAX_STEPS,
+            };
+            ev.call_fn(name, args, 1)
+        })
     }
 }
 
@@ -296,6 +300,15 @@ impl<'a> Eval<'a> {
     }
 
     fn assign(&mut self, name: &str, v: Value, line: usize) -> Result<(), SeqError> {
+        let resolved;
+        let name = if let Some((base, field)) = name.split_once('.')
+            && let Some(ns) = self.b.instance_namespace(base)
+        {
+            resolved = format!("{ns}{field}");
+            resolved.as_str()
+        } else {
+            name
+        };
         if let Some(i) = self.frames.iter().rposition(|f| f.contains_key(name)) {
             if !self.frames[i][name].mutable {
                 return Err(self.err(
@@ -379,7 +392,7 @@ impl<'a> Eval<'a> {
                 format!("'{name}' is memo (derived value) - cannot be written"),
             ));
         }
-        Err(self.err(line, format!("nieznana zmienna '{name}'")))
+        Err(self.err(line, format!("unknown variable '{name}'")))
     }
 
     fn expr_bool(&mut self, e: &SeqExpr) -> Result<bool, SeqError> {
@@ -510,7 +523,7 @@ impl<'a> Eval<'a> {
         if let Some(m) = self.b.get_memo_float(name) {
             return Ok(Value::Float(m.get_untracked()));
         }
-        Err(self.err(line, format!("nieznana zmienna '{name}'")))
+        Err(self.err(line, format!("unknown variable '{name}'")))
     }
 
     fn read_field(&self, base: &str, field: &str, line: usize) -> Result<Value, SeqError> {
@@ -556,6 +569,10 @@ impl<'a> Eval<'a> {
                 }
             }
         }
+        if let Some(ns) = self.b.instance_namespace(base) {
+            let key = format!("{ns}{field}");
+            return self.read_var(&key, line);
+        }
         Err(self.err(line, format!("unknown variable '{base}'")))
     }
 
@@ -587,7 +604,7 @@ impl<'a> Eval<'a> {
                     _ => Err(self.err(
                         line,
                         format!(
-                            "`/` wymaga liczb (jest {} i {})",
+                            "`/` requires numbers (is {} and {})",
                             l.type_name(),
                             r.type_name()
                         ),
@@ -606,7 +623,7 @@ impl<'a> Eval<'a> {
                     _ => Err(self.err(
                         line,
                         format!(
-                            "`%` wymaga liczb (jest {} i {})",
+                            "`%` requires numbers (is {} and {})",
                             l.type_name(),
                             r.type_name()
                         ),
@@ -682,7 +699,7 @@ impl<'a> Eval<'a> {
             _ => Err(self.err(
                 line,
                 format!(
-                    "`{op:?}` wymaga liczb (jest {} i {})",
+                    "`{op:?}` requires numbers (is {} and {})",
                     l.type_name(),
                     r.type_name()
                 ),
@@ -714,7 +731,7 @@ impl<'a> Eval<'a> {
                 let (a, b) = (args[0].as_str(), args[1].as_str());
                 match (a, b) {
                     (Some(a), Some(b)) => Ok(Value::Bool(a.starts_with(b))),
-                    _ => Err(self.err(line, "starts_with(s, prefix): wymaga String")),
+                    _ => Err(self.err(line, "starts_with(s, prefix): requires String")),
                 }
             }
             "strip_prefix" => {
@@ -724,7 +741,7 @@ impl<'a> Eval<'a> {
                     (Some(a), Some(b)) => Ok(Value::Str(Rc::new(
                         a.strip_prefix(b).unwrap_or("").to_string(),
                     ))),
-                    _ => Err(self.err(line, "strip_prefix(s, prefix): wymaga String")),
+                    _ => Err(self.err(line, "strip_prefix(s, prefix): requires String")),
                 }
             }
             "parse_tag" => {
@@ -734,14 +751,14 @@ impl<'a> Eval<'a> {
                         let tail = s.rsplit_once(':').map_or(s, |(_, t)| t);
                         Ok(Value::Int(tail.trim().parse::<i64>().unwrap_or(-1)))
                     }
-                    None => Err(self.err(line, "parse_tag(s): wymaga String")),
+                    None => Err(self.err(line, "parse_tag(s): requires String")),
                 }
             }
             "len" => {
                 want(1)?;
                 match args[0].as_str() {
                     Some(s) => Ok(Value::Int(s.chars().count() as i64)),
-                    None => Err(self.err(line, "len(s): wymaga String")),
+                    None => Err(self.err(line, "len(s): requires String")),
                 }
             }
             "clamp" => {
@@ -749,14 +766,14 @@ impl<'a> Eval<'a> {
                 let (v, lo, hi) = (args[0].as_f64(), args[1].as_f64(), args[2].as_f64());
                 match (v, lo, hi) {
                     (Some(v), Some(lo), Some(hi)) => Ok(Value::Float(v.max(lo).min(hi))),
-                    _ => Err(self.err(line, "clamp(v, min, max): wymaga liczb")),
+                    _ => Err(self.err(line, "clamp(v, min, max): requires numbers")),
                 }
             }
             "powf" => {
                 want(2)?;
                 match (args[0].as_f64(), args[1].as_f64()) {
                     (Some(a), Some(b)) => Ok(Value::Float(a.powf(b))),
-                    _ => Err(self.err(line, "powf(x, y): wymaga liczb")),
+                    _ => Err(self.err(line, "powf(x, y): requires numbers")),
                 }
             }
             "max" | "min" => {

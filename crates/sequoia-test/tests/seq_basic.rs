@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use sequoia_core::Color;
-use sequoia_seq::{SeqLoader, check, check_all, lower, parse, parse_all};
+use sequoia_seq::{SeqError, SeqLoader, Severity, check, check_all, lower, parse, parse_all};
 use sequoia_test::Harness;
 
 const DEMO: &str = r#"
@@ -205,4 +205,59 @@ fn check_all_collects_errors_from_multiple_nodes() {
         format!("{err}").lines().count() >= 2,
         "check must print all errors: {err}"
     );
+}
+
+#[test]
+fn load_all_collects_errors_from_every_stage() {
+    let src =
+        "app A {\n  title \"A\"\n  siz: (10, 10)\n  window M {\n    Col {}\n    Rowr {}\n  }\n}\n";
+    let (loaded, diagnostics) = SeqLoader::load_str_all("Main.seq", src);
+    assert!(loaded.is_none());
+    assert!(diagnostics.iter().all(SeqError::is_error));
+    assert!(
+        diagnostics.len() >= 3,
+        "expected parse and check errors together: {diagnostics:?}"
+    );
+    let log = diagnostics
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(log.contains("title"), "{log}");
+    assert!(log.contains("Col"), "{log}");
+    assert!(log.contains("Rowr"), "{log}");
+}
+
+#[test]
+fn load_all_reports_warnings_without_failing() {
+    let src = "app A {\n  title: \"A\"\n  size: (10, 10)\n  state counts: Int = 1\n  style Unused: Button {\n    radius: 4\n  }\n  fn helper() -> Int {\n    return 1;\n  }\n  window M {\n    Text(\"x\")\n  }\n}\n";
+    let (loaded, diagnostics) = SeqLoader::load_str_all("Main.seq", src);
+    assert!(
+        loaded.is_some(),
+        "warnings must not fail the build: {diagnostics:?}"
+    );
+    let warnings: Vec<_> = diagnostics.iter().filter(|d| d.is_warning()).collect();
+    assert!(
+        warnings.len() >= 3,
+        "expected unused warnings: {diagnostics:?}"
+    );
+    assert!(warnings.iter().any(|d| d.message.contains("counts")));
+    assert!(warnings.iter().any(|d| d.message.contains("Unused")));
+    assert!(warnings.iter().any(|d| d.message.contains("helper")));
+    assert!(
+        SeqLoader::load_str("Main.seq", src).is_ok(),
+        "legacy API must ignore warnings"
+    );
+}
+
+#[test]
+fn severities_have_lsp_codes_and_display_prefix() {
+    assert_eq!(Severity::Error.as_lsp(), 1);
+    assert_eq!(Severity::Warning.as_lsp(), 2);
+    let warning = SeqError::warning("Main.seq", 2, 3, "unused thing");
+    assert!(warning.is_warning());
+    assert!(warning.to_string().starts_with("warning: "));
+    let error = SeqError::new("Main.seq", 2, 3, "broken thing");
+    assert!(error.is_error());
+    assert!(!error.to_string().starts_with("warning: "));
 }

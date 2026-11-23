@@ -212,7 +212,10 @@ fn missing_app_rejected() {
         Err(e) => e,
         Ok(_) => panic!("expected error"),
     };
-    assert!(err.message.contains("missing `app Name { }` block"), "{err}");
+    assert!(
+        err.message.contains("missing `app Name { }` block"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -234,7 +237,7 @@ fn duplicate_component() {
         "component Card(title: String) {\n  Text(text: title)\n}\ncomponent Card(other: String) {\n  Text(text: other)\n}",
         "    Text(\"x\")",
     ));
-    assert!(err.message.contains("dwa razy"), "{err}");
+    assert!(err.message.contains("defined twice"), "{err}");
 }
 
 #[test]
@@ -243,7 +246,7 @@ fn builtin_clash() {
         "component Column(title: String) {\n  Text(text: title)\n}",
         "    Text(\"x\")",
     ));
-    assert!(err.message.contains("koliduje"), "{err}");
+    assert!(err.message.contains("conflicts with built-in"), "{err}");
 }
 
 #[test]
@@ -261,7 +264,7 @@ fn unknown_param_type() {
         "component Card(title: Point) {\n  Text(text: title)\n}",
         "    Text(\"x\")",
     ));
-    assert!(err.message.contains("nieznany typ parametru"), "{err}");
+    assert!(err.message.contains("unknown parameter type"), "{err}");
 }
 
 #[test]
@@ -348,7 +351,7 @@ fn label_on_call_rejected() {
         "component Card(title: String) {\n  Text(text: title)\n}",
         "    Card(\"Hi\")",
     ));
-    assert!(err.message.contains("tylko nazwane"), "{err}");
+    assert!(err.message.contains("named only"), "{err}");
 }
 
 #[test]
@@ -357,13 +360,13 @@ fn children_without_slot() {
         "component Card(title: String) {\n  Text(text: title)\n}",
         "    Card(title: \"A\") {\n      Text(\"x\")\n    }",
     ));
-    assert!(err.message.contains("nie przyjmuje dzieci"), "{err}");
+    assert!(err.message.contains("does not accept children"), "{err}");
 }
 
 #[test]
 fn children_outside_component() {
     let err = check_err(&app_body("    children"));
-    assert!(err.message.contains("tylko w ciele component"), "{err}");
+    assert!(err.message.contains("only in a component body"), "{err}");
 }
 
 #[test]
@@ -381,7 +384,7 @@ fn two_placeholders_rejected() {
         "component Card(title: String) {\n  Column {\n    children\n    children\n  }\n}",
         "    Text(\"x\")",
     ));
-    assert!(err.message.contains("jedno `children`"), "{err}");
+    assert!(err.message.contains("one `children`"), "{err}");
 }
 
 #[test]

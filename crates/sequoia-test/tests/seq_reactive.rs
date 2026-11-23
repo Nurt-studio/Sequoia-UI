@@ -4,8 +4,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use sequoia_async::Resource;
-use sequoia_reactive::{memo, I18n, Memo, Signal};
-use sequoia_seq::{check, parse, HostBindings, SeqLoader};
+use sequoia_reactive::{I18n, Memo, Signal, memo};
+use sequoia_seq::{HostBindings, SeqLoader, check, parse};
 use sequoia_test::Harness;
 
 fn glyphs(h: &Harness) -> usize {

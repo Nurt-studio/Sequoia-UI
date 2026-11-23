@@ -118,7 +118,7 @@ fn private_component_from_other_file_rejected() {
     let lib = "component Helper(t: String) {\n  Text(text: t)\n}\n";
     let src = main_seq("    Helper(t: \"x\")");
     let e = err_of("Main.seq", &src, &[("ui/card.seq", lib)]);
-    assert!(e.message.contains("jest prywatny"), "{e}");
+    assert!(e.message.contains("is private"), "{e}");
     assert!(e.message.contains("ui/card.seq"), "{e}");
     assert_eq!(e.file, "Main.seq");
     assert_eq!(e.line, 6);
@@ -144,7 +144,7 @@ fn transitive_private_rejected() {
         &main_seq_import("./ui/a.seq", "    A(t: \"x\")"),
         &[("ui/a.seq", a), ("ui/b.seq", b)],
     );
-    assert!(e.message.contains("jest prywatny"), "{e}");
+    assert!(e.message.contains("is private"), "{e}");
     assert_eq!(e.file, "ui/a.seq");
     assert!(e.message.contains("ui/b.seq"), "{e}");
 }
@@ -166,7 +166,7 @@ fn duplicate_across_files_has_both_locations() {
             ),
         ],
     );
-    assert!(e.message.contains("dwa razy"), "{e}");
+    assert!(e.message.contains("defined twice"), "{e}");
     assert!(e.message.contains("ui/a.seq:1"), "{e}");
     assert_eq!(e.file, "ui/b.seq");
     assert_eq!(e.line, 1);

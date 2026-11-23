@@ -46,8 +46,7 @@ fn expand(path_lit: &LitStr) -> syn::Result<TokenStream2> {
 
     let main_abs = resolve_path(&manifest, &main_key);
     let main_src = read_source(&main_abs, span)?;
-    let parsed =
-        sequoia_seq::parse_seq_file(&main_key, &main_src).map_err(|e| seq_error(span, &e))?;
+    let parsed = parse_seq_file_all_diagnostics(&main_key, &main_src, span)?;
     let app = parsed.app.as_ref().ok_or_else(|| {
         syn::Error::new(span, format!("{main_key}: missing `app Name {{ }}` block"))
     })?;
@@ -298,7 +297,7 @@ fn collect_imports(
         }
         let abs = resolve_path(manifest, &key);
         let src = read_source(&abs, span)?;
-        let parsed = sequoia_seq::parse_seq_file(&key, &src).map_err(|e| seq_error(span, &e))?;
+        let parsed = parse_seq_file_all_diagnostics(&key, &src, span)?;
         out.insert(key.clone(), include_path(manifest, &key));
         stack.push(key.clone());
         collect_imports(manifest, &key, &parsed.imports, out, seen, stack, span)?;
@@ -314,6 +313,23 @@ fn read_source(path: &Path, span: Span) -> syn::Result<String> {
             format!("cannot read '{}': {e}", path.to_string_lossy()),
         )
     })
+}
+
+fn parse_seq_file_all_diagnostics(
+    file: &str,
+    src: &str,
+    span: Span,
+) -> syn::Result<sequoia_seq::SeqFile> {
+    let (parsed, errors) = sequoia_seq::parse_seq_file_all(file, src);
+    let errors: Vec<_> = errors.into_iter().filter(SeqError::is_error).collect();
+    let Some((first, rest)) = errors.split_first() else {
+        return Ok(parsed);
+    };
+    let mut combined = seq_error(span, first);
+    for error in rest {
+        combined.combine(seq_error(span, error));
+    }
+    Err(combined)
 }
 
 fn seq_error(span: Span, error: &SeqError) -> syn::Error {

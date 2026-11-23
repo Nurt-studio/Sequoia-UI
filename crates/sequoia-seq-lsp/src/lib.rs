@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use sequoia_seq::{SeqError, Severity};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SeqDiag {
     pub line: u32,
@@ -7,6 +9,8 @@ pub struct SeqDiag {
     pub col: u32,
 
     pub end_col: u32,
+
+    pub severity: Severity,
 
     pub message: String,
 }
@@ -937,23 +941,21 @@ fn token_len(line_text: &str, col: usize) -> usize {
 }
 
 pub fn diagnostics_for(file: &str, src: &str) -> Vec<SeqDiag> {
-    let (app, parse_errors) = sequoia_seq::parse_all(file, src);
-    if !parse_errors.is_empty() {
-        return parse_errors
-            .iter()
-            .map(|e| seq_err_to_diag(src, &e.line, &e.col, &e.message))
-            .collect();
+    let (app, mut errors) = sequoia_seq::parse_all(file, src);
+    if let Some(app) = app {
+        errors.extend(sequoia_seq::check_all(file, &app));
     }
-    let Some(app) = app else {
-        return Vec::new();
-    };
-    sequoia_seq::check_all(file, &app)
+    let mut seen = std::collections::HashSet::new();
+    errors
         .iter()
-        .map(|e| seq_err_to_diag(src, &e.line, &e.col, &e.message))
+        .filter(|e| seen.insert((e.line, e.col, e.severity(), e.message.clone())))
+        .map(|e| seq_err_to_diag(src, e))
         .collect()
 }
 
-fn seq_err_to_diag(src: &str, line1: &usize, col1: &usize, message: &str) -> SeqDiag {
+fn seq_err_to_diag(src: &str, error: &SeqError) -> SeqDiag {
+    let line1 = error.line;
+    let col1 = error.col;
     let line0 = line1.saturating_sub(1) as u32;
     let col0 = col1.saturating_sub(1) as u32;
     let line_text = src.lines().nth(line1.saturating_sub(1)).unwrap_or("");
@@ -962,7 +964,8 @@ fn seq_err_to_diag(src: &str, line1: &usize, col1: &usize, message: &str) -> Seq
         line: line0,
         col: col0,
         end_col: col0 + len,
-        message: message.to_string(),
+        severity: error.severity(),
+        message: error.message.clone(),
     }
 }
 
@@ -1368,7 +1371,9 @@ mod tests {
     #[test]
     fn component_and_style_are_clean() {
         let src = "component Card(title: String, c: Color) {\n  Column {\n    Text(text: title)\n    children\n  }\n}\napp A {\n  title: \"A\"\n  size: (400, 300)\n  style Danger2: Button extends danger {\n    radius: 12\n  }\n  window M {\n    Card(title: \"Hi\", c: #FF0000)\n  }\n}\n";
-        assert!(diagnostics_for("Main.seq", src).is_empty());
+        let diags = diagnostics_for("Main.seq", src);
+        assert!(diags.iter().all(|d| d.severity == Severity::Warning));
+        assert!(diags.iter().any(|d| d.message.contains("Danger2")));
     }
 
     #[test]

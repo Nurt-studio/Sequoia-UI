@@ -77,8 +77,23 @@ pub fn resolve_imports(
     root: SeqFile,
     source: &dyn SeqSource,
 ) -> Result<ResolvedImports, SeqError> {
+    let (resolved, errors) = resolve_imports_all(file, root, source);
+    if let Some(error) = SeqError::aggregate(errors) {
+        return Err(error);
+    }
+    resolved.ok_or_else(|| SeqError::new(file, 1, 1, "missing `app Name { }` block"))
+}
+
+pub fn resolve_imports_all(
+    file: &str,
+    root: SeqFile,
+    source: &dyn SeqSource,
+) -> (Option<ResolvedImports>, Vec<SeqError>) {
     let Some(mut app) = root.app else {
-        return Err(SeqError::new(file, 1, 1, "missing `app Name { }` block"));
+        return (
+            None,
+            vec![SeqError::new(file, 1, 1, "missing `app Name { }` block")],
+        );
     };
     let root_id = source.root(file);
     let mut r = Resolver {
@@ -91,15 +106,15 @@ pub fn resolve_imports(
     r.seen.insert(r.files[0].clone(), ());
     let mut errors = Vec::new();
     r.collect(file, &root.imports, 1, &mut errors);
-    if let Some(error) = SeqError::aggregate(errors) {
-        return Err(error);
-    }
     app.components = r.components;
     app.imports.clear();
-    Ok(ResolvedImports {
-        app,
-        files: r.files,
-    })
+    (
+        Some(ResolvedImports {
+            app,
+            files: r.files,
+        }),
+        errors,
+    )
 }
 
 impl Resolver<'_> {
