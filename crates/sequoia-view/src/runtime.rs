@@ -1515,8 +1515,7 @@ impl Runtime {
             // An off-screen leaf that `settle` deferred is not a reason to run
             // another full layout pass: layout only reaches it once it is
             // visible, and `measure_inner` rebuilds it then.
-            e.dirty.needs_layout()
-                && (viewport.is_empty() || !Self::element_can_wait(e, viewport))
+            e.dirty.needs_layout() && (viewport.is_empty() || !Self::element_can_wait(e, viewport))
         })
     }
 
@@ -3618,7 +3617,8 @@ impl Runtime {
             } else {
                 if entries.len() >= MAX_MEASURE_VARIANTS {
                     // Evict the least recently used variant, not the oldest.
-                    if let Some((idx, _)) = entries.iter().enumerate().min_by_key(|(_, e)| e.last_use)
+                    if let Some((idx, _)) =
+                        entries.iter().enumerate().min_by_key(|(_, e)| e.last_use)
                     {
                         entries.swap_remove(idx);
                     }
@@ -4844,7 +4844,11 @@ impl Runtime {
                  main axis; it collapsed to {base:.0}px of {avail_main:.0}px. Give the child \
                  `.expand()`/`.fill_size()` or pass it through `child_flex(..)`; a wrapper with \
                  fill content must grow itself.",
-                if cstyle.axis == Axis::Vertical { "column" } else { "row" },
+                if cstyle.axis == Axis::Vertical {
+                    "column"
+                } else {
+                    "row"
+                },
                 self.type_name_of(*child).unwrap_or_else(|| "?".into()),
             );
         }
@@ -5951,7 +5955,17 @@ impl Runtime {
         }
         if !cull.intersects(paint_bounds, clip) {
             self.paint_self_culled(id, rect, list, text, pass);
-            self.paint_children(id, acc, scale, total_transform, list, text, cull, pass, level + 1);
+            self.paint_children(
+                id,
+                acc,
+                scale,
+                total_transform,
+                list,
+                text,
+                cull,
+                pass,
+                level + 1,
+            );
             if pushes_opacity {
                 list.pop_opacity();
             }
@@ -6079,7 +6093,17 @@ impl Runtime {
                 );
             }
         }
-        self.paint_children(id, acc, scale, total_transform, list, text, cull, pass, level + 1);
+        self.paint_children(
+            id,
+            acc,
+            scale,
+            total_transform,
+            list,
+            text,
+            cull,
+            pass,
+            level + 1,
+        );
 
         {
             let res = std::panic::catch_unwind(AssertUnwindSafe(|| {

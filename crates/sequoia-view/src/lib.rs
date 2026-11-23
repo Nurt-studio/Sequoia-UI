@@ -105,11 +105,11 @@ pub use overlay::{
 };
 pub use painter::Painter;
 pub use portal::{DismissableLayer, Popper, Portal};
-pub use rebuild::{Rebuild, rebuild};
 pub use presence::{
     ENTER_SECS, EXIT_SECS, Presence, enter_progress, enter_sample, exit_done, exit_progress,
     exit_sample,
 };
+pub use rebuild::{Rebuild, rebuild};
 pub use responsive::{
     Breakpoint, Breakpoints, Responsive, ScreenOrientation, WithSize, orientation_of,
     screen_orientation_of,
@@ -221,11 +221,11 @@ pub mod prelude {
     };
     pub use crate::painter::Painter;
     pub use crate::portal::{DismissableLayer, Popper, Portal};
-    pub use crate::rebuild::{Rebuild, rebuild};
     pub use crate::presence::{
         ENTER_SECS, EXIT_SECS, Presence, enter_progress, enter_sample, exit_done, exit_progress,
         exit_sample,
     };
+    pub use crate::rebuild::{Rebuild, rebuild};
     pub use crate::responsive::{
         Breakpoint, Breakpoints, Responsive, ScreenOrientation, WithSize, orientation_of,
         screen_orientation_of,

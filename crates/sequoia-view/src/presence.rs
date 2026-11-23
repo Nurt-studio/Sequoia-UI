@@ -392,6 +392,19 @@ impl Presence {
         self.begin_frame(now);
         let present = self.present.get_untracked();
         let st = *self.state.borrow();
+        let animating = if present {
+            st.enter_start
+                .is_some_and(|start| now - start < self.enter_delay + self.enter_secs)
+        } else {
+            st.was_present
+                && st
+                    .exit_start
+                    .is_some_and(|start| now - start < self.exit_delay + self.exit_secs)
+        };
+        if !animating {
+            self.state.borrow_mut().current_offset = Vec2::ZERO;
+            return Vec2::ZERO;
+        }
         if present {
             let value = if reduced {
                 self.enter_offset_to
@@ -427,6 +440,19 @@ impl Presence {
         self.begin_frame(now);
         let present = self.present.get_untracked();
         let st = *self.state.borrow();
+        let animating = if present {
+            st.enter_start
+                .is_some_and(|start| now - start < self.enter_delay + self.enter_secs)
+        } else {
+            st.was_present
+                && st
+                    .exit_start
+                    .is_some_and(|start| now - start < self.exit_delay + self.exit_secs)
+        };
+        if !animating {
+            self.state.borrow_mut().current_scale = 1.0;
+            return 1.0;
+        }
         if present {
             let value = if reduced {
                 1.0
@@ -497,6 +523,13 @@ impl View for Presence {
     }
 
     fn layout_style(&self) -> LayoutStyle {
+        let active = {
+            let st = self.state.borrow();
+            self.present.get_untracked() || (st.was_present && !st.exit_fired)
+        };
+        if active && let Some(child) = &self.child {
+            return child.inner_layout_style();
+        }
         LayoutStyle {
             width: Length::Fit,
             height: Length::Fit,

@@ -814,7 +814,10 @@ mod tests {
     fn snap_and_fit_view_reject_non_finite_input() {
         assert_eq!(Canvas::snap(13.0, f32::INFINITY), 13.0);
         assert_eq!(Canvas::snap(13.0, f32::NAN), 13.0);
-        assert!(Canvas::snap(f32::NAN, 10.0).is_nan(), "non-finite value passes through");
+        assert!(
+            Canvas::snap(f32::NAN, 10.0).is_nan(),
+            "non-finite value passes through"
+        );
 
         let nan_rect = vp(f32::NAN, 0.0, 400.0, 200.0);
         let (cam, zoom) = Canvas::fit_view(nan_rect, Size::new(800.0, 600.0), 0.0);

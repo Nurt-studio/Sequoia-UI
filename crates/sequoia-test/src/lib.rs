@@ -112,6 +112,11 @@ impl Harness {
         self.rt.damage_rect()
     }
 
+    /// Takes the surface draws recorded during the last paint, in paint order.
+    pub fn surface_draws(&self) -> Vec<sequoia_view::SurfaceDraw> {
+        self.rt.take_surface_draws()
+    }
+
     pub fn paint_stats(&self, width: f32, height: f32) -> PaintStats {
         use sequoia_core::RenderItem;
         self.layout(width, height);

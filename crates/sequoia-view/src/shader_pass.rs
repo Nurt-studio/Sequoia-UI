@@ -68,10 +68,10 @@ impl<S: SequoiShader> ShaderPass<S> {
     ///
     /// This removes the need to repeat the parameter name at every call site.
     pub fn primary_input(mut self, input: TexInput) -> Self {
-        if let Some(name) = S::TEXTURES.first().copied() {
-            if !self.inputs.iter().any(|(key, _)| *key == name) {
-                self.inputs.push((name, input));
-            }
+        if let Some(name) = S::TEXTURES.first().copied()
+            && !self.inputs.iter().any(|(key, _)| *key == name)
+        {
+            self.inputs.push((name, input));
         }
         self
     }
