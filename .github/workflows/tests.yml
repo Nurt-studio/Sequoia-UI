@@ -1,0 +1,24 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Workspace tests
+        run: cargo test --workspace
+      - name: Seq layout goldens
+        run: cargo test -p sequoia-test --test seq_layout_golden
+      - name: Seq lowering stack regression
+        run: cargo test -p sequoia-test --test seq_stack
