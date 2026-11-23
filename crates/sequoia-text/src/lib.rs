@@ -957,9 +957,10 @@ impl TextSystem {
     }
 
     fn check_bg_font_system(&mut self) {
-        let fs_opt = self.font_system_bg.as_ref().and_then(|bg| {
-            bg.lock().ok().and_then(|mut lock| lock.take())
-        });
+        let fs_opt = self
+            .font_system_bg
+            .as_ref()
+            .and_then(|bg| bg.lock().ok().and_then(|mut lock| lock.take()));
         if let Some(fs) = fs_opt {
             self.font_system = fs;
             self.load_font(DEFAULT_FONT_REGULAR.to_vec());
@@ -4171,15 +4172,18 @@ mod tests {
     #[test]
     fn line_cache_edit_single_line_reshapes_at_most_3() {
         use sequoia_buffer::StyledBuffer;
+        const LINES: usize = 2_000;
+        const { assert!(LINES < LINE_CACHE_MAX, "all probe lines must stay cached") };
+        let edited = LINES / 2;
         let mut sys = TextSystem::new();
 
-        let initial: String = (0..10_000)
+        let initial: String = (0..LINES)
             .map(|i| format!("line {i:05} some text for shaping"))
             .collect::<Vec<_>>()
             .join("\n");
         let mut buf = StyledBuffer::from(initial);
         let line_count = buf.lines().line_count();
-        assert_eq!(line_count, 10_000);
+        assert_eq!(line_count, LINES);
 
         sys.reset_line_reshapes();
         let all = sys.shape_lines_visible_buffer(
@@ -4193,9 +4197,9 @@ mod tests {
             None,
             FontStyle::Normal,
         );
-        assert_eq!(all.len(), 10_000);
-        assert_eq!(sys.line_reshapes(), 10_000);
-        assert!(sys.line_cache_len() >= 10_000);
+        assert_eq!(all.len(), LINES);
+        assert_eq!(sys.line_reshapes(), LINES as u64);
+        assert!(sys.line_cache_len() >= LINES);
 
         sys.reset_line_reshapes();
         let again = sys.shape_lines_visible_buffer(
@@ -4210,14 +4214,15 @@ mod tests {
             FontStyle::Normal,
         );
         assert_eq!(sys.line_reshapes(), 0, "bez edycji wszystko trafia w cache");
-        assert!(Rc::ptr_eq(&all[5000], &again[5000]));
+        assert!(Rc::ptr_eq(&all[edited], &again[edited]));
 
-        let (s, e) = buf.lines().line_range(5000);
+        let (s, e) = buf.lines().line_range(edited);
         let old_text = buf.substring(s..e);
-        assert!(old_text.starts_with("line 05000"));
-        buf.replace(s..e, "line 05000 EDITED single line change", None);
+        let label = format!("line {edited:05}");
+        assert!(old_text.starts_with(&label));
+        buf.replace(s..e, &format!("{label} EDITED single line change"), None);
 
-        let (ns, ne) = buf.lines().line_range(5000);
+        let (ns, ne) = buf.lines().line_range(edited);
         let spans = buf.spans_for_line(ns..ne);
         let line_text = buf.substring(ns..ne);
         let h1 = TextSystem::line_hash(&line_text, &spans, ns, 0.0);
@@ -4244,11 +4249,11 @@ mod tests {
             sys.line_reshapes()
         );
         assert!(
-            !Rc::ptr_eq(&all[5000], &after[5000]),
+            !Rc::ptr_eq(&all[edited], &after[edited]),
             "edytowana linia reshape"
         );
         assert!(Rc::ptr_eq(&all[0], &after[0]), "nieedytowane linie hit");
-        assert!(Rc::ptr_eq(&all[9999], &after[9999]));
+        assert!(Rc::ptr_eq(&all[LINES - 1], &after[LINES - 1]));
     }
 
     #[test]

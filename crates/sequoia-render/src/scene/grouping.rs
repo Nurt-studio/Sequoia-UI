@@ -234,11 +234,7 @@ pub(crate) fn group_runs_with_surfaces(
                 let mut color = linear_rgba(s.color);
                 color[3] *= opacity(index);
                 let hard = s.blur <= 0.0 && !s.inset;
-                let spread = if s.spread.is_finite() {
-                    s.spread
-                } else {
-                    0.0
-                };
+                let spread = if s.spread.is_finite() { s.spread } else { 0.0 };
                 let shadow_rect = if hard {
                     Rect::from_xywh(
                         s.rect.left() + s.offset.x - spread,

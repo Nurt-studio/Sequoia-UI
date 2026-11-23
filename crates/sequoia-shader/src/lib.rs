@@ -42,9 +42,9 @@ mod wgsl;
 pub use builtin::{ApplyMask, BUILTINS};
 pub use limits::ShaderLimits;
 pub use math::{Color, Vec2, Vec3, Vec4};
-pub use sequoia_shader_wgsl::{ABI_VERSION, MAX_UNIFORM_BYTES, WGSL_RENDER};
 pub use registry::ShaderRegistry;
 pub use sampler::{Sampler2D, Sampler3D};
+pub use sequoia_shader_wgsl::{ABI_VERSION, MAX_UNIFORM_BYTES, WGSL_RENDER};
 pub use traits::{
     FragLocal, FragPos, FragUv, FragWorld, MAX_TEXTURES, SequoiShader, TEXTURE_GROUP_BASE,
     TextureKind, VertexIndex,

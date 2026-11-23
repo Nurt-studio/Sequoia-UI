@@ -8,8 +8,8 @@ use image::RgbaImage;
 use sequoia_assets::AssetRegistry;
 use sequoia_core::{
     BlendMode, Color, GradientDraw, GradientKind, ImageDraw, ImageSource, OpacityNode, Point, Quad,
-    Rect, RenderItem, RenderList, RenderTargetId, RoundedClip, Shadow, ShaderDraw, ShaderId, TexInput,
-    TextDraw, Transform,
+    Rect, RenderItem, RenderList, RenderTargetId, RoundedClip, ShaderDraw, ShaderId, Shadow,
+    TexInput, TextDraw, Transform,
 };
 use sequoia_reactive::Environment;
 use sequoia_style::Theme;
@@ -585,7 +585,6 @@ fn ensure_parent(path: &Path) -> Result<(), ExportError> {
     Ok(())
 }
 
-
 pub fn export_png(
     root: impl View + 'static,
     opts: &ExportOptions,
@@ -627,7 +626,13 @@ pub fn export_gif(
     anim_opts: &AnimationOptions,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, ExportError> {
-    export_gif_with_assets(root, opts, anim_opts, AssetRegistry::with_builtin_icons(), path)
+    export_gif_with_assets(
+        root,
+        opts,
+        anim_opts,
+        AssetRegistry::with_builtin_icons(),
+        path,
+    )
 }
 
 pub fn export_gif_with_assets(
@@ -646,7 +651,13 @@ pub fn export_frames(
     anim_opts: &AnimationOptions,
     dir_path: impl AsRef<Path>,
 ) -> Result<Vec<PathBuf>, ExportError> {
-    export_frames_with_assets(root, opts, anim_opts, AssetRegistry::with_builtin_icons(), dir_path)
+    export_frames_with_assets(
+        root,
+        opts,
+        anim_opts,
+        AssetRegistry::with_builtin_icons(),
+        dir_path,
+    )
 }
 
 pub fn export_frames_with_assets(
@@ -716,11 +727,11 @@ fn rasterize(
 /// Collects every opacity group as `(start, end, opacity)` item ranges.
 fn collect_opacity_groups(nodes: &[OpacityNode], out: &mut Vec<(usize, usize, f32)>) {
     for node in nodes {
-        if let OpacityNode::Group { opacity, children } = node {
-            if let Some((start, end)) = opacity_range(children) {
-                out.push((start, end, *opacity));
-                collect_opacity_groups(children, out);
-            }
+        if let OpacityNode::Group { opacity, children } = node
+            && let Some((start, end)) = opacity_range(children)
+        {
+            out.push((start, end, *opacity));
+            collect_opacity_groups(children, out);
         }
     }
 }
@@ -757,12 +768,7 @@ struct Rasterizer<'a> {
 }
 
 impl Rasterizer<'_> {
-    fn group_at(
-        &self,
-        index: usize,
-        end: usize,
-        applied: &[usize],
-    ) -> Option<(usize, usize, f32)> {
+    fn group_at(&self, index: usize, end: usize, applied: &[usize]) -> Option<(usize, usize, f32)> {
         self.groups
             .iter()
             .enumerate()
@@ -773,13 +779,7 @@ impl Rasterizer<'_> {
             .map(|(slot, (_, stop, opacity))| (slot, *stop, *opacity))
     }
 
-    fn render_range(
-        &mut self,
-        dst: &mut RgbaImage,
-        start: usize,
-        end: usize,
-        applied: &[usize],
-    ) {
+    fn render_range(&mut self, dst: &mut RgbaImage, start: usize, end: usize, applied: &[usize]) {
         let mut index = start;
         while index < end {
             if let Some((group_slot, group_end, opacity)) = self.group_at(index, end, applied) {
@@ -2211,7 +2211,12 @@ mod tests {
         });
 
         let saved = exporter
-            .export_gif(Canvas::new().on_draw(glass_scene), &opts, &anim_opts, &gif_path)
+            .export_gif(
+                Canvas::new().on_draw(glass_scene),
+                &opts,
+                &anim_opts,
+                &gif_path,
+            )
             .unwrap();
         assert_eq!(saved, gif_path);
 

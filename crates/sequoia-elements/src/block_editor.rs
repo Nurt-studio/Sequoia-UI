@@ -999,6 +999,10 @@ impl View for BlockEditor {
         let document = self.document.get_untracked();
         self.normalize_state(&document);
         let theme = ctx.theme();
+        let page_background = self
+            .background
+            .filter(|color| color.a > 0.0)
+            .unwrap_or(theme.background);
         let content = self.content_rect(rect);
         let (layout, _) = self.paint_layout(ctx, &document);
         let (focus, anchor, preedit, preedit_cursor, ensure_visible, preferred_line) = {
@@ -1092,7 +1096,17 @@ impl View for BlockEditor {
             let focused_line = is_focused
                 .then(|| caret_line(block, focus.offset, preferred_line))
                 .flatten();
-            let text_color = block.style.text_color.unwrap_or(theme.text);
+            let background = block
+                .style
+                .background
+                .filter(|color| color.a > 0.0)
+                .map(|color| blend_over(color, page_background))
+                .unwrap_or(page_background);
+            let text_color = readable_text_color(
+                block.style.text_color.unwrap_or(theme.text),
+                background,
+                theme,
+            );
             let line_origin = Point::new(
                 content.left() + block.content_rect.left(),
                 origin.y + block.content_rect.top(),
@@ -1200,19 +1214,11 @@ impl View for BlockEditor {
                     );
                     let caret_x = preedit_x + cursor_width;
                     if ctx.state.focused {
-                        ime_rect = Some(Rect::from_xywh(
-                            caret_x,
-                            line_origin.y + line.top,
-                            1.0,
-                            line.height.max(1.0),
-                        ));
+                        let (caret_y, caret_height) =
+                            caret_geometry(baseline, block.style.text.size);
+                        ime_rect = Some(Rect::from_xywh(caret_x, caret_y, 1.0, caret_height));
                         ctx.quad(
-                            Rect::from_xywh(
-                                caret_x,
-                                line_origin.y + line.top,
-                                1.5,
-                                line.height.max(1.0),
-                            ),
+                            Rect::from_xywh(caret_x, caret_y, 1.5, caret_height),
                             theme.accent,
                             0.0,
                         );
@@ -1239,8 +1245,7 @@ impl View for BlockEditor {
                     );
                 } else if is_focused && focused_line == Some(line_index) && ctx.state.focused {
                     let caret_x = line_origin.x + line.x_at(focus.offset);
-                    let caret_y = line_origin.y + line.top;
-                    let caret_height = line.height.max(1.0);
+                    let (caret_y, caret_height) = caret_geometry(baseline, block.style.text.size);
                     ime_rect = Some(Rect::from_xywh(caret_x, caret_y, 1.0, caret_height));
                     ctx.quad(
                         Rect::from_xywh(caret_x, caret_y, 1.5, caret_height),
@@ -1251,12 +1256,16 @@ impl View for BlockEditor {
             }
 
             if is_focused && ctx.state.focused && block.lines.is_empty() {
-                let height = block.style.text.line_height();
+                let size = block.style.text.size;
+                let baseline = origin.y
+                    + block.content_rect.top()
+                    + block.style.text.line_height() * 0.5
+                    + size * 0.35;
+                let (caret_y, caret_height) = caret_geometry(baseline, size);
                 let caret_x = content.left() + block.content_rect.left();
-                let caret_y = origin.y + block.content_rect.top();
-                ime_rect = Some(Rect::from_xywh(caret_x, caret_y, 1.0, height));
+                ime_rect = Some(Rect::from_xywh(caret_x, caret_y, 1.0, caret_height));
                 ctx.quad(
-                    Rect::from_xywh(caret_x, caret_y, 1.5, height),
+                    Rect::from_xywh(caret_x, caret_y, 1.5, caret_height),
                     theme.accent,
                     0.0,
                 );
@@ -1541,10 +1550,89 @@ fn char_byte_index(text: &str, char_index: usize) -> usize {
         .unwrap_or(text.len())
 }
 
+fn caret_geometry(baseline: f32, size: f32) -> (f32, f32) {
+    (baseline - size * 0.8, size * 1.05)
+}
+
+fn relative_luminance(color: Color) -> f32 {
+    let channel = |value: f32| {
+        let value = value.clamp(0.0, 1.0);
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+}
+
+fn blend_over(foreground: Color, background: Color) -> Color {
+    let alpha = foreground.a.clamp(0.0, 1.0);
+    Color::rgb(
+        foreground.r * alpha + background.r * (1.0 - alpha),
+        foreground.g * alpha + background.g * (1.0 - alpha),
+        foreground.b * alpha + background.b * (1.0 - alpha),
+    )
+}
+
+fn contrast_ratio(a: f32, b: f32) -> f32 {
+    let (light, dark) = if a >= b { (a, b) } else { (b, a) };
+    (light + 0.05) / (dark + 0.05)
+}
+
+fn readable_text_color(text: Color, background: Color, theme: Theme) -> Color {
+    if contrast_ratio(relative_luminance(text), relative_luminance(background)) >= 4.5 {
+        return text;
+    }
+    if relative_luminance(background) < 0.5 {
+        Color::rgb8(0xEC, 0xEE, 0xF2)
+    } else {
+        theme.text
+    }
+}
+
 fn clamp_char_boundary(text: &str, mut index: usize) -> usize {
     index = index.min(text.len());
     while index > 0 && !text.is_char_boundary(index) {
         index -= 1;
     }
     index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caret_height_follows_glyph_size_not_line_height() {
+        let size = 16.0;
+        let (top, height) = caret_geometry(size * 0.8, size);
+        assert!(top.abs() < 0.001);
+        assert!((height - size * 1.05).abs() < 0.001);
+        assert!(height < size * 1.45);
+    }
+
+    #[test]
+    fn readable_text_color_adapts_to_dark_block_backgrounds() {
+        let theme = Theme::light();
+        let code_background = Color::rgba(0.12, 0.13, 0.16, 1.0);
+        let text = readable_text_color(theme.text, code_background, theme);
+        assert!(relative_luminance(text) > 0.7);
+    }
+
+    #[test]
+    fn readable_text_color_keeps_high_contrast_text() {
+        let theme = Theme::dark();
+        assert_eq!(
+            readable_text_color(theme.text, theme.background, theme),
+            theme.text
+        );
+    }
+
+    #[test]
+    fn readable_text_color_fixes_light_quote_on_white() {
+        let theme = Theme::light();
+        let quote = Color::rgb8(155, 162, 175);
+        assert_eq!(readable_text_color(quote, theme.surface, theme), theme.text);
+    }
 }

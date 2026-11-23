@@ -1590,14 +1590,7 @@ impl RenderList {
                             items: segment..index,
                         });
                     }
-                    open.push((
-                        *id,
-                        *size,
-                        *blend,
-                        *format,
-                        *persistence,
-                        index + 1,
-                    ));
+                    open.push((*id, *size, *blend, *format, *persistence, index + 1));
                 }
                 RenderItem::TargetEnd { id } => {
                     let Some(position) = open.iter().rposition(|(open_id, ..)| open_id == id)
@@ -2161,7 +2154,13 @@ impl RenderList {
         size: Size,
         format: TargetFormat,
     ) -> RenderTargetId {
-        self.begin_target_at(id, size, BlendMode::Normal, format, TargetPersistence::Preserve)
+        self.begin_target_at(
+            id,
+            size,
+            BlendMode::Normal,
+            format,
+            TargetPersistence::Preserve,
+        )
     }
 
     fn begin_target_at(
@@ -2212,7 +2211,13 @@ impl RenderList {
     /// the renderer only clears the texture. Frame-local targets never need
     /// this because they are cleared on every pass anyway.
     pub fn clear_target(&mut self, id: RenderTargetId, size: Size, format: TargetFormat) {
-        self.begin_target_at(id, size, BlendMode::Normal, format, TargetPersistence::Clear);
+        self.begin_target_at(
+            id,
+            size,
+            BlendMode::Normal,
+            format,
+            TargetPersistence::Clear,
+        );
         self.end_target(id);
     }
 
@@ -3715,7 +3720,7 @@ mod tests {
     fn persistent_targets_plan_as_preserved_passes() {
         let mut list = RenderList::new();
         let layer = RenderTargetId::new(9);
-        list.begin_persistent_target(layer, Size::new(64.0, 64.0), TargetFormat::Rgba8);
+        let _ = list.begin_persistent_target(layer, Size::new(64.0, 64.0), TargetFormat::Rgba8);
         list.end_target(layer);
 
         assert!(matches!(
@@ -3740,7 +3745,7 @@ mod tests {
     fn target_damage_is_merged_and_only_planned_for_persistent_targets() {
         let mut list = RenderList::new();
         let layer = RenderTargetId::new(3);
-        list.begin_persistent_target(layer, Size::new(100.0, 100.0), TargetFormat::Rgba8);
+        let _ = list.begin_persistent_target(layer, Size::new(100.0, 100.0), TargetFormat::Rgba8);
         list.damage_target(Rect::from_xywh(10.0, 10.0, 20.0, 20.0));
         list.damage_target(Rect::from_xywh(50.0, 40.0, 10.0, 10.0));
         list.end_target(layer);
@@ -3805,7 +3810,7 @@ mod tests {
     fn explicit_target_ids_do_not_collide_with_allocated_ones() {
         let mut list = RenderList::new();
         let layer = RenderTargetId::new(9);
-        list.begin_persistent_target(layer, Size::new(8.0, 8.0), TargetFormat::Rgba8);
+        let _ = list.begin_persistent_target(layer, Size::new(8.0, 8.0), TargetFormat::Rgba8);
         list.end_target(layer);
         let next = list.begin_target(Size::new(8.0, 8.0), BlendMode::Normal);
         assert_eq!(next.get(), 10, "allocated ids skip the explicit handle");

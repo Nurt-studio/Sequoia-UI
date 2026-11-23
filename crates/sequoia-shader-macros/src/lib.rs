@@ -67,7 +67,11 @@ impl UniformType {
                 _ => return None,
             })
         } else if let Type::Array(array) = ty {
-            let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(lit), .. }) = &array.len else {
+            let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(lit),
+                ..
+            }) = &array.len
+            else {
                 return None;
             };
             let n = lit.base10_parse::<usize>().ok()?;
@@ -631,13 +635,14 @@ mod tests {
 
     #[test]
     fn f32_arrays_are_packed_into_vec4_storage() {
-        let wgsl = compile(
-            "fn arr(weights: [f32; 5]) -> Color { return vec4<f32>(weights[4]); }",
-        )
-        .expect("arrays must compile");
+        let wgsl = compile("fn arr(weights: [f32; 5]) -> Color { return vec4<f32>(weights[4]); }")
+            .expect("arrays must compile");
         assert!(wgsl.contains("weights: array<vec4<f32>, 2>,"), "{wgsl}");
         assert!(wgsl.contains("var weights: array<f32, 5>;"), "{wgsl}");
-        assert!(wgsl.contains("weights[4] = sequoia_u.weights[1].x;"), "{wgsl}");
+        assert!(
+            wgsl.contains("weights[4] = sequoia_u.weights[1].x;"),
+            "{wgsl}"
+        );
     }
 
     #[test]

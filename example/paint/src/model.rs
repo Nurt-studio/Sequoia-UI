@@ -603,8 +603,12 @@ impl State {
     pub(crate) fn push_undo_rect(&mut self, rect: Rect) {
         let x0 = rect.left().floor().max(0.0) as i32;
         let y0 = rect.top().floor().max(0.0) as i32;
-        let x1 = (rect.left() + rect.size.width).ceil().min(self.doc.width() as f32) as i32;
-        let y1 = (rect.top() + rect.size.height).ceil().min(self.doc.height() as f32) as i32;
+        let x1 = (rect.left() + rect.size.width)
+            .ceil()
+            .min(self.doc.width() as f32) as i32;
+        let y1 = (rect.top() + rect.size.height)
+            .ceil()
+            .min(self.doc.height() as f32) as i32;
         if x0 >= x1 || y0 >= y1 {
             return;
         }
@@ -621,13 +625,22 @@ impl State {
     }
 
     pub(crate) fn push_undo(&mut self) {
-        self.push_undo_rect(Rect::from_xywh(0.0, 0.0, self.doc.width() as f32, self.doc.height() as f32));
+        self.push_undo_rect(Rect::from_xywh(
+            0.0,
+            0.0,
+            self.doc.width() as f32,
+            self.doc.height() as f32,
+        ));
     }
 
     pub(crate) fn undo(&mut self) {
         if let Some(patch) = self.undo.pop() {
             let current_patch_pixels = self.doc.crop(patch.rect);
-            self.doc.blit(&patch.pixels, patch.rect.left() as i32, patch.rect.top() as i32);
+            self.doc.blit(
+                &patch.pixels,
+                patch.rect.left() as i32,
+                patch.rect.top() as i32,
+            );
             self.redo.push(UndoPatch {
                 rect: patch.rect,
                 pixels: current_patch_pixels,
@@ -645,7 +658,11 @@ impl State {
     pub(crate) fn redo(&mut self) {
         if let Some(patch) = self.redo.pop() {
             let current_patch_pixels = self.doc.crop(patch.rect);
-            self.doc.blit(&patch.pixels, patch.rect.left() as i32, patch.rect.top() as i32);
+            self.doc.blit(
+                &patch.pixels,
+                patch.rect.left() as i32,
+                patch.rect.top() as i32,
+            );
             self.undo.push(UndoPatch {
                 rect: patch.rect,
                 pixels: current_patch_pixels,

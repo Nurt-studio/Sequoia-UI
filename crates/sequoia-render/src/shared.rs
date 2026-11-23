@@ -11,9 +11,7 @@ use std::sync::{Arc, Mutex};
 use winit::window::Window;
 
 use crate::gpu::resources::ImageCache;
-use crate::renderer::{
-    GpuRenderer, GpuSurfaceSetup, PreinitGpu, request_device, select_backend,
-};
+use crate::renderer::{GpuRenderer, GpuSurfaceSetup, PreinitGpu, request_device, select_backend};
 use crate::types::*;
 
 /// One GPU device shared by all renderers created from it.

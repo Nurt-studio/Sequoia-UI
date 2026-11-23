@@ -138,12 +138,7 @@ fn main() {
         .background(BG)
         .padding(20.0)
         .gap(12.0)
-        .child(
-            Text::new("WgpuSurface")
-                .size(22.0)
-                .bold()
-                .color(TEXT),
-        )
+        .child(Text::new("WgpuSurface").size(22.0).bold().color(TEXT))
         .child(
             Text::new("A raw wgpu pipeline inside the normal layout.")
                 .size(13.0)

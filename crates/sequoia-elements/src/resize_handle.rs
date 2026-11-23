@@ -335,10 +335,10 @@ impl View for ResizeHandle {
         }
 
         let style = self.style.unwrap_or_default();
-        if let Some(gutter) = self.gutter.or(style.gutter) {
-            if gutter.a > 0.0 {
-                ctx.quad(r, gutter, 0.0);
-            }
+        if let Some(gutter) = self.gutter.or(style.gutter)
+            && gutter.a > 0.0
+        {
+            ctx.quad(r, gutter, 0.0);
         }
         let active = ctx.state.hovered || ctx.state.pressed || self.drag.get().is_some();
         let (w, c) = if active {

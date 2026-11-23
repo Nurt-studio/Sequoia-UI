@@ -1,4 +1,4 @@
-﻿//! Embedded WGSL shader shared by all render pipelines.
+//! Embedded WGSL shader shared by all render pipelines.
 //!
 //! Each pipeline selects a vertex/fragment entry point from this module, so the
 //! geometry helpers and effect code stay identical across draw paths.
@@ -71,9 +71,7 @@ pub(crate) fn texture_kinds(source: &str) -> Vec<TextureKind> {
 
 /// Composes a user fragment function with the engine vertex and uniform ABI.
 pub fn compose_user_shader(source: &str) -> String {
-    format!(
-        "{USER_SHADER_PRELUDE}\n{USER_SHADER_UNIFORMS}\n{source}\n{USER_SHADER_EPILOGUE}"
-    )
+    format!("{USER_SHADER_PRELUDE}\n{USER_SHADER_UNIFORMS}\n{source}\n{USER_SHADER_EPILOGUE}")
 }
 
 /// Checks the one bind group entry every user shader module must declare.
@@ -203,7 +201,10 @@ mod tests {
             @group(1) @binding(1) var photo_sampler: sampler;\n\
             @group(2) @binding(0) var lut: texture_3d<f32>;\n\
             @group(2) @binding(1) var lut_sampler: sampler;";
-        assert_eq!(texture_kinds(source), vec![TextureKind::D2, TextureKind::D3]);
+        assert_eq!(
+            texture_kinds(source),
+            vec![TextureKind::D2, TextureKind::D3]
+        );
         assert!(texture_kinds("fn f() {}").is_empty());
     }
 }

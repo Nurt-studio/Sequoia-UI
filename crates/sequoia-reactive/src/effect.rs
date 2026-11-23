@@ -112,8 +112,7 @@ impl EffectNode {
         let mut slots: Vec<DepSlot> = Vec::new();
         let outcome = {
             let observer: Rc<dyn Observer> = self.clone();
-            let _frame =
-                FrameGuard::new_known(Some(Rc::downgrade(&observer)), known, &mut slots);
+            let _frame = FrameGuard::new_known(Some(Rc::downgrade(&observer)), known, &mut slots);
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
         };
         if let Err(payload) = outcome {
@@ -173,10 +172,7 @@ impl EffectNode {
     /// and unregistering the ones that disappeared.
     fn rebind(&self, previous: Vec<DepSlot>, slots: Vec<DepSlot>) {
         let same = slots.len() == previous.len()
-            && slots
-                .iter()
-                .zip(previous.iter())
-                .all(|(a, b)| a.0 == b.0);
+            && slots.iter().zip(previous.iter()).all(|(a, b)| a.0 == b.0);
         if same {
             // Nothing changed: keep the existing registrations, refresh only
             // the cached versions.

@@ -5,7 +5,7 @@ use std::process::{Child, Command};
 use std::time::{Duration, SystemTime};
 
 use sequoia_platform::App;
-use sequoia_seq::SeqLoader;
+use sequoia_seq::{SeqError, SeqLoader};
 
 const CHILD_FLAG: &str = "--__child";
 
@@ -50,12 +50,12 @@ fn display_name(path: &Path) -> String {
 
 fn run_once(path: &Path) -> i32 {
     let file = display_name(path);
-    let loaded = match SeqLoader::load_file(&file) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("{e}");
-            return 1;
-        }
+    let (loaded, diagnostics) = SeqLoader::load_file_all(&file);
+    for diagnostic in &diagnostics {
+        eprintln!("{diagnostic}");
+    }
+    let Some(loaded) = loaded else {
+        return i32::from(diagnostics.iter().any(SeqError::is_error));
     };
     let (w, h) = loaded.meta.size;
     let result = App::new()

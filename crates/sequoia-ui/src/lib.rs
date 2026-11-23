@@ -17,10 +17,10 @@ pub use sequoia_layout as layout;
 pub use sequoia_platform as platform;
 pub use sequoia_platform::wgpu;
 pub use sequoia_platform::{
-    Accelerator, AcceleratorCtx, App, CliArgs, DockLayoutStore, Executor, FileFilter,
-    FrameMetrics, GlobalHotkeys, HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog,
-    RecentFiles, RedrawMode, RenderBackend, ResizeDirection, Settings, SingleInstance,
-    WindowSettings, WindowSpec, Windows, help_text, native_message, not_editing,
+    Accelerator, AcceleratorCtx, App, CliArgs, DockLayoutStore, Executor, FileFilter, FrameMetrics,
+    GlobalHotkeys, HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles,
+    RedrawMode, RenderBackend, ResizeDirection, Settings, SingleInstance, WindowSettings,
+    WindowSpec, Windows, help_text, native_message, not_editing,
 };
 pub use sequoia_reactive as reactive;
 pub use sequoia_reactive::{Binding, Environment, Signal, Store, UndoSignal};
@@ -42,9 +42,9 @@ pub mod prelude {
         Accelerator, AcceleratorCtx, AnyView, App, AsyncRuntime, AsyncState, CliArgs, Debouncer,
         DockLayoutStore, Emitter, Environment, Executor, FileFilter, FrameMetrics, GlobalHotkeys,
         HotkeyError, HotkeyId, JobId, MessageKind, NativeFileDialog, RecentFiles, RedrawMode,
-        RenderBackend, ResizeDirection, Resource, ScopedTask, Settings, Signal, SignalAsyncExt, SingleInstance,
-        Store, TaskHandle, TaskId, Throttler, View, WindowId, WindowSpec, Windows, help_text,
-        include_seq, native_message, not_editing,
+        RenderBackend, ResizeDirection, Resource, ScopedTask, Settings, Signal, SignalAsyncExt,
+        SingleInstance, Store, TaskHandle, TaskId, Throttler, View, WindowId, WindowSpec, Windows,
+        help_text, include_seq, native_message, not_editing,
     };
     pub use crate::{sleep, timeout};
     pub use sequoia_animation::Track as AnimTrack;
@@ -122,14 +122,13 @@ pub mod prelude {
         Masonry, MemoLiveExt, Opacity, Orientation, OverlayEntry, OverlayLayer, Pad2D, Panel,
         PanelId, PanelPayload, Placement, Popper, Portal, Presence, Prop, Pulse, Rebuild,
         Responsive, RichText, Row, ScreenOrientation, ScrollAxis, ScrollView, ScrollbarVisibility,
-        Sequence,
-        ShaderChain, ShaderPass, Shake, SignalLiveExt, SortDir, Spacer, SplitAxis, SplitPanel,
-        SpringSpec, Stack, StackPos, Styleable, Table, TableColumn, Text, ThumbnailCache, Track1D,
-        Translate, TreeNode, TreeView, Unit, VirtualList, WithSize, Wrap, clamp_card_top_left,
-        dock_decode, dock_encode, dock_preview_rect, draw_gradient_mask, drop_from_fraction,
-        drop_from_fraction_or_float, edge_ghost_rect, edge_hint_at, exceeded_undock, fade_in,
-        impl_view_for_leaf, main_first_index, orientation_of, pop_in, screen_orientation_of,
-        shared_cache, slide_in, stagger,
+        Sequence, ShaderChain, ShaderPass, Shake, SignalLiveExt, SortDir, Spacer, SplitAxis,
+        SplitPanel, SpringSpec, Stack, StackPos, Styleable, Table, TableColumn, Text,
+        ThumbnailCache, Track1D, Translate, TreeNode, TreeView, Unit, VirtualList, WithSize, Wrap,
+        clamp_card_top_left, dock_decode, dock_encode, dock_preview_rect, draw_gradient_mask,
+        drop_from_fraction, drop_from_fraction_or_float, edge_ghost_rect, edge_hint_at,
+        exceeded_undock, fade_in, impl_view_for_leaf, main_first_index, orientation_of, pop_in,
+        screen_orientation_of, shared_cache, slide_in, stagger,
     };
     pub use sequoia_view::{
         Clip, Enter, Motion, Rotated, Scaled, StatePatch, States, Value, ValueExt, ViewModifiers,

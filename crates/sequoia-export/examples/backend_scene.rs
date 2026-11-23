@@ -162,7 +162,8 @@ fn render_pixel(uv: [f32; 2], heavy: bool) -> [f32; 4] {
             if bounce < 14.0 {
                 let bounce_point = add(bounce_origin, scale(reflected, bounce));
                 let reflected_color = surface_color(bounce_point, reflected, light, heavy);
-                let fresnel = 0.04 + 0.55 * (1.0 - dot(normal, scale(dir, -1.0)).max(0.0)).powf(5.0);
+                let fresnel =
+                    0.04 + 0.55 * (1.0 - dot(normal, scale(dir, -1.0)).max(0.0)).powf(5.0);
                 color = [
                     color[0] * (1.0 - fresnel) + reflected_color[0] * fresnel,
                     color[1] * (1.0 - fresnel) + reflected_color[1] * fresnel,
@@ -251,9 +252,7 @@ fn main() {
     let options = ExportOptions::new(760.0, 480.0)
         .scale(SCALE_1X)
         .background(BG);
-    let exporter = Exporter::new()
-        .shader(RaymarchLight)
-        .shader(RaymarchHeavy);
+    let exporter = Exporter::new().shader(RaymarchLight).shader(RaymarchHeavy);
     exporter
         .export_png(Canvas::new().on_draw(scene(heavy)), &options, &path)
         .expect("export scene png");

@@ -19,8 +19,9 @@ use crate::gpu::resources::{
     ImageAtlas, ImageCache, SharedImageCache, UserShaderEntry, VolumeCache, lock_images,
     vertex_buffer,
 };
-use crate::gpu::shaders::{passthrough_wgsl, texture_kinds as shader_texture_kinds, validate_user_shader};
-use sequoia_shader::TextureKind;
+use crate::gpu::shaders::{
+    passthrough_wgsl, texture_kinds as shader_texture_kinds, validate_user_shader,
+};
 use crate::pass::opacity::*;
 use crate::scene::grouping::*;
 use crate::scene::instances::*;
@@ -29,6 +30,7 @@ use crate::surface::*;
 use crate::types::*;
 use crate::utils::*;
 use sequoia_core::{BlendMode, Color, Rect, RenderList, ShaderId, TexInput};
+use sequoia_shader::TextureKind;
 use sequoia_view::SurfaceDraw;
 
 /// Owns the wgpu device and window surface and renders frames into it.
@@ -371,9 +373,7 @@ pub(crate) fn select_backend(
         if __trace {
             let mut out = String::new();
             for (label, ms) in &__marks {
-                out.push_str(&format!(
-                    "[startup] gpu.select.{label:<12} {ms:>8.2} ms\n"
-                ));
+                out.push_str(&format!("[startup] gpu.select.{label:<12} {ms:>8.2} ms\n"));
             }
             eprint!("{out}");
         }
@@ -440,11 +440,13 @@ pub fn preinit_gpu(options: GpuOptions) -> Result<PreinitGpu, RenderError> {
     };
     for backend in candidates {
         let instance = create_instance(backend);
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: options.power_preference.wgpu(),
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        })) else {
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: options.power_preference.wgpu(),
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            }))
+        else {
             continue;
         };
         let (device, queue) = request_device(&adapter)?;
@@ -491,10 +493,7 @@ impl GpuRenderer {
         macro_rules! mark {
             ($label:expr) => {
                 if __trace {
-                    __marks.push((
-                        $label,
-                        __create_start.elapsed().as_secs_f64() * 1000.0,
-                    ));
+                    __marks.push(($label, __create_start.elapsed().as_secs_f64() * 1000.0));
                 }
             };
         }
@@ -1763,8 +1762,7 @@ impl GpuRenderer {
         if blend_mode_is_advanced(blend) {
             log::warn!("sequoia-render: blend mode {blend:?} falls back to Normal until stage 4");
         }
-        let layout =
-            create_user_shader_pipeline_layout(&self.device, &bgl, &texture_layout_refs);
+        let layout = create_user_shader_pipeline_layout(&self.device, &bgl, &texture_layout_refs);
         // Pipeline creation can fail validation (mismatched vertex layout,
         // blend state, …). Without a scope the error only went to the log with
         // no link to the shader, and a broken pipeline was cached.
@@ -2059,10 +2057,7 @@ impl GpuRenderer {
         // Embedded surface callbacks and cached blits are not scissored, so
         // they stay on the full-repaint path even though the colour target is
         // still offscreen.
-        let partial_regions = if use_offscreen
-            && self.frame_target_valid
-            && jobs.is_empty()
-        {
+        let partial_regions = if use_offscreen && self.frame_target_valid && jobs.is_empty() {
             damage
                 .map(|regions| damage_scissors(regions, DAMAGE_MARGIN, s, fb))
                 .unwrap_or_default()
@@ -3228,7 +3223,11 @@ impl GpuRenderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_pipeline(self.surface_blit_pipeline.as_ref().expect("surface blit pipeline"));
+                pass.set_pipeline(
+                    self.surface_blit_pipeline
+                        .as_ref()
+                        .expect("surface blit pipeline"),
+                );
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.set_vertex_buffer(0, self.blit_buf.slice(..));
                 for (i, key) in blit_keys.iter().enumerate() {
@@ -3312,7 +3311,9 @@ impl GpuRenderer {
                                 ) {
                                     Self::draw_backdrop_marker_at(
                                         self.backdrop_pipeline.as_ref().expect("backdrop pipeline"),
-                                        self.backdrop_blur_pipeline.as_ref().expect("backdrop blur pipeline"),
+                                        self.backdrop_blur_pipeline
+                                            .as_ref()
+                                            .expect("backdrop blur pipeline"),
                                         &self.bind_group,
                                         bufs,
                                         origin,
@@ -3364,7 +3365,9 @@ impl GpuRenderer {
                                 let filter_blur = backdrop_insts[idx as usize].params[0];
                                 Self::draw_filter_at(
                                     self.backdrop_pipeline.as_ref().expect("backdrop pipeline"),
-                                    self.backdrop_blur_pipeline.as_ref().expect("backdrop blur pipeline"),
+                                    self.backdrop_blur_pipeline
+                                        .as_ref()
+                                        .expect("backdrop blur pipeline"),
                                     &self.bind_group,
                                     &self.quad_pipeline,
                                     &self.quad_pipeline_opaque,
@@ -3529,7 +3532,9 @@ impl GpuRenderer {
                     ) {
                         Self::draw_backdrop_marker_at(
                             self.backdrop_pipeline.as_ref().expect("backdrop pipeline"),
-                            self.backdrop_blur_pipeline.as_ref().expect("backdrop blur pipeline"),
+                            self.backdrop_blur_pipeline
+                                .as_ref()
+                                .expect("backdrop blur pipeline"),
                             &self.bind_group,
                             bufs,
                             origin,
@@ -3856,7 +3861,11 @@ impl GpuRenderer {
                     multiview_mask: None,
                 });
                 if !blit_quads.is_empty() {
-                    pass.set_pipeline(self.surface_blit_pipeline.as_ref().expect("surface blit pipeline"));
+                    pass.set_pipeline(
+                        self.surface_blit_pipeline
+                            .as_ref()
+                            .expect("surface blit pipeline"),
+                    );
                     pass.set_bind_group(0, &self.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.blit_buf.slice(..));
                     for (i, key) in blit_keys.iter().enumerate() {
@@ -3938,7 +3947,9 @@ impl GpuRenderer {
                             }
                         }
                         GuiRun::Gradients(start, len) => {
-                            pass.set_pipeline(self.gradient_pipeline.as_ref().expect("gradient pipeline"));
+                            pass.set_pipeline(
+                                self.gradient_pipeline.as_ref().expect("gradient pipeline"),
+                            );
                             pass.set_bind_group(0, &self.bind_group, &[]);
                             pass.set_vertex_buffer(0, self.gradient_buf.slice(..));
                             pass.draw(0..4, start..start + len);
@@ -3977,9 +3988,7 @@ impl GpuRenderer {
                                     // groups the shader declares; binding more
                                     // fails validation.
                                     let count = entry.kinds.len();
-                                    for (slot, group) in
-                                        groups.iter().take(count).enumerate()
-                                    {
+                                    for (slot, group) in groups.iter().take(count).enumerate() {
                                         pass.set_bind_group(slot as u32 + 1, group, &[]);
                                     }
                                 }
@@ -3990,7 +3999,6 @@ impl GpuRenderer {
                     }
                 }
             }
-
         }
 
         if use_offscreen {

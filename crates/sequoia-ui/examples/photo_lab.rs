@@ -86,7 +86,6 @@ impl Lab {
             preset: Signal::new(0),
         }
     }
-
 }
 
 fn preview(lab: &Lab, photo: &ImageSource, aspect: (f32, f32)) -> impl Fn(&mut Painter) + 'static {
@@ -96,11 +95,7 @@ fn preview(lab: &Lab, photo: &ImageSource, aspect: (f32, f32)) -> impl Fn(&mut P
         lab.contrast.clone(),
         lab.saturation.clone(),
     );
-    let (exposure, warmth, preset) = (
-        lab.exposure.clone(),
-        lab.warmth.clone(),
-        lab.preset.clone(),
-    );
+    let (exposure, warmth, preset) = (lab.exposure.clone(), lab.warmth.clone(), lab.preset.clone());
 
     move |g: &mut Painter| {
         let area = g.rect();
@@ -138,10 +133,7 @@ fn preview(lab: &Lab, photo: &ImageSource, aspect: (f32, f32)) -> impl Fn(&mut P
             [0.0, 0.0, 1.0, 1.0],
             &[
                 ("content", TexInput::Image(photo.clone())),
-                (
-                    "lut",
-                    TexInput::Image(ImageSource::cube(lut.to_string())),
-                ),
+                ("lut", TexInput::Image(ImageSource::cube(lut.to_string()))),
             ],
         );
     }
@@ -152,12 +144,7 @@ fn slider_row(label: &'static str, value: Signal<f32>, min: f32, max: f32) -> im
     Row::new()
         .fill_width()
         .gap(12.0)
-        .child(
-            Text::new(label)
-                .size(12.0)
-                .color(MUTED)
-                .width(78.0),
-        )
+        .child(Text::new(label).size(12.0).color(MUTED).width(78.0))
         .child(Slider::new(value).min(min).max(max))
         .child(
             Text::with(move || format!("{:+.2}", read.get()))
@@ -195,33 +182,16 @@ fn main() {
                         .color(MUTED),
                 )
                 .child(
-                    RadioGroup::new(lab.preset.clone(), ["Teal Orange", "Bleach Bypass", "Amber Film"])
-                        .label("Look"),
+                    RadioGroup::new(
+                        lab.preset.clone(),
+                        ["Teal Orange", "Bleach Bypass", "Amber Film"],
+                    )
+                    .label("Look"),
                 )
-                .child(slider_row(
-                    "LUT mix",
-                    lab.strength.clone(),
-                    0.0,
-                    1.0,
-                ))
-                .child(slider_row(
-                    "Contrast",
-                    lab.contrast.clone(),
-                    -0.6,
-                    0.8,
-                ))
-                .child(slider_row(
-                    "Saturation",
-                    lab.saturation.clone(),
-                    -0.8,
-                    0.8,
-                ))
-                .child(slider_row(
-                    "Exposure",
-                    lab.exposure.clone(),
-                    0.4,
-                    1.8,
-                ))
+                .child(slider_row("LUT mix", lab.strength.clone(), 0.0, 1.0))
+                .child(slider_row("Contrast", lab.contrast.clone(), -0.6, 0.8))
+                .child(slider_row("Saturation", lab.saturation.clone(), -0.8, 0.8))
+                .child(slider_row("Exposure", lab.exposure.clone(), 0.4, 1.8))
                 .child(slider_row("Warmth", lab.warmth.clone(), -1.0, 1.0))
                 .child(
                     Button::new("Reset")
@@ -254,7 +224,11 @@ fn main() {
                     Row::new()
                         .fill_size()
                         .gap(20.0)
-                        .child(Canvas::new().flex(1.0).on_draw(preview(&lab, &photo, aspect)))
+                        .child(
+                            Canvas::new()
+                                .flex(1.0)
+                                .on_draw(preview(&lab, &photo, aspect)),
+                        )
                         .child(controls),
                 ),
         )

@@ -49,7 +49,7 @@ pub fn parse_cube(source: &str) -> Result<Lut3D, String> {
                 let parsed = value
                     .parse::<u32>()
                     .map_err(|_| format!("line {}: `{value}` is not a LUT size", index + 1))?;
-                if parsed < 2 || parsed > MAX_LUT_SIZE {
+                if !(2..=MAX_LUT_SIZE).contains(&parsed) {
                     return Err(format!(
                         "line {}: LUT size {parsed} is outside 2..={MAX_LUT_SIZE}",
                         index + 1
@@ -142,9 +142,7 @@ fn parse_triplet<'a>(
         *value = parse_float(part, line)?;
     }
     if parts.next().is_some() {
-        return Err(format!(
-            "line {line}: {head} takes exactly three numbers"
-        ));
+        return Err(format!("line {line}: {head} takes exactly three numbers"));
     }
     Ok(out)
 }
@@ -179,10 +177,7 @@ mod tests {
         assert_eq!(&lut.data[0..4], &[0.0, 0.0, 0.0, 1.0]);
         // Red varies fastest, then green, then blue.
         assert_eq!(&lut.data[4..8], &[1.0 / 3.0, 0.0, 0.0, 1.0]);
-        assert_eq!(
-            &lut.data[lut.data.len() - 4..],
-            &[1.0, 1.0, 1.0, 1.0]
-        );
+        assert_eq!(&lut.data[lut.data.len() - 4..], &[1.0, 1.0, 1.0, 1.0]);
     }
 
     #[test]
@@ -203,8 +198,8 @@ mod tests {
         let error = parse_cube("LUT_3D_SIZE 1\n").expect_err("too small");
         assert!(error.contains("outside 2..="), "{error}");
 
-        let error = parse_cube(&identity_cube(2).replace("0 0 0\n", "0 0\n"))
-            .expect_err("short row");
+        let error =
+            parse_cube(&identity_cube(2).replace("0 0 0\n", "0 0\n")).expect_err("short row");
         assert!(error.contains("three numbers"), "{error}");
     }
 }

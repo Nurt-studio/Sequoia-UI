@@ -39,7 +39,8 @@ impl OpacityDraw {
 }
 
 /// Renderer resources needed while recording opacity passes.
-pub(crate) struct OpacityDrawContext<'a> {    pub(crate) group_layers: &'a [GroupLayer],
+pub(crate) struct OpacityDrawContext<'a> {
+    pub(crate) group_layers: &'a [GroupLayer],
     pub(crate) quad_pipeline: &'a wgpu::RenderPipeline,
     pub(crate) quad_pipeline_opaque: &'a wgpu::RenderPipeline,
     pub(crate) glyph_pipeline: &'a wgpu::RenderPipeline,
@@ -351,10 +352,10 @@ pub(crate) fn draw_opacity_draws(
                     continue;
                 }
                 let px = scissor.map(|bounds| scissor_px(bounds, ctx.fb));
-                if let Some([_, _, w, h]) = px {
-                    if w == 0 || h == 0 {
-                        continue;
-                    }
+                if let Some([_, _, w, h]) = px
+                    && (w == 0 || h == 0)
+                {
+                    continue;
                 }
                 *passes += 1;
                 *draws += gui_run_draws(runs, image_draws, ctx.image_atlas_bg.is_some());
@@ -446,10 +447,10 @@ pub(crate) fn draw_opacity_draws(
                 *passes += 1;
                 *draws += 1;
                 let px = scissor.map(|bounds| scissor_px(bounds, ctx.fb));
-                if let Some([_, _, w, h]) = px {
-                    if w == 0 || h == 0 {
-                        continue;
-                    }
+                if let Some([_, _, w, h]) = px
+                    && (w == 0 || h == 0)
+                {
+                    continue;
                 }
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("sequoia-opacity-composite"),

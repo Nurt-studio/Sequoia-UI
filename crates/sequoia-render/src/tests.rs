@@ -70,7 +70,10 @@ fn uniform_packer_truncates_to_the_abi_limit() {
     pack_shader_uniforms(&mut ring, &[7u8; 32]);
     assert_eq!(ring.len(), SHADER_UNIFORM_STRIDE);
     assert!(ring[..32].iter().all(|b| *b == 7));
-    assert!(ring[32..].iter().all(|b| *b == 0), "the slot is zero-padded");
+    assert!(
+        ring[32..].iter().all(|b| *b == 0),
+        "the slot is zero-padded"
+    );
 
     let oversized = vec![1u8; SHADER_UNIFORM_STRIDE + 16];
     let mut ring = Vec::new();
@@ -737,7 +740,11 @@ fn hard_outer_shadow_becomes_a_plain_quad() {
         &mut runs,
     );
     let q = quads[0];
-    assert_eq!(q.rect, [18.0, 42.0, 208.0, 128.0], "offset and spread baked in");
+    assert_eq!(
+        q.rect,
+        [18.0, 42.0, 208.0, 128.0],
+        "offset and spread baked in"
+    );
     assert_eq!(q.radius, 16.0);
     assert_eq!(q.softness, 0.0);
     assert_eq!(q.spread, 0.0);

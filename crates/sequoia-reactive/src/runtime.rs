@@ -272,16 +272,17 @@ impl Drop for PopGuard {
     }
 }
 
-pub fn untracked<R>(f: impl FnOnce() -> R) -> R {        FRAMES.with_borrow_mut(|f| {
-            f.push(TrackingFrame {
-                observer: None,
-                collect: false,
-                known: Vec::new(),
-                deps: Vec::new(),
-            });
+pub fn untracked<R>(f: impl FnOnce() -> R) -> R {
+    FRAMES.with_borrow_mut(|f| {
+        f.push(TrackingFrame {
+            observer: None,
+            collect: false,
+            known: Vec::new(),
+            deps: Vec::new(),
         });
-        let _guard = PopGuard;
-        f()
+    });
+    let _guard = PopGuard;
+    f()
 }
 
 /// Effects taken out of [`PENDING`] for the current flush that have not run yet.
@@ -414,9 +415,8 @@ pub fn flush_effects() {
                 );
 
                 tail.clear_queued();
-                let stale: Vec<Rc<EffectNode>> = PENDING.with_borrow_mut(|p| {
-                    p.drain(..).filter_map(|w| w.upgrade()).collect()
-                });
+                let stale: Vec<Rc<EffectNode>> =
+                    PENDING.with_borrow_mut(|p| p.drain(..).filter_map(|w| w.upgrade()).collect());
                 for node in stale {
                     node.clear_queued();
                 }

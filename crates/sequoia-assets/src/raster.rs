@@ -930,11 +930,7 @@ mod tests {
     fn dash_absorption_terminates() {
         let pts = vec![SvgPoint::new(0.0, 0.0), SvgPoint::new(5.12e11, 0.0)];
         let out = dash_polyline(&pts, false, &[1.0e6, 2.0e-4, 2.0e-4, 2.0e-4], 0.0);
-        assert_eq!(
-            out.len(),
-            1,
-            "first dash 1e6 is visible, rest broken"
-        );
+        assert_eq!(out.len(), 1, "first dash 1e6 is visible, rest broken");
     }
 
     #[test]

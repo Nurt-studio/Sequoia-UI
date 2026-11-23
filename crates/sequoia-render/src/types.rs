@@ -953,10 +953,11 @@ mod tests {
     #[test]
     fn default_budget_stays_within_total() {
         let budget = MemoryBudget::default();
+        assert!(budget.images + budget.atlas + budget.surfaces + budget.buffers <= budget.total);
         assert!(
-            budget.images + budget.atlas + budget.surfaces + budget.buffers <= budget.total
+            budget.images < budget.total / 2,
+            "images no longer get half"
         );
-        assert!(budget.images < budget.total / 2, "images no longer get half");
         assert!(!budget.is_unlimited());
         assert!(budget.max_images > 0);
     }

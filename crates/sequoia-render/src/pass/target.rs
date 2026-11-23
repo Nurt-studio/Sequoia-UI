@@ -32,13 +32,13 @@ impl GpuRenderer {
     ) -> bool {
         let size = (size.0.max(1), size.1.max(1));
         let format = self.target_texture_format(target);
-        if let Some(entry) = self.render_targets.get_mut(&target) {
-            if entry.size == size {
-                entry.last_used = self.frame_index;
-                entry.persistent = persistent;
-                self.target_reuses += 1;
-                return true;
-            }
+        if let Some(entry) = self.render_targets.get_mut(&target)
+            && entry.size == size
+        {
+            entry.last_used = self.frame_index;
+            entry.persistent = persistent;
+            self.target_reuses += 1;
+            return true;
         }
         if let Some(old) = self.render_targets.remove(&target) {
             old.texture.destroy();
@@ -340,7 +340,7 @@ impl GpuRenderer {
                 &self.atlas_bgl,
                 &self.blit_sampler,
                 &self.images,
-                &source,
+                source,
                 allow_new,
                 max_dim,
             ) {
@@ -379,15 +379,16 @@ impl GpuRenderer {
                         .copied()
                         .unwrap_or(TextureKind::D2);
                     let group = match (kind, input) {
-                        (TextureKind::D3, TexInput::Image(sequoia_core::ImageSource::Cube(path))) => {
-                            self.volumes.bind_group(
-                                &self.device,
-                                &self.queue,
-                                &self.volume_bgl,
-                                &self.blit_sampler,
-                                path,
-                            )
-                        }
+                        (
+                            TextureKind::D3,
+                            TexInput::Image(sequoia_core::ImageSource::Cube(path)),
+                        ) => self.volumes.bind_group(
+                            &self.device,
+                            &self.queue,
+                            &self.volume_bgl,
+                            &self.blit_sampler,
+                            path,
+                        ),
                         (TextureKind::D2, TexInput::Image(source)) => {
                             let max_dim = self.quality.max_image_dim().max(1);
                             let allow_new = self.quality.max_image_dim() > 0;

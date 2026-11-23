@@ -1208,19 +1208,17 @@ impl LaidOutBlock {
     }
 
     pub fn caret_rect(&self, offset: usize) -> Rect {
+        let size = self.style.text.size;
+        let height = (size * 1.05).max(1.0);
         let offset = offset.min(self.text_len);
         if let Some(line_index) = self.line_for_offset(offset) {
             let line = &self.lines[line_index];
             let x = self.content_rect.left() + line.x_at(offset);
-            let y = self.content_rect.top() + line.top;
-            return Rect::from_xywh(x, y, 1.0, line.height.max(1.0));
+            let y = self.content_rect.top() + line.baseline - size * 0.8;
+            return Rect::from_xywh(x, y, 1.0, height);
         }
-        Rect::from_xywh(
-            self.content_rect.left(),
-            self.content_rect.top(),
-            1.0,
-            self.style.text.line_height(),
-        )
+        let y = self.content_rect.top() + self.style.text.line_height() * 0.5 - size * 0.45;
+        Rect::from_xywh(self.content_rect.left(), y, 1.0, height)
     }
 
     pub fn line_rect(&self, line_index: usize) -> Option<Rect> {
@@ -1657,8 +1655,7 @@ fn finalize_line(placed: Vec<(Token, f32)>, top: f32, width: f32, style: &BlockS
         .fold(0.0f32, f32::max);
     let base_height = style.text.line_height();
     let height = base_height.max(object_height + style.text.size * 0.2);
-    let extra = (height - base_height).max(0.0);
-    let baseline = top + extra * 0.5 + style.text.size * 0.8;
+    let baseline = top + height * 0.5 + style.text.size * 0.35;
 
     let mut x_positions = Vec::with_capacity(char_end.saturating_sub(char_start) + 1);
     let mut runs = Vec::new();
@@ -1970,6 +1967,13 @@ mod tests {
             .hit_test(caret.left() + 1.0, caret.top() + 1.0)
             .unwrap();
         assert_eq!(hit.block_id, id);
+
+        let line = &laid.lines[0];
+        let visual_center = line.baseline - laid.style.text.size * 0.35;
+        assert!(
+            (visual_center - (line.top + line.height * 0.5)).abs() < 0.5,
+            "text must be vertically centered in its line box"
+        );
     }
 
     #[test]

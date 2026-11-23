@@ -774,12 +774,7 @@ fn effect_panic_keeps_previously_read_dependencies() {
     let runs = Rc::new(Cell::new(0u32));
 
     let _e = {
-        let (early, late, boom, runs) = (
-            early.clone(),
-            late.clone(),
-            boom.clone(),
-            runs.clone(),
-        );
+        let (early, late, boom, runs) = (early.clone(), late.clone(), boom.clone(), runs.clone());
         effect(move || {
             runs.set(runs.get() + 1);
             let _ = early.get();
